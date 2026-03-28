@@ -9,7 +9,7 @@ mod resolve;
 
 use std::env;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -19,6 +19,7 @@ fn main() {
         eprintln!("  roca init <name>              — create a new project");
         eprintln!("  roca check <file.roca>       — parse + check rules");
         eprintln!("  roca build <file_or_dir>     — parse + check + test + emit JS");
+        eprintln!("  roca run <file.roca>          — build + execute via bun");
         eprintln!("  roca lsp                     — start language server (stdio)");
         std::process::exit(1);
     }
@@ -70,28 +71,27 @@ fn main() {
             }
             let path = Path::new(&args[2]);
 
-            // Build first
             if path.is_dir() {
                 build_directory(path);
             } else {
                 build_file(path);
             }
 
-            // Then execute the JS via bun
+            let out_dir = resolve_out_dir(path);
             let js_path = if path.is_dir() {
-                // Look for main.js or index.js in the directory
-                let main = path.join("main.js");
-                let index = path.join("index.js");
+                let main = out_dir.join("main.js");
+                let index = out_dir.join("index.js");
                 if main.exists() {
                     main
                 } else if index.exists() {
                     index
                 } else {
-                    eprintln!("no main.js or index.js found in {}", path.display());
+                    eprintln!("no main.js or index.js found in {}", out_dir.display());
                     std::process::exit(1);
                 }
             } else {
-                path.with_extension("js")
+                let name = path.file_stem().unwrap().to_str().unwrap();
+                out_dir.join(format!("{}.js", name))
             };
 
             let status = std::process::Command::new("bun")
@@ -115,6 +115,21 @@ fn main() {
     }
 }
 
+/// Determine the output directory — `out/` next to the source
+fn resolve_out_dir(path: &Path) -> PathBuf {
+    if path.is_dir() {
+        path.join("out")
+    } else {
+        path.parent().unwrap_or(Path::new(".")).join("out")
+    }
+}
+
+/// Get the output path for a source file
+fn output_path_for(source_path: &Path, src_dir: &Path, out_dir: &Path) -> PathBuf {
+    let relative = source_path.strip_prefix(src_dir).unwrap_or(source_path);
+    out_dir.join(relative).with_extension("js")
+}
+
 /// Build a single .roca file with import resolution
 fn build_file(path: &Path) {
     let project = resolve::resolve_file(path);
@@ -131,16 +146,23 @@ fn build_file(path: &Path) {
     }
 
     let js = emit::emit(&file);
-    let out_path = path.with_extension("js");
+    let out_dir = resolve_out_dir(path);
+    fs::create_dir_all(&out_dir).unwrap_or_else(|e| {
+        eprintln!("error creating {}: {}", out_dir.display(), e);
+        std::process::exit(1);
+    });
+
+    let name = path.file_stem().unwrap().to_str().unwrap();
+    let out_path = out_dir.join(format!("{}.js", name));
 
     fs::write(&out_path, &js).unwrap_or_else(|e| {
         eprintln!("error writing {}: {}", out_path.display(), e);
         std::process::exit(1);
     });
 
-    // Emit test file (embeds code + assertions), run it
+    // Run proof tests
     if let Some((test_js, _count)) = emit::test_harness::emit_tests(&file, "__embed__") {
-        let test_path = path.with_extension("test.js");
+        let test_path = out_dir.join(format!("{}.test.js", name));
         fs::write(&test_path, &test_js).unwrap_or_else(|e| {
             eprintln!("error writing {}: {}", test_path.display(), e);
             std::process::exit(1);
@@ -182,6 +204,12 @@ fn build_directory(dir: &Path) {
         std::process::exit(1);
     }
 
+    let out_dir = dir.join("out");
+    fs::create_dir_all(&out_dir).unwrap_or_else(|e| {
+        eprintln!("error creating {}: {}", out_dir.display(), e);
+        std::process::exit(1);
+    });
+
     println!("building {} file(s)...", files.len());
 
     let mut total_tests = 0;
@@ -202,7 +230,13 @@ fn build_directory(dir: &Path) {
         }
 
         let js = emit::emit(&file);
-        let out_path = file_path.with_extension("js");
+        let out_path = output_path_for(file_path, dir, &out_dir);
+
+        // Ensure parent dir exists for nested sources
+        if let Some(parent) = out_path.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+
         fs::write(&out_path, &js).unwrap_or_else(|e| {
             eprintln!("error writing {}: {}", out_path.display(), e);
             failed_files.push(file_path.display().to_string());
@@ -211,7 +245,7 @@ fn build_directory(dir: &Path) {
         // Run proof tests
         if let Some((test_js, count)) = emit::test_harness::emit_tests(&file, "__embed__") {
             total_tests += count;
-            let test_path = file_path.with_extension("test.js");
+            let test_path = out_path.with_extension("test.js");
             fs::write(&test_path, &test_js).unwrap_or_else(|e| {
                 eprintln!("error writing {}: {}", test_path.display(), e);
             });
@@ -228,7 +262,6 @@ fn build_directory(dir: &Path) {
                 let _ = fs::remove_file(&out_path);
                 failed_files.push(file_path.display().to_string());
             } else {
-                // Parse pass count from stdout
                 if let Some(line) = stdout.lines().find(|l| l.contains("passed")) {
                     if let Some(n) = line.split_whitespace().next().and_then(|s| s.parse::<usize>().ok()) {
                         total_passed += n;
@@ -250,14 +283,18 @@ fn build_directory(dir: &Path) {
         std::process::exit(1);
     }
 
-    println!("✓ all files built");
+    println!("✓ all files built → {}/", out_dir.display());
 }
 
-fn collect_roca_files(dir: &Path, files: &mut Vec<std::path::PathBuf>) {
+fn collect_roca_files(dir: &Path, files: &mut Vec<PathBuf>) {
     if let Ok(entries) = fs::read_dir(dir) {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_dir() {
+                // Skip the out directory
+                if path.file_name().map_or(false, |n| n == "out") {
+                    continue;
+                }
                 collect_roca_files(&path, files);
             } else if path.extension().map_or(false, |e| e == "roca") {
                 files.push(path);
