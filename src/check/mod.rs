@@ -13,10 +13,13 @@ use registry::ContractRegistry;
 
 /// Run all checks on a source file, in dependency order
 pub fn check(file: &SourceFile) -> Vec<RuleError> {
-    let mut errors = Vec::new();
-
-    // 1. Build registry
     let registry = ContractRegistry::build(file);
+    check_with_registry(file, &registry)
+}
+
+/// Run all checks using a pre-built registry (for cross-module resolution)
+pub fn check_with_registry(file: &SourceFile, registry: &ContractRegistry) -> Vec<RuleError> {
+    let mut errors = Vec::new();
 
     // 2. Validate contracts in isolation
     errors.extend(contracts::check_contracts(file));

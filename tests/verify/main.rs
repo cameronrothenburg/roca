@@ -7,6 +7,7 @@ mod structs;
 mod satisfies;
 mod contracts;
 mod arrays;
+mod cross_module;
 mod crash;
 mod match_expr;
 mod imports;

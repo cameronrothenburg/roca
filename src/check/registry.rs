@@ -37,7 +37,7 @@ impl ContractRegistry {
         reg
     }
 
-    fn load_file(&mut self, file: &SourceFile) {
+    pub fn load_file(&mut self, file: &SourceFile) {
         for item in &file.items {
             match item {
                 Item::Contract(c) => {
@@ -110,13 +110,28 @@ impl ContractRegistry {
     }
 
     /// Check if a type has a specific method or field
+    /// Checks own contract + all contracts it satisfies
     pub fn has_method(&self, type_name: &str, method_name: &str) -> bool {
+        // Check own methods/fields
         if let Some(contract) = self.get(type_name) {
             if contract.functions.iter().any(|f| f.name == method_name) {
                 return true;
             }
             if contract.fields.iter().any(|f| f.name == method_name) {
                 return true;
+            }
+        }
+        // Check methods from satisfied contracts
+        if let Some(satisfied) = self.satisfies_map.get(type_name) {
+            for contract_name in satisfied {
+                if let Some(contract) = self.get(contract_name) {
+                    if contract.functions.iter().any(|f| f.name == method_name) {
+                        return true;
+                    }
+                    if contract.fields.iter().any(|f| f.name == method_name) {
+                        return true;
+                    }
+                }
             }
         }
         false
@@ -131,6 +146,18 @@ impl ContractRegistry {
             }
             for f in &contract.fields {
                 methods.push(f.name.clone());
+            }
+        }
+        // Include methods from satisfied contracts
+        if let Some(satisfied) = self.satisfies_map.get(type_name) {
+            for contract_name in satisfied {
+                if let Some(contract) = self.get(contract_name) {
+                    for f in &contract.functions {
+                        if !methods.contains(&f.name) {
+                            methods.push(f.name.clone());
+                        }
+                    }
+                }
             }
         }
         methods

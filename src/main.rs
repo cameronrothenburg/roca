@@ -4,6 +4,7 @@ mod check;
 mod emit;
 mod errors;
 mod init;
+mod resolve;
 
 use std::env;
 use std::fs;
@@ -107,11 +108,12 @@ fn main() {
     }
 }
 
-/// Build a single .roca file
+/// Build a single .roca file with import resolution
 fn build_file(path: &Path) {
+    let project = resolve::resolve_file(path);
     let source = read_file(path.to_str().unwrap());
     let file = parse::parse(&source);
-    let errors = check::check(&file);
+    let errors = check::check_with_registry(&file, &project.registry);
 
     if !errors.is_empty() {
         for err in &errors {
@@ -161,8 +163,10 @@ fn build_file(path: &Path) {
     println!("✓ built → {}", out_path.display());
 }
 
-/// Build all .roca files in a directory
+/// Build all .roca files in a directory with shared import resolution
 fn build_directory(dir: &Path) {
+    let project = resolve::resolve_directory(dir);
+
     let mut files: Vec<_> = Vec::new();
     collect_roca_files(dir, &mut files);
 
@@ -180,7 +184,7 @@ fn build_directory(dir: &Path) {
     for file_path in &files {
         let source = read_file(file_path.to_str().unwrap());
         let file = parse::parse(&source);
-        let errors = check::check(&file);
+        let errors = check::check_with_registry(&file, &project.registry);
 
         if !errors.is_empty() {
             for err in &errors {
