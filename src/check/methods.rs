@@ -163,9 +163,48 @@ fn check_expr(expr: &Expr, scope: &Scope, registry: &ContractRegistry, ctx: &str
             // Only check if it's NOT also a call target (handled above)
             check_expr(target, scope, registry, ctx, errors);
         }
-        Expr::BinOp { left, right, .. } => {
+        Expr::BinOp { left, op, right } => {
             check_expr(left, scope, registry, ctx, errors);
             check_expr(right, scope, registry, ctx, errors);
+
+            // Type-check comparison operators
+            if is_comparison(op) {
+                let left_type = resolve_type(left, scope);
+                let right_type = resolve_type(right, scope);
+
+                if let (Some(lt), Some(rt)) = (&left_type, &right_type) {
+                    // Both sides must be the same type
+                    if lt != rt {
+                        errors.push(RuleError {
+                            code: "type-mismatch".into(),
+                            message: format!("cannot compare {} with {}", lt, rt),
+                            context: Some(ctx.to_string()),
+                        });
+                    }
+                    // Both must be primitives
+                    if !is_primitive(lt) {
+                        errors.push(RuleError {
+                            code: "struct-comparison".into(),
+                            message: format!("cannot compare struct '{}' directly — compare fields instead", lt),
+                            context: Some(ctx.to_string()),
+                        });
+                    } else if !is_primitive(rt) {
+                        errors.push(RuleError {
+                            code: "struct-comparison".into(),
+                            message: format!("cannot compare struct '{}' directly — compare fields instead", rt),
+                            context: Some(ctx.to_string()),
+                        });
+                    }
+                    // Ordering on Bool not allowed
+                    if is_ordering(op) && (lt == "Bool" || rt == "Bool") {
+                        errors.push(RuleError {
+                            code: "invalid-ordering".into(),
+                            message: "cannot order Bool — use == or != instead".into(),
+                            context: Some(ctx.to_string()),
+                        });
+                    }
+                }
+            }
         }
         Expr::StructLit { fields, .. } => {
             for (_, v) in fields {
@@ -282,6 +321,18 @@ fn infer_type(expr: &Expr, scope: &Scope) -> Option<String> {
         }
         _ => None,
     }
+}
+
+fn is_comparison(op: &BinOp) -> bool {
+    matches!(op, BinOp::Eq | BinOp::Neq | BinOp::Lt | BinOp::Gt | BinOp::Lte | BinOp::Gte)
+}
+
+fn is_ordering(op: &BinOp) -> bool {
+    matches!(op, BinOp::Lt | BinOp::Gt | BinOp::Lte | BinOp::Gte)
+}
+
+fn is_primitive(type_name: &str) -> bool {
+    matches!(type_name, "String" | "Number" | "Bool")
 }
 
 #[cfg(test)]

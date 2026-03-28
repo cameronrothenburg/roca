@@ -78,6 +78,9 @@ fn extract_search_term(err: &RuleError) -> Option<String> {
         "untested-error" | "no-success-test" => {
             quoted_name()
         }
+        "type-mismatch" | "struct-comparison" | "invalid-ordering" => {
+            quoted_name()
+        }
         _ => None,
     }
 }
