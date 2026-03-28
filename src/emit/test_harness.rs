@@ -298,46 +298,6 @@ fn make_let_init<'a>(ast: &AstBuilder<'a>, name: &str, val: f64) -> Statement<'a
     Statement::from(Declaration::VariableDeclaration(ast.alloc(decl)))
 }
 
-fn make_summary<'a>(ast: &AstBuilder<'a>) -> Expression<'a> {
-    let msg = ast.expression_binary(
-        SPAN,
-        ast.expression_binary(
-            SPAN,
-            ast.expression_binary(
-                SPAN,
-                ast.expression_identifier(SPAN, "_passed"),
-                BinaryOperator::Addition,
-                ast.expression_string_literal(SPAN, " passed, ", None),
-            ),
-            BinaryOperator::Addition,
-            ast.expression_identifier(SPAN, "_failed"),
-        ),
-        BinaryOperator::Addition,
-        ast.expression_string_literal(SPAN, " failed", None),
-    );
-    let mut args = ast.vec();
-    args.push(Argument::from(msg));
-    ast.expression_call(
-        SPAN,
-        Expression::from(ast.member_expression_static(
-            SPAN, ast.expression_identifier(SPAN, "console"), ast.identifier_name(SPAN, "log"), false,
-        )),
-        NONE, args, false,
-    )
-}
-
-fn make_process_exit<'a>(ast: &AstBuilder<'a>, code: i32) -> Expression<'a> {
-    let mut args = ast.vec();
-    args.push(Argument::from(ast.expression_numeric_literal(SPAN, code as f64, None, NumberBase::Decimal)));
-    ast.expression_call(
-        SPAN,
-        Expression::from(ast.member_expression_static(
-            SPAN, ast.expression_identifier(SPAN, "process"), ast.identifier_name(SPAN, "exit"), false,
-        )),
-        NONE, args, false,
-    )
-}
-
 // ─── Fuzz testing ───────────────────────────────────────
 
 /// Generate fuzz test cases based on parameter types.
@@ -584,7 +544,7 @@ fn generate_battle_tests(file: &roca::SourceFile) -> String {
         match item {
             roca::Item::Function(f) if f.is_pub && !f.params.is_empty() => {
                 let errors = collect_error_names(&f.body);
-                if let Some(test) = generate_battle_test_for_fn(&f.name, &f.params, f.returns_err, &errors, file) {
+                if let Some(test) = generate_battle_test_for_fn(&f.name, &f.params, &errors, file) {
                     tests.push(test);
                 }
             }
@@ -600,7 +560,7 @@ fn generate_battle_tests(file: &roca::SourceFile) -> String {
                         for e in body_errors { if !errors.contains(&e) { errors.push(e); } }
 
                         let full_name = format!("{}.{}", s.name, method.name);
-                        if let Some(test) = generate_battle_test_for_method(&full_name, &s.name, &method.name, &method.params, method.returns_err, &errors, file) {
+                        if let Some(test) = generate_battle_test_for_method(&full_name, &s.name, &method.name, &method.params, &errors, file) {
                             tests.push(test);
                         }
                     }
@@ -637,7 +597,6 @@ fn generate_battle_tests(file: &roca::SourceFile) -> String {
 fn generate_battle_test_for_fn(
     name: &str,
     params: &[roca::Param],
-    returns_err: bool,
     errors: &[String],
     file: &roca::SourceFile,
 ) -> Option<String> {
@@ -654,11 +613,10 @@ fn generate_battle_test_for_fn(
 }
 
 fn generate_battle_test_for_method(
-    full_name: &str,
+    _full_name: &str,
     struct_name: &str,
     method_name: &str,
     params: &[roca::Param],
-    returns_err: bool,
     errors: &[String],
     file: &roca::SourceFile,
 ) -> Option<String> {

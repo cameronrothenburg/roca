@@ -173,30 +173,20 @@ fn check_expr(expr: &Expr, scope: &Scope, registry: &ContractRegistry, ctx: &str
                 let right_type = resolve_type(right, scope);
 
                 if let (Some(lt), Some(rt)) = (&left_type, &right_type) {
-                    // Both sides must be the same type
                     if lt != rt {
                         errors.push(RuleError {
                             code: "type-mismatch".into(),
                             message: format!("cannot compare {} with {}", lt, rt),
                             context: Some(ctx.to_string()),
                         });
-                    }
-                    // Both must be primitives
-                    if !is_primitive(lt) {
+                    } else if !is_primitive(lt) {
+                        // Same type but non-primitive — can't compare structs
                         errors.push(RuleError {
                             code: "struct-comparison".into(),
                             message: format!("cannot compare struct '{}' directly — compare fields instead", lt),
                             context: Some(ctx.to_string()),
                         });
-                    } else if !is_primitive(rt) {
-                        errors.push(RuleError {
-                            code: "struct-comparison".into(),
-                            message: format!("cannot compare struct '{}' directly — compare fields instead", rt),
-                            context: Some(ctx.to_string()),
-                        });
-                    }
-                    // Ordering on Bool not allowed
-                    if is_ordering(op) && (lt == "Bool" || rt == "Bool") {
+                    } else if is_ordering(op) && lt == "Bool" {
                         errors.push(RuleError {
                             code: "invalid-ordering".into(),
                             message: "cannot order Bool — use == or != instead".into(),
@@ -280,34 +270,24 @@ fn resolve_type(expr: &Expr, scope: &Scope) -> Option<String> {
 /// Infer the type of an expression
 fn infer_type(expr: &Expr, scope: &Scope) -> Option<String> {
     match expr {
-        // Constructor call: Map(), Email(...) → type is the name
         Expr::Call { target, .. } => {
+            // Constructor: Map(), Email(...) → type is the name
             if let Expr::Ident(name) = target.as_ref() {
                 if name.chars().next().map_or(false, |c| c.is_uppercase()) {
                     return Some(name.clone());
                 }
             }
-            // Static method: Email.validate(...) → type is Email
-            if let Expr::FieldAccess { target: obj, .. } = target.as_ref() {
+            // Method call: infer return type from known methods
+            if let Expr::FieldAccess { target: obj, field } = target.as_ref() {
+                // Static method: Email.validate(...) → type is Email
                 if let Expr::Ident(name) = obj.as_ref() {
                     if name.chars().next().map_or(false, |c| c.is_uppercase()) {
                         return Some(name.clone());
                     }
                 }
-            }
-            None
-        }
-        Expr::String(_) => Some("String".to_string()),
-        Expr::Number(_) => Some("Number".to_string()),
-        Expr::Bool(_) => Some("Bool".to_string()),
-        Expr::Array(_) => Some("Array".to_string()),
-        Expr::Ident(name) => scope.get(name).cloned(),
-        Expr::Call { target, .. } => {
-            // If calling a method like name.trim(), result type is String
-            if let Expr::FieldAccess { target: obj, field } = target.as_ref() {
+                // Instance method: s.trim() → return type based on method name
                 if let Some(type_name) = resolve_type(obj, scope) {
                     if type_name == "String" {
-                        // Most string methods return String
                         return match field.as_str() {
                             "includes" | "startsWith" | "endsWith" => Some("Bool".to_string()),
                             "indexOf" => Some("Number".to_string()),
@@ -319,6 +299,11 @@ fn infer_type(expr: &Expr, scope: &Scope) -> Option<String> {
             }
             None
         }
+        Expr::String(_) => Some("String".to_string()),
+        Expr::Number(_) => Some("Number".to_string()),
+        Expr::Bool(_) => Some("Bool".to_string()),
+        Expr::Array(_) => Some("Array".to_string()),
+        Expr::Ident(name) => scope.get(name).cloned(),
         _ => None,
     }
 }
