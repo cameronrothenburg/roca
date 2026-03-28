@@ -58,6 +58,7 @@ fn type_ref_to_name(t: &TypeRef) -> String {
         TypeRef::Bool => "Bool".to_string(),
         TypeRef::Named(n) => n.clone(),
         TypeRef::Result(inner) => type_ref_to_name(inner),
+        TypeRef::Nullable(inner) => format!("{}?", type_ref_to_name(inner)),
         TypeRef::Ok => "Ok".to_string(),
     }
 }
@@ -134,8 +135,22 @@ fn check_expr(expr: &Expr, scope: &Scope, registry: &ContractRegistry, ctx: &str
             // Check if the call target is a method on a known type
             if let Expr::FieldAccess { target: obj, field } = target.as_ref() {
                 if let Some(type_name) = resolve_type(obj, scope) {
-                    if !registry.has_method(&type_name, field) {
-                        let available = registry.available_methods(&type_name);
+                    // Nullable check — can't call methods on Type | null without checking
+                    if type_name.ends_with('?') {
+                        errors.push(RuleError {
+                            code: "nullable-access".into(),
+                            message: format!(
+                                "cannot call .{}() on nullable type '{}' — check for null first",
+                                field, type_name.trim_end_matches('?')
+                            ),
+                            context: Some(ctx.to_string()),
+                        });
+                    }
+
+                    // Strip ? for method lookup
+                    let lookup_type = type_name.trim_end_matches('?');
+                    if !registry.has_method(lookup_type, field) {
+                        let available = registry.available_methods(lookup_type);
                         let hint = if available.is_empty() {
                             String::new()
                         } else {
@@ -145,7 +160,7 @@ fn check_expr(expr: &Expr, scope: &Scope, registry: &ContractRegistry, ctx: &str
                             code: "unknown-method".into(),
                             message: format!(
                                 "'{}' has no method '{}'{}",
-                                type_name, field, hint
+                                lookup_type, field, hint
                             ),
                             context: Some(ctx.to_string()),
                         });

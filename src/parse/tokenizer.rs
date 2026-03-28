@@ -67,6 +67,7 @@ pub enum Token {
     And,       // &&
     Or,        // ||
     Not,       // !
+    Pipe,      // | (single pipe for Type | null)
     Arrow,     // ->
 
     // Punctuation
@@ -270,6 +271,7 @@ fn tokenize_one(chars: &[char], i: &mut usize, _line: &mut usize) -> Option<Toke
         '<' => Token::Lt,
         '>' => Token::Gt,
         '!' => Token::Not,
+        '|' => Token::Pipe,
         '.' => Token::Dot,
         ',' => Token::Comma,
         ':' => Token::Colon,

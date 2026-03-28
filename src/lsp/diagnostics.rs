@@ -72,7 +72,7 @@ fn extract_search_term(err: &RuleError) -> Option<String> {
         "duplicate-err" => {
             quoted_name().map(|n| format!("err {}", n))
         }
-        "const-reassign" | "unknown-method" | "not-loggable" | "unhandled-call" => {
+        "const-reassign" | "unknown-method" | "not-loggable" | "unhandled-call" | "nullable-access" => {
             quoted_name()
         }
         "untested-error" | "no-success-test" => {

@@ -7,6 +7,8 @@ pub enum TypeRef {
     Named(String),
     /// value, err return type
     Result(Box<TypeRef>),
+    /// Type | null — nullable field
+    Nullable(Box<TypeRef>),
     Ok,
 }
 

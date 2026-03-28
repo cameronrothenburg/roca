@@ -145,14 +145,23 @@ impl Parser {
         params
     }
 
-    /// Parse a type reference: String, Number, Bool, Named, or Self
+    /// Parse a type reference: String, Number, Bool, Named, Self, or Type | null
     pub fn parse_type_ref(&mut self) -> TypeRef {
-        match self.advance() {
+        let base = match self.advance() {
             Token::Ident(s) => TypeRef::from_str(&s),
             Token::SelfKw => TypeRef::Named("Self".to_string()),
             Token::Ok => TypeRef::Ok,
             other => panic!("expected type, got {:?}", other),
+        };
+
+        // Check for | null
+        if self.at(&Token::Pipe) {
+            self.advance();
+            self.expect(&Token::Null);
+            return TypeRef::Nullable(Box::new(base));
         }
+
+        base
     }
 }
 
