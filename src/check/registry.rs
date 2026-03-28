@@ -15,6 +15,8 @@ pub struct ResolvedContract {
 pub struct ContractRegistry {
     pub contracts: HashMap<String, ResolvedContract>,
     pub struct_contracts: HashMap<String, ResolvedContract>,
+    /// Map of type → contracts it satisfies. e.g. Email → [String, Loggable]
+    pub satisfies_map: HashMap<String, Vec<String>>,
 }
 
 const STDLIB_SOURCE: &str = include_str!("../../stdlib/primitives.roca");
@@ -25,6 +27,7 @@ impl ContractRegistry {
         let mut reg = Self {
             contracts: HashMap::new(),
             struct_contracts: HashMap::new(),
+            satisfies_map: HashMap::new(),
         };
 
         let stdlib = crate::parse::parse(STDLIB_SOURCE);
@@ -69,6 +72,12 @@ impl ContractRegistry {
                         values: Vec::new(),
                     });
                 }
+                Item::Satisfies(sat) => {
+                    self.satisfies_map
+                        .entry(sat.struct_name.clone())
+                        .or_default()
+                        .push(sat.contract_name.clone());
+                }
                 _ => {}
             }
         }
@@ -76,6 +85,28 @@ impl ContractRegistry {
 
     pub fn get(&self, name: &str) -> Option<&ResolvedContract> {
         self.contracts.get(name).or_else(|| self.struct_contracts.get(name))
+    }
+
+    /// Check if a type satisfies a contract (e.g. Email satisfies String)
+    pub fn type_satisfies(&self, type_name: &str, contract_name: &str) -> bool {
+        // Same type — always satisfies itself
+        if type_name == contract_name {
+            return true;
+        }
+        if let Some(contracts) = self.satisfies_map.get(type_name) {
+            contracts.iter().any(|c| c == contract_name)
+        } else {
+            false
+        }
+    }
+
+    /// Check if a type is acceptable where `expected` is required
+    /// i.e. type_name == expected OR type_name satisfies expected
+    pub fn type_accepts(&self, expected: &str, actual: &str) -> bool {
+        if expected == actual {
+            return true;
+        }
+        self.type_satisfies(actual, expected)
     }
 
     /// Check if a type has a specific method or field
@@ -162,5 +193,40 @@ mod tests {
         let methods = reg.available_methods("String");
         assert!(methods.contains(&"trim".to_string()));
         assert!(methods.contains(&"includes".to_string()));
+    }
+
+    #[test]
+    fn satisfies_tracked() {
+        let file = parse::parse(r#"
+            contract Loggable { to_log() -> String }
+            pub struct Email { value: String }{}
+            Email satisfies Loggable {
+                fn to_log() -> String { return self.value test {} }
+            }
+        "#);
+        let reg = ContractRegistry::build(&file);
+        assert!(reg.type_satisfies("Email", "Loggable"));
+        assert!(!reg.type_satisfies("Email", "String"));
+    }
+
+    #[test]
+    fn type_accepts_same() {
+        let file = parse::parse("");
+        let reg = ContractRegistry::build(&file);
+        assert!(reg.type_accepts("String", "String"));
+        assert!(reg.type_accepts("Number", "Number"));
+    }
+
+    #[test]
+    fn type_accepts_via_satisfies() {
+        let file = parse::parse(r#"
+            pub struct Email { value: String }{}
+            Email satisfies String {
+                fn trim() -> String { return self.value test {} }
+            }
+        "#);
+        let reg = ContractRegistry::build(&file);
+        assert!(reg.type_accepts("String", "Email"));
+        assert!(!reg.type_accepts("Number", "Email"));
     }
 }
