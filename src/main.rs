@@ -158,6 +158,8 @@ fn build_file(path: &Path) {
         std::process::exit(1);
     });
 
+    write_test_runtime(&out_dir);
+
     let name = path.file_stem().unwrap().to_str().unwrap();
     let out_path = out_dir.join(format!("{}.js", name));
 
@@ -165,8 +167,6 @@ fn build_file(path: &Path) {
         eprintln!("error writing {}: {}", out_path.display(), e);
         std::process::exit(1);
     });
-
-    // Run proof tests
     if let Some((test_js, _count)) = emit::test_harness::emit_tests(&file, "__embed__") {
         let test_path = out_dir.join(format!("{}.test.js", name));
         fs::write(&test_path, &test_js).unwrap_or_else(|e| {
@@ -215,6 +215,8 @@ fn build_directory(dir: &Path) {
         eprintln!("error creating {}: {}", out_dir.display(), e);
         std::process::exit(1);
     });
+
+    write_test_runtime(&out_dir);
 
     println!("building {} file(s)...", files.len());
 
@@ -312,6 +314,15 @@ fn collect_roca_files(dir: &Path, files: &mut Vec<PathBuf>) {
                 files.push(path);
             }
         }
+    }
+}
+
+const ROCA_TEST_RUNTIME: &[u8] = include_bytes!("../stdlib/roca-test.js");
+
+fn write_test_runtime(out_dir: &Path) {
+    let dest = out_dir.join("roca-test.js");
+    if !dest.exists() {
+        let _ = fs::write(&dest, ROCA_TEST_RUNTIME);
     }
 }
 

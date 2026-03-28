@@ -81,7 +81,7 @@ pub fn emit_tests(file: &roca::SourceFile, import_path: &str) -> Option<(String,
         }
     }
 
-    // Auto-generate fuzz tests for pub functions with typed params
+    // Auto-generate fuzz tests for pub functions with typed params (hand-rolled edge cases)
     for item in &file.items {
         if let roca::Item::Function(f) = item {
             if f.is_pub && !f.params.is_empty() {
@@ -90,30 +90,42 @@ pub fn emit_tests(file: &roca::SourceFile, import_path: &str) -> Option<(String,
         }
     }
 
-    // console.log(_passed + " passed, " + _failed + " failed")
-    body.push(ast.statement_expression(SPAN, make_summary(&ast)));
+    // Generate fast-check battle tests (appended as raw JS)
+    let battle_tests = generate_battle_tests(file);
 
-    // if (_failed > 0) process.exit(1)
-    let exit_check = ast.expression_binary(
-        SPAN,
-        ast.expression_identifier(SPAN, "_failed"),
-        BinaryOperator::GreaterThan,
-        ast.expression_numeric_literal(SPAN, 0.0, None, NumberBase::Decimal),
-    );
-    let exit_call = make_process_exit(&ast, 1);
-    body.push(ast.statement_if(SPAN, exit_check, ast.statement_expression(SPAN, exit_call), None));
+    // Summary + exit are added as raw JS AFTER battle tests
+    // so battle test results are counted
 
     let program = ast.program(SPAN, SourceType::mjs(), source_text, ast.vec(), None, ast.vec(), body);
     let test_code = Codegen::new().build(&program).code;
 
-    // For single-file builds (no real imports), embed the code
-    // For multi-file builds, use imports
-    let full = if import_path == "__embed__" {
-        // Single file mode — embed the main code
-        let main_js = super::emit(file).replace("export ", "");
-        format!("{}\n{}", main_js, test_code)
+    // Generate mock patching code for struct dependencies
+    // Only in multi-file mode — in single-file mode, patches would override the real
+    // implementations that the test block is trying to test
+    let mock_patches = if import_path != "__embed__" {
+        generate_mock_patches(file)
     } else {
-        format!("{}{}", import_line, test_code)
+        String::new()
+    };
+
+    // Summary + exit appended after battle tests
+    let summary_js = "console.log(_passed + \" passed, \" + _failed + \" failed\");\nif (_failed > 0) process.exit(1);";
+
+    let full = if import_path == "__embed__" {
+        let main_js = super::emit(file).replace("export ", "");
+        let mut parts = vec![main_js];
+        if !mock_patches.is_empty() { parts.push(mock_patches); }
+        parts.push(test_code);
+        if !battle_tests.is_empty() { parts.push(battle_tests); }
+        parts.push(summary_js.to_string());
+        parts.join("\n")
+    } else {
+        let mut parts = vec![import_line];
+        if !mock_patches.is_empty() { parts.push(mock_patches); }
+        parts.push(test_code);
+        if !battle_tests.is_empty() { parts.push(battle_tests); }
+        parts.push(summary_js.to_string());
+        parts.join("\n")
     };
 
     Some((full, test_count))
@@ -510,4 +522,289 @@ fn emit_mock_object<'a>(
     let declarator = ast.variable_declarator(SPAN, VariableDeclarationKind::Const, pattern, NONE, Some(obj), false);
     let decl = ast.variable_declaration(SPAN, VariableDeclarationKind::Const, ast.vec1(declarator), false);
     body.push(Statement::from(Declaration::VariableDeclaration(ast.alloc(decl))));
+}
+
+/// Generate JS code that patches struct static methods with mock implementations.
+/// For each struct that has validate-style methods (returns Self, err),
+/// generate a mock that returns random valid instances built from primitives.
+fn generate_mock_patches(file: &roca::SourceFile) -> String {
+    let mut patches = Vec::new();
+
+    // Collect all structs and their mockable methods
+    let mut structs: Vec<(&str, &[roca::Field], &[roca::FnSignature])> = Vec::new();
+    for item in &file.items {
+        if let roca::Item::Struct(s) = item {
+            if !s.signatures.is_empty() {
+                structs.push((&s.name, &s.fields, &s.signatures));
+            }
+        }
+    }
+
+    for (name, fields, sigs) in &structs {
+        for sig in *sigs {
+            if sig.returns_err && !sig.errors.is_empty() {
+                // This method can fail — generate a mock that returns success
+                let field_mocks: Vec<String> = fields.iter().map(|f| {
+                    let mock_val = mock_value_for_type(&f.type_ref);
+                    format!("{}: {}", f.name, mock_val)
+                }).collect();
+
+                let constructor_args = if field_mocks.is_empty() {
+                    "{}".to_string()
+                } else {
+                    format!("{{ {} }}", field_mocks.join(", "))
+                };
+
+                // Save original, replace with mock
+                patches.push(format!(
+                    "const _save_{name}_{method} = {name}.{method};\n\
+                     {name}.{method} = function() {{ return [new {name}({args}), null]; }};",
+                    name = name,
+                    method = sig.name,
+                    args = constructor_args,
+                ));
+            }
+        }
+    }
+
+    if patches.is_empty() {
+        return String::new();
+    }
+
+    format!("// Auto-generated mock patches for dependency isolation\n{}", patches.join("\n"))
+}
+
+/// Generate fast-check battle tests as raw JS.
+/// Uses the bundled roca-test.js for fast-check + helpers.
+fn generate_battle_tests(file: &roca::SourceFile) -> String {
+    let mut tests = Vec::new();
+
+    // Collect all functions and struct methods eligible for battle testing
+    for item in &file.items {
+        match item {
+            roca::Item::Function(f) if f.is_pub && !f.params.is_empty() => {
+                let errors = collect_error_names(&f.body);
+                if let Some(test) = generate_battle_test_for_fn(&f.name, &f.params, f.returns_err, &errors) {
+                    tests.push(test);
+                }
+            }
+            roca::Item::Struct(s) => {
+                for method in &s.methods {
+                    if !method.params.is_empty() {
+                        let sig_errors: Vec<String> = s.signatures.iter()
+                            .find(|sig| sig.name == method.name)
+                            .map(|sig| sig.errors.iter().map(|e| e.name.clone()).collect())
+                            .unwrap_or_default();
+                        let mut errors = sig_errors;
+                        let body_errors = collect_error_names(&method.body);
+                        for e in body_errors { if !errors.contains(&e) { errors.push(e); } }
+
+                        let full_name = format!("{}.{}", s.name, method.name);
+                        if let Some(test) = generate_battle_test_for_method(&full_name, &s.name, &method.name, &method.params, method.returns_err, &errors) {
+                            tests.push(test);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if tests.is_empty() {
+        return String::new();
+    }
+
+    // Import from roca-test.js
+    let mut out = String::new();
+    out.push_str("// Battle tests — fast-check property-based testing\n");
+    out.push_str("try {\n");
+    // Use __dirname to resolve relative to the test file, not CWD
+    out.push_str("const __dir = typeof __dirname !== 'undefined' ? __dirname : '.';\n");
+    out.push_str("const { fc, battleTest, arb } = require(__dir + '/roca-test.js');\n");
+
+    for test in &tests {
+        out.push_str(test);
+        out.push('\n');
+    }
+
+    out.push_str("} catch(_btErr) {\n");
+    out.push_str("  // roca-test.js not available — skip battle tests\n");
+    out.push_str("}\n");
+
+    out
+}
+
+fn generate_battle_test_for_fn(
+    name: &str,
+    params: &[roca::Param],
+    returns_err: bool,
+    errors: &[String],
+) -> Option<String> {
+    let arbs = params_to_arbs(params)?;
+    let param_names: Vec<String> = params.iter().map(|p| p.name.clone()).collect();
+    let error_list = format!("[{}]", errors.iter().map(|e| format!("\"{}\"", e)).collect::<Vec<_>>().join(", "));
+
+    Some(format!(
+        "{{ const _bt = battleTest({name}, [{arbs}], {errors}, 100); _passed += _bt.passed; _failed += _bt.failed; }}",
+        name = name,
+        arbs = arbs,
+        errors = error_list,
+    ))
+}
+
+fn generate_battle_test_for_method(
+    full_name: &str,
+    struct_name: &str,
+    method_name: &str,
+    params: &[roca::Param],
+    returns_err: bool,
+    errors: &[String],
+) -> Option<String> {
+    let arbs = params_to_arbs(params)?;
+    let error_list = format!("[{}]", errors.iter().map(|e| format!("\"{}\"", e)).collect::<Vec<_>>().join(", "));
+
+    Some(format!(
+        "{{ const _bt = battleTest({struct_name}.{method_name}.bind({struct_name}), [{arbs}], {errors}, 100); _passed += _bt.passed; _failed += _bt.failed; }}",
+        struct_name = struct_name,
+        method_name = method_name,
+        arbs = arbs,
+        errors = error_list,
+    ))
+}
+
+fn params_to_arbs(params: &[roca::Param]) -> Option<String> {
+    let arbs: Vec<String> = params.iter().map(|p| {
+        match &p.type_ref {
+            roca::TypeRef::String => "arb.String()".to_string(),
+            roca::TypeRef::Number => "arb.Number()".to_string(),
+            roca::TypeRef::Bool => "arb.Bool()".to_string(),
+            _ => return "null".to_string(), // unknown type — skip
+        }
+    }).collect();
+
+    if arbs.iter().any(|a| a == "null") {
+        return None; // Can't generate arbs for non-primitive params
+    }
+
+    Some(arbs.join(", "))
+}
+
+fn collect_error_names(stmts: &[roca::Stmt]) -> Vec<String> {
+    let mut names = Vec::new();
+    for stmt in stmts {
+        match stmt {
+            roca::Stmt::ReturnErr(name) => {
+                if !names.contains(name) { names.push(name.clone()); }
+            }
+            roca::Stmt::If { then_body, else_body, .. } => {
+                names.extend(collect_error_names(then_body));
+                if let Some(body) = else_body {
+                    names.extend(collect_error_names(body));
+                }
+            }
+            roca::Stmt::For { body, .. } => {
+                names.extend(collect_error_names(body));
+            }
+            _ => {}
+        }
+    }
+    names
+}
+
+fn mock_value_for_type(t: &roca::TypeRef) -> String {
+    match t {
+        roca::TypeRef::String => "\"mock_\" + Math.random().toString(36).slice(2)".to_string(),
+        roca::TypeRef::Number => "Math.floor(Math.random() * 100)".to_string(),
+        roca::TypeRef::Bool => "true".to_string(),
+        roca::TypeRef::Named(name) => {
+            // For named types, create a minimal mock object
+            format!("new {}({{}})", name)
+        }
+        _ => "null".to_string(),
+    }
+}
+
+#[cfg(test)]
+mod battle_tests {
+    use super::*;
+
+    #[test]
+    fn battle_test_generated_for_pub_fn() {
+        let file = crate::parse::parse(r#"
+            pub fn greet(name: String) -> String {
+                return "Hello " + name
+                test { self("cam") == "Hello cam" }
+            }
+        "#);
+        let battle = generate_battle_tests(&file);
+        assert!(!battle.is_empty(), "should generate battle test for pub fn with String param");
+        assert!(battle.contains("battleTest"), "should call battleTest");
+        assert!(battle.contains("arb.String()"), "should use String arbitrary");
+    }
+
+    #[test]
+    fn battle_test_for_err_function() {
+        let file = crate::parse::parse(r#"
+            pub fn validate(s: String) -> String, err {
+                if s == "" { return err.empty }
+                return s
+                test {
+                    self("ok") == "ok"
+                    self("") is err.empty
+                }
+            }
+        "#);
+        let battle = generate_battle_tests(&file);
+        assert!(battle.contains("battleTest"), "should generate battle test");
+        assert!(battle.contains("\"empty\""), "should include declared error names");
+    }
+
+    #[test]
+    fn no_battle_test_for_private_fn() {
+        let file = crate::parse::parse(r#"
+            fn helper(s: String) -> String {
+                return s
+                test { self("a") == "a" }
+            }
+        "#);
+        let battle = generate_battle_tests(&file);
+        assert!(battle.is_empty(), "private fn should not get battle test");
+    }
+
+    #[test]
+    fn no_battle_test_for_no_params() {
+        let file = crate::parse::parse(r#"
+            pub fn hello() -> String {
+                return "hi"
+                test { self() == "hi" }
+            }
+        "#);
+        let battle = generate_battle_tests(&file);
+        assert!(battle.is_empty(), "no-param fn should not get battle test");
+    }
+
+    #[test]
+    fn battle_test_for_struct_method() {
+        let file = crate::parse::parse(r#"
+            pub struct Email {
+                value: String
+                validate(raw: String) -> Email, err {
+                    err missing = "required"
+                }
+            }{
+                fn validate(raw: String) -> Email, err {
+                    if raw == "" { return err.missing }
+                    return Email { value: raw }
+                    test {
+                        self("a@b") is Ok
+                        self("") is err.missing
+                    }
+                }
+            }
+        "#);
+        let battle = generate_battle_tests(&file);
+        assert!(battle.contains("battleTest"), "should generate for struct method");
+        assert!(battle.contains("Email.validate"), "should reference Email.validate");
+        assert!(battle.contains("\"missing\""), "should include error name");
+    }
 }

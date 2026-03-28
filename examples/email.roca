@@ -10,7 +10,6 @@ pub struct Email {
     value: String
     validate(raw: String) -> Email, err {
         err missing = "value is required"
-        err invalid = "format is not valid"
     }
 }{
     fn validate(raw: String) -> Email, err {
