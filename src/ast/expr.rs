@@ -42,6 +42,11 @@ pub enum Expr {
     StringInterp(Vec<StringPart>),
     /// Error reference: err.name
     ErrRef(String),
+    /// Closure: fn(params) -> expr
+    Closure {
+        params: Vec<String>,
+        body: Box<Expr>,
+    },
     /// null literal
     Null,
     /// self keyword

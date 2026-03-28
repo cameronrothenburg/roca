@@ -136,6 +136,23 @@ pub(crate) fn build_stmt<'a>(
             let body_stmt = Statement::BlockStatement(ast.alloc(ast.block_statement(SPAN, stmts)));
             vec![ast.statement_for_of(SPAN, false, left, right, body_stmt)]
         }
+        roca::Stmt::While { condition, body } => {
+            let test = build_expr(ast, condition);
+            let mut stmts = ast.vec();
+            for s in body {
+                for emitted in build_stmt(ast, s, returns_err, crash) {
+                    stmts.push(emitted);
+                }
+            }
+            let body_stmt = Statement::BlockStatement(ast.alloc(ast.block_statement(SPAN, stmts)));
+            vec![ast.statement_while(SPAN, test, body_stmt)]
+        }
+        roca::Stmt::Break => {
+            vec![ast.statement_break(SPAN, None)]
+        }
+        roca::Stmt::Continue => {
+            vec![ast.statement_continue(SPAN, None)]
+        }
         roca::Stmt::Wait { names, failed_name, kind } => {
             emit_wait(ast, names, failed_name, kind)
         }

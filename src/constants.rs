@@ -3,7 +3,7 @@
 pub const KEYWORDS: &[&str] = &[
     "contract", "struct", "satisfies",
     "fn", "pub", "const", "let", "return",
-    "if", "else", "for", "in", "match",
+    "if", "else", "for", "in", "match", "while", "break", "continue",
     "crash", "test", "mock",
     "err", "Ok",
     "retry", "skip", "halt", "fallback", "default",

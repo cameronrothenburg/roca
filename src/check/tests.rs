@@ -124,7 +124,7 @@ fn collect_returned_errors(stmts: &[Stmt], errors: &mut HashSet<String>) {
                     collect_returned_errors(body, errors);
                 }
             }
-            Stmt::For { body, .. } => collect_returned_errors(body, errors),
+            Stmt::For { body, .. } | Stmt::While { body, .. } => collect_returned_errors(body, errors),
             _ => {}
         }
     }

@@ -27,6 +27,21 @@ pub(crate) fn build_expr<'a>(ast: &AstBuilder<'a>, expr: &roca::Expr) -> Express
                 ast.expression_identifier(SPAN, n)
             }
         }
+        roca::Expr::Closure { params, body } => {
+            let mut param_list = ast.vec();
+            for p in params {
+                let pn = ast.str(p);
+                let pattern = ast.binding_pattern_binding_identifier(SPAN, pn);
+                param_list.push(ast.plain_formal_parameter(SPAN, pattern));
+            }
+            let formal_params = ast.formal_parameters(SPAN, FormalParameterKind::ArrowFormalParameters, param_list, NONE);
+            let body_expr = build_expr(ast, body);
+            let body_stmt = ast.statement_expression(SPAN, body_expr);
+            let mut stmts = ast.vec();
+            stmts.push(body_stmt);
+            let fn_body = ast.function_body(SPAN, ast.vec(), stmts);
+            ast.expression_arrow_function(SPAN, true, false, NONE, formal_params, NONE, fn_body)
+        }
         roca::Expr::Null => {
             ast.expression_null_literal(SPAN)
         }

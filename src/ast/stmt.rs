@@ -34,6 +34,13 @@ pub enum Stmt {
         then_body: Vec<Stmt>,
         else_body: Option<Vec<Stmt>>,
     },
+    /// While loop
+    While {
+        condition: Expr,
+        body: Vec<Stmt>,
+    },
+    Break,
+    Continue,
     /// For loop
     For {
         binding: String,

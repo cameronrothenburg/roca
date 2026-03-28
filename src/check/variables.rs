@@ -62,7 +62,7 @@ fn check_stmt_vars(stmt: &Stmt, consts: &mut HashMap<String, bool>, errors: &mut
                 }
             }
         }
-        Stmt::For { body, .. } => {
+        Stmt::For { body, .. } | Stmt::While { body, .. } => {
             for s in body {
                 check_stmt_vars(s, consts, errors);
             }

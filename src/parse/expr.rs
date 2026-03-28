@@ -251,6 +251,22 @@ impl Parser {
                 self.advance();
                 Expr::Bool(b)
             }
+            Token::Fn => {
+                // Closure: fn(x, y) -> expr
+                self.advance();
+                self.expect(&Token::LParen);
+                let mut params = Vec::new();
+                if !self.at(&Token::RParen) {
+                    params.push(self.expect_ident());
+                    while self.eat(&Token::Comma) {
+                        params.push(self.expect_ident());
+                    }
+                }
+                self.expect(&Token::RParen);
+                self.expect(&Token::Arrow);
+                let body = self.parse_expr();
+                Expr::Closure { params, body: Box::new(body) }
+            }
             Token::Null => {
                 self.advance();
                 Expr::Null
@@ -260,16 +276,10 @@ impl Parser {
                 Expr::SelfRef
             }
             Token::Err => {
+                // Always treat err as an identifier — field access handled by postfix
+                // ErrRef is only used via ReturnErr in statement parser
                 self.advance();
-                if self.at(&Token::Dot) {
-                    // err.name — error reference
-                    self.advance();
-                    let name = self.expect_ident();
-                    Expr::ErrRef(name)
-                } else {
-                    // bare err — used as variable (from let x, err = ...)
-                    Expr::Ident("err".to_string())
-                }
+                Expr::Ident("err".to_string())
             }
             Token::Ok => {
                 self.advance();
@@ -444,10 +454,12 @@ mod tests {
     }
 
     #[test]
-    fn parse_err_ref() {
+    fn parse_err_as_ident() {
+        // err.X is now parsed as field access on the err variable
+        // ErrRef is only used via ReturnErr in statement parser
         let mut p = Parser::new(tokenize("err.timeout"));
         let expr = p.parse_expr();
-        assert_eq!(expr, Expr::ErrRef("timeout".into()));
+        assert!(matches!(expr, Expr::FieldAccess { field, .. } if field == "timeout"));
     }
 
     #[test]

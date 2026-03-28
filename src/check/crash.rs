@@ -113,6 +113,11 @@ fn collect_calls_in_stmt(stmt: &Stmt, calls: &mut Vec<String>) {
                 collect_calls_in_stmt(s, calls);
             }
         }
+        Stmt::While { condition, body } => {
+            collect_calls_in_expr(condition, calls);
+            for s in body { collect_calls_in_stmt(s, calls); }
+        }
+        Stmt::Break | Stmt::Continue => {}
         Stmt::Wait { kind, .. } => {
             match kind {
                 crate::ast::WaitKind::Single(expr) => collect_calls_in_expr(expr, calls),

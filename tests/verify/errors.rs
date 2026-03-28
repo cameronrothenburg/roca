@@ -1,6 +1,26 @@
 use super::harness::run;
 
 #[test]
+fn err_variable_message_access() {
+    // err.message on a variable from let x, err = ... should work
+    assert_eq!(run(
+        r#"pub fn check(s: String) -> String, err {
+            if s == "" { return err.empty }
+            return s
+            test { self("ok") == "ok" self("") is err.empty }
+        }
+        pub fn caller(s: String) -> String {
+            let result, err = check(s)
+            if err { return "error: " + err.message }
+            return result
+            crash { check -> halt }
+            test { self("ok") == "ok" }
+        }"#,
+        r#"console.log(caller("ok")); console.log(caller(""));"#,
+    ), "ok\nerror: empty");
+}
+
+#[test]
 fn success_returns_value_and_null() {
     assert_eq!(run(
         r#"pub fn divide(a: Number, b: Number) -> Number, err {

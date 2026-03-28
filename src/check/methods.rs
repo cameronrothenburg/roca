@@ -106,6 +106,11 @@ fn check_stmts(stmts: &[Stmt], scope: &Scope, registry: &ContractRegistry, ctx: 
                 check_expr(iter, &scope, registry, ctx, errors);
                 check_stmts(body, &scope, registry, ctx, errors);
             }
+            Stmt::While { condition, body } => {
+                check_expr(condition, &scope, registry, ctx, errors);
+                check_stmts(body, &scope, registry, ctx, errors);
+            }
+            Stmt::Break | Stmt::Continue => {}
             Stmt::Wait { kind, .. } => {
                 match kind {
                     crate::ast::WaitKind::Single(expr) => check_expr(expr, &scope, registry, ctx, errors),

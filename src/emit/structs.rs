@@ -142,6 +142,10 @@ fn stmt_uses_self(stmt: &roca::Stmt) -> bool {
         roca::Stmt::For { iter, body, .. } => {
             expr_uses_self(iter) || body_uses_self(body)
         }
+        roca::Stmt::While { condition, body } => {
+            expr_uses_self(condition) || body_uses_self(body)
+        }
+        roca::Stmt::Break | roca::Stmt::Continue => false,
         roca::Stmt::Wait { kind, .. } => {
             match kind {
                 roca::WaitKind::Single(e) => expr_uses_self(e),

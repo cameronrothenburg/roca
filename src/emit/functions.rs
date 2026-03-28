@@ -45,7 +45,7 @@ fn body_has_wait(stmts: &[roca::Stmt]) -> bool {
         roca::Stmt::If { then_body, else_body, .. } => {
             body_has_wait(then_body) || else_body.as_ref().map_or(false, |b| body_has_wait(b))
         }
-        roca::Stmt::For { body, .. } => body_has_wait(body),
+        roca::Stmt::For { body, .. } | roca::Stmt::While { body, .. } => body_has_wait(body),
         _ => false,
     })
 }

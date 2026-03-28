@@ -155,6 +155,25 @@ impl Parser {
                     else_body,
                 }
             }
+            Token::Break => {
+                self.advance();
+                Stmt::Break
+            }
+            Token::Continue => {
+                self.advance();
+                Stmt::Continue
+            }
+            Token::While => {
+                self.advance();
+                let condition = self.parse_expr();
+                self.expect(&Token::LBrace);
+                let mut body = Vec::new();
+                while !self.at(&Token::RBrace) && !self.at(&Token::EOF) {
+                    body.push(self.parse_stmt());
+                }
+                self.expect(&Token::RBrace);
+                Stmt::While { condition, body }
+            }
             Token::For => {
                 self.advance();
                 let binding = self.expect_ident();

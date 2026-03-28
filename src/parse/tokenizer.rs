@@ -20,6 +20,9 @@ pub enum Token {
     For,
     In,
     Match,
+    While,
+    Break,
+    Continue,
 
     // Blocks
     Crash,
@@ -218,6 +221,9 @@ fn tokenize_one(chars: &[char], i: &mut usize, _line: &mut usize) -> Option<Toke
             "for" => Token::For,
             "in" => Token::In,
             "match" => Token::Match,
+            "while" => Token::While,
+            "break" => Token::Break,
+            "continue" => Token::Continue,
             "crash" => Token::Crash,
             "test" => Token::Test,
             "mock" => Token::Mock,
