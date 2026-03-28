@@ -4,6 +4,7 @@ mod check;
 mod emit;
 mod errors;
 mod init;
+mod lsp;
 mod resolve;
 
 use std::env;
@@ -18,6 +19,7 @@ fn main() {
         eprintln!("  roca init <name>              — create a new project");
         eprintln!("  roca check <file.roca>       — parse + check rules");
         eprintln!("  roca build <file_or_dir>     — parse + check + test + emit JS");
+        eprintln!("  roca lsp                     — start language server (stdio)");
         std::process::exit(1);
     }
 
@@ -100,6 +102,11 @@ fn main() {
             if !status.success() {
                 std::process::exit(status.code().unwrap_or(1));
             }
+        }
+        "lsp" => {
+            tokio::runtime::Runtime::new()
+                .expect("failed to create tokio runtime")
+                .block_on(lsp::run());
         }
         _ => {
             eprintln!("unknown command: {}", args[1]);

@@ -884,10 +884,13 @@ dependencies = [
 name = "roca"
 version = "0.1.0"
 dependencies = [
+ "dashmap 6.1.0",
  "oxc_allocator",
  "oxc_ast",
  "oxc_codegen",
  "oxc_span",
+ "tokio",
+ "tower-lsp",
 ]
 
 [[package]]
