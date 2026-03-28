@@ -9,4 +9,6 @@ mod contracts;
 mod arrays;
 mod crash;
 mod match_expr;
+mod imports;
+mod type_coercion;
 mod integration;

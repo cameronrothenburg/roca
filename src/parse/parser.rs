@@ -8,6 +8,12 @@ impl Parser {
         let mut items = Vec::new();
 
         while !self.at(&Token::EOF) {
+            // Imports before pub check
+            if self.at(&Token::Import) {
+                items.push(Item::Import(self.parse_import()));
+                continue;
+            }
+
             let is_pub = self.eat(&Token::Pub);
 
             match self.peek().clone() {
@@ -32,6 +38,27 @@ impl Parser {
         }
 
         SourceFile { items }
+    }
+
+    /// Parse: import { Name1, Name2 } from "./path"
+    fn parse_import(&mut self) -> ImportDef {
+        self.expect(&Token::Import);
+        self.expect(&Token::LBrace);
+        let mut names = Vec::new();
+        if !self.at(&Token::RBrace) {
+            names.push(self.expect_ident());
+            while self.eat(&Token::Comma) {
+                if self.at(&Token::RBrace) { break; }
+                names.push(self.expect_ident());
+            }
+        }
+        self.expect(&Token::RBrace);
+        self.expect(&Token::From);
+        let path = match self.advance() {
+            Token::StringLit(s) => s,
+            other => panic!("expected string path after from, got {:?}", other),
+        };
+        ImportDef { names, path }
     }
 }
 

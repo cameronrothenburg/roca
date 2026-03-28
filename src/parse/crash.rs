@@ -21,8 +21,11 @@ impl Parser {
     ///   call -> strategy
     ///   call { err.name -> strategy, default -> strategy }
     fn parse_crash_handler(&mut self) -> CrashHandler {
-        // Parse the call reference (e.g. "http.get", "Email.validate", "name.trim")
-        let mut call = self.expect_ident();
+        // Parse the call reference (e.g. "http.get", "Email.validate", "self.value.split")
+        let mut call = match self.peek() {
+            Token::SelfKw => { self.advance(); "self".to_string() }
+            _ => self.expect_ident(),
+        };
         while self.eat(&Token::Dot) {
             let part = self.expect_ident();
             call = format!("{}.{}", call, part);

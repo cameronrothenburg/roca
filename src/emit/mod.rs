@@ -32,10 +32,26 @@ pub fn emit(file: &ast::SourceFile) -> String {
         }
     }
 
+    // Collect import lines (emitted as raw string prefix)
+    let mut import_lines = Vec::new();
+    for item in &file.items {
+        if let Item::Import(imp) = item {
+            let js_path = imp.path.replace(".roca", ".js");
+            import_lines.push(format!(
+                "import {{ {} }} from \"{}\";",
+                imp.names.join(", "),
+                js_path,
+            ));
+        }
+    }
+
     let mut body = ast.vec();
 
     for item in &file.items {
         match item {
+            Item::Import(_) => {
+                // Handled above as raw string
+            }
             Item::Contract(c) => {
                 let stmts = contracts::build_contract_stmts(&ast, c);
                 for stmt in stmts {
@@ -78,7 +94,13 @@ pub fn emit(file: &ast::SourceFile) -> String {
     }
 
     let program = ast.program(SPAN, SourceType::mjs(), source_text, ast.vec(), None, ast.vec(), body);
-    Codegen::new().build(&program).code
+    let code = Codegen::new().build(&program).code;
+
+    if import_lines.is_empty() {
+        code
+    } else {
+        format!("{}\n{}", import_lines.join("\n"), code)
+    }
 }
 
 fn wrap_export<'a>(ast: &AstBuilder<'a>, stmt: Statement<'a>) -> Statement<'a> {

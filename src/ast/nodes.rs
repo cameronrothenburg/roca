@@ -14,10 +14,18 @@ pub struct SourceFile {
 /// Top-level item in a source file
 #[derive(Debug, Clone, PartialEq)]
 pub enum Item {
+    Import(ImportDef),
     Contract(ContractDef),
     Struct(StructDef),
     Satisfies(SatisfiesDef),
     Function(FnDef),
+}
+
+/// import { Name1, Name2 } from "./path"
+#[derive(Debug, Clone, PartialEq)]
+pub struct ImportDef {
+    pub names: Vec<String>,
+    pub path: String,
 }
 
 /// Function parameter

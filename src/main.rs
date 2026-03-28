@@ -51,6 +51,46 @@ fn main() {
                 build_file(path);
             }
         }
+        "run" => {
+            if args.len() < 3 {
+                eprintln!("usage: roca run <file.roca>");
+                std::process::exit(1);
+            }
+            let path = Path::new(&args[2]);
+
+            // Build first
+            if path.is_dir() {
+                build_directory(path);
+            } else {
+                build_file(path);
+            }
+
+            // Then execute the JS via bun
+            let js_path = if path.is_dir() {
+                // Look for main.js or index.js in the directory
+                let main = path.join("main.js");
+                let index = path.join("index.js");
+                if main.exists() {
+                    main
+                } else if index.exists() {
+                    index
+                } else {
+                    eprintln!("no main.js or index.js found in {}", path.display());
+                    std::process::exit(1);
+                }
+            } else {
+                path.with_extension("js")
+            };
+
+            let status = std::process::Command::new("bun")
+                .arg(js_path.to_str().unwrap())
+                .status()
+                .expect("failed to run bun");
+
+            if !status.success() {
+                std::process::exit(status.code().unwrap_or(1));
+            }
+        }
         _ => {
             eprintln!("unknown command: {}", args[1]);
             std::process::exit(1);

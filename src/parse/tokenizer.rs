@@ -37,6 +37,10 @@ pub enum Token {
     Fallback,
     Default,
 
+    // Import
+    Import,
+    From,
+
     // Self
     SelfKw,
 
@@ -188,6 +192,8 @@ pub fn tokenize(source: &str) -> Vec<Token> {
                 "halt" => Token::Halt,
                 "fallback" => Token::Fallback,
                 "default" => Token::Default,
+                "import" => Token::Import,
+                "from" => Token::From,
                 "self" => Token::SelfKw,
                 "is" => Token::Is,
                 "true" => Token::BoolLit(true),
