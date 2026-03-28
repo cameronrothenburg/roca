@@ -6,14 +6,15 @@ mod errors;
 
 use std::env;
 use std::fs;
+use std::path::Path;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
 
     if args.len() < 2 {
         eprintln!("usage: roca <command> [args]");
-        eprintln!("  roca check <file.roca>    — parse + check rules");
-        eprintln!("  roca build <file.roca>    — parse + check + emit JS");
+        eprintln!("  roca check <file.roca>       — parse + check rules");
+        eprintln!("  roca build <file_or_dir>     — parse + check + test + emit JS");
         std::process::exit(1);
     }
 
@@ -39,67 +40,168 @@ fn main() {
         }
         "build" => {
             if args.len() < 3 {
-                eprintln!("usage: roca build <file.roca>");
-                std::process::exit(1);
-            }
-            let source = read_file(&args[2]);
-            let file = parse::parse(&source);
-            let errors = check::check(&file);
-
-            if !errors.is_empty() {
-                for err in &errors {
-                    eprintln!("{}", err);
-                }
-                eprintln!("\n✗ {} error(s) — no JS emitted", errors.len());
+                eprintln!("usage: roca build <file_or_dir>");
                 std::process::exit(1);
             }
 
-            let js = emit::emit(&file);
-            let out_path = args[2].replace(".roca", ".js");
-
-            // Write main JS
-            fs::write(&out_path, &js).unwrap_or_else(|e| {
-                eprintln!("error writing {}: {}", out_path, e);
-                std::process::exit(1);
-            });
-
-            // Emit + run test harness
-            if let Some(test_js) = emit::test_harness::emit_tests(&file) {
-                let test_path = args[2].replace(".roca", ".test.js");
-                fs::write(&test_path, &test_js).unwrap_or_else(|e| {
-                    eprintln!("error writing {}: {}", test_path, e);
-                    std::process::exit(1);
-                });
-
-                // Run tests via bun
-                let output = std::process::Command::new("bun")
-                    .arg(&test_path)
-                    .output()
-                    .expect("failed to run bun");
-
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                let stderr = String::from_utf8_lossy(&output.stderr);
-
-                if !output.status.success() {
-                    eprint!("{}", stderr);
-                    print!("{}", stdout);
-                    // Clean up — tests failed, remove the JS
-                    let _ = fs::remove_file(&out_path);
-                    let _ = fs::remove_file(&test_path);
-                    eprintln!("\n✗ proof tests failed — no JS emitted");
-                    std::process::exit(1);
-                }
-
-                print!("{}", stdout);
-                // Clean up test file
-                let _ = fs::remove_file(&test_path);
+            let path = Path::new(&args[2]);
+            if path.is_dir() {
+                build_directory(path);
+            } else {
+                build_file(path);
             }
-
-            println!("✓ built → {}", out_path);
         }
         _ => {
             eprintln!("unknown command: {}", args[1]);
             std::process::exit(1);
+        }
+    }
+}
+
+/// Build a single .roca file
+fn build_file(path: &Path) {
+    let source = read_file(path.to_str().unwrap());
+    let file = parse::parse(&source);
+    let errors = check::check(&file);
+
+    if !errors.is_empty() {
+        for err in &errors {
+            eprintln!("{}", err);
+        }
+        eprintln!("\n✗ {} error(s) — no JS emitted", errors.len());
+        std::process::exit(1);
+    }
+
+    let js = emit::emit(&file);
+    let out_path = path.with_extension("js");
+
+    fs::write(&out_path, &js).unwrap_or_else(|e| {
+        eprintln!("error writing {}: {}", out_path.display(), e);
+        std::process::exit(1);
+    });
+
+    // Emit test file (embeds code + assertions), run it
+    if let Some((test_js, _count)) = emit::test_harness::emit_tests(&file, "__embed__") {
+        let test_path = path.with_extension("test.js");
+        fs::write(&test_path, &test_js).unwrap_or_else(|e| {
+            eprintln!("error writing {}: {}", test_path.display(), e);
+            std::process::exit(1);
+        });
+
+        let output = std::process::Command::new("bun")
+            .arg(test_path.to_str().unwrap())
+            .output()
+            .expect("failed to run bun");
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        if !output.status.success() {
+            eprint!("{}", stderr);
+            print!("{}", stdout);
+            let _ = fs::remove_file(&out_path);
+            let _ = fs::remove_file(&test_path);
+            eprintln!("\n✗ proof tests failed — no JS emitted");
+            std::process::exit(1);
+        }
+
+        print!("{}", stdout);
+        let _ = fs::remove_file(&test_path);
+    }
+
+    println!("✓ built → {}", out_path.display());
+}
+
+/// Build all .roca files in a directory
+fn build_directory(dir: &Path) {
+    let mut files: Vec<_> = Vec::new();
+    collect_roca_files(dir, &mut files);
+
+    if files.is_empty() {
+        eprintln!("no .roca files found in {}", dir.display());
+        std::process::exit(1);
+    }
+
+    println!("building {} file(s)...", files.len());
+
+    let mut total_tests = 0;
+    let mut total_passed = 0;
+    let mut failed_files = Vec::new();
+
+    for file_path in &files {
+        let source = read_file(file_path.to_str().unwrap());
+        let file = parse::parse(&source);
+        let errors = check::check(&file);
+
+        if !errors.is_empty() {
+            for err in &errors {
+                eprintln!("{}", err);
+            }
+            failed_files.push(file_path.display().to_string());
+            continue;
+        }
+
+        let js = emit::emit(&file);
+        let out_path = file_path.with_extension("js");
+        fs::write(&out_path, &js).unwrap_or_else(|e| {
+            eprintln!("error writing {}: {}", out_path.display(), e);
+            failed_files.push(file_path.display().to_string());
+        });
+
+        // Run proof tests
+        if let Some((test_js, count)) = emit::test_harness::emit_tests(&file, "__embed__") {
+            total_tests += count;
+            let test_path = file_path.with_extension("test.js");
+            fs::write(&test_path, &test_js).unwrap_or_else(|e| {
+                eprintln!("error writing {}: {}", test_path.display(), e);
+            });
+
+            let output = std::process::Command::new("bun")
+                .arg(test_path.to_str().unwrap())
+                .output()
+                .expect("failed to run bun");
+
+            let stdout = String::from_utf8_lossy(&output.stdout);
+
+            if !output.status.success() {
+                print!("{}", stdout);
+                let _ = fs::remove_file(&out_path);
+                failed_files.push(file_path.display().to_string());
+            } else {
+                // Parse pass count from stdout
+                if let Some(line) = stdout.lines().find(|l| l.contains("passed")) {
+                    if let Some(n) = line.split_whitespace().next().and_then(|s| s.parse::<usize>().ok()) {
+                        total_passed += n;
+                    }
+                }
+            }
+
+            let _ = fs::remove_file(&test_path);
+        }
+    }
+
+    println!("\n{} tests passed across {} file(s)", total_passed, files.len());
+
+    if !failed_files.is_empty() {
+        eprintln!("\n✗ {} file(s) failed:", failed_files.len());
+        for f in &failed_files {
+            eprintln!("  {}", f);
+        }
+        std::process::exit(1);
+    }
+
+    println!("✓ all files built");
+}
+
+fn collect_roca_files(dir: &Path, files: &mut Vec<std::path::PathBuf>) {
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                collect_roca_files(&path, files);
+            } else if path.extension().map_or(false, |e| e == "roca") {
+                files.push(path);
+            }
         }
     }
 }
