@@ -13,6 +13,7 @@ mod comparisons;
 mod cross_module;
 mod crash;
 mod fuzz;
+mod generics;
 mod match_expr;
 mod imports;
 mod loggable;

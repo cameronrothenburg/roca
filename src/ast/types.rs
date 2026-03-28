@@ -5,6 +5,8 @@ pub enum TypeRef {
     Number,
     Bool,
     Named(String),
+    /// Generic type: Array<Email>, Map<String, Number>
+    Generic(String, Vec<TypeRef>),
     /// value, err return type
     Result(Box<TypeRef>),
     /// Type | null — nullable field

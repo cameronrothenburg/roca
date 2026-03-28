@@ -57,6 +57,7 @@ fn type_ref_to_name(t: &TypeRef) -> String {
         TypeRef::Number => "Number".to_string(),
         TypeRef::Bool => "Bool".to_string(),
         TypeRef::Named(n) => n.clone(),
+        TypeRef::Generic(name, _) => name.clone(),
         TypeRef::Result(inner) => type_ref_to_name(inner),
         TypeRef::Nullable(inner) => format!("{}?", type_ref_to_name(inner)),
         TypeRef::Ok => "Ok".to_string(),

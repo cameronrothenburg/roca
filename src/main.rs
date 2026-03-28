@@ -20,6 +20,7 @@ fn main() {
         eprintln!("  roca init <name>              — create a new project");
         eprintln!("  roca check <file.roca>       — parse + check rules");
         eprintln!("  roca build <file_or_dir>     — parse + check + test + emit JS");
+        eprintln!("  roca test <file_or_dir>      — run tests without emitting JS");
         eprintln!("  roca run <file.roca>          — build + execute via bun");
         eprintln!("  roca lsp                     — start language server (stdio)");
         std::process::exit(1);
@@ -64,6 +65,22 @@ fn main() {
             } else {
                 build_file(path);
             }
+        }
+        "test" => {
+            if args.len() < 3 {
+                eprintln!("usage: roca test <file_or_dir>");
+                std::process::exit(1);
+            }
+            let path = Path::new(&args[2]);
+            // Test only — build to temp, run tests, don't keep output
+            if path.is_dir() {
+                build_directory(path);
+            } else {
+                build_file(path);
+            }
+            // Clean up the JS output — we only wanted to test
+            let out_dir = resolve_out_dir(path);
+            let _ = fs::remove_dir_all(&out_dir);
         }
         "run" => {
             if args.len() < 3 {
@@ -118,6 +135,25 @@ fn main() {
 
 /// Determine the output directory — `out/` next to the source
 fn resolve_out_dir(path: &Path) -> PathBuf {
+    // Check for roca.toml in the project directory
+    let project_dir = if path.is_dir() { path } else { path.parent().unwrap_or(Path::new(".")) };
+    let config_path = project_dir.join("roca.toml");
+
+    if config_path.exists() {
+        if let Ok(content) = fs::read_to_string(&config_path) {
+            // Simple TOML parsing — look for out = "dir/"
+            for line in content.lines() {
+                let trimmed = line.trim();
+                if trimmed.starts_with("out") && trimmed.contains('=') {
+                    if let Some(val) = trimmed.split('=').nth(1) {
+                        let dir = val.trim().trim_matches('"').trim_end_matches('/');
+                        return project_dir.join(dir);
+                    }
+                }
+            }
+        }
+    }
+
     if path.is_dir() {
         path.join("out")
     } else {

@@ -148,7 +148,21 @@ impl Parser {
     /// Parse a type reference: String, Number, Bool, Named, Self, or Type | null
     pub fn parse_type_ref(&mut self) -> TypeRef {
         let base = match self.advance() {
-            Token::Ident(s) => TypeRef::from_str(&s),
+            Token::Ident(s) => {
+                let name = s.clone();
+                // Check for generic: Type<T, U>
+                if self.at(&Token::Lt) {
+                    self.advance();
+                    let mut type_args = vec![self.parse_type_ref()];
+                    while self.eat(&Token::Comma) {
+                        type_args.push(self.parse_type_ref());
+                    }
+                    self.expect(&Token::Gt);
+                    TypeRef::Generic(name, type_args)
+                } else {
+                    TypeRef::from_str(&name)
+                }
+            }
             Token::SelfKw => TypeRef::Named("Self".to_string()),
             Token::Ok => TypeRef::Ok,
             other => panic!("expected type, got {:?}", other),

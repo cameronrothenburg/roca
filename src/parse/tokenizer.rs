@@ -154,8 +154,8 @@ fn tokenize_one(chars: &[char], i: &mut usize, _line: &mut usize) -> Option<Toke
         return None;
     }
 
-    // String literals
-    if c == '"' || c == '\'' {
+    // String literals (including backtick for multi-line)
+    if c == '"' || c == '\'' || c == '`' {
         let quote = c;
         *i += 1;
         let mut s = String::new();
