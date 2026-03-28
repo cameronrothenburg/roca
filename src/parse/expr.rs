@@ -243,10 +243,15 @@ impl Parser {
             }
             Token::Err => {
                 self.advance();
-                // err.name
-                self.expect(&Token::Dot);
-                let name = self.expect_ident();
-                Expr::ErrRef(name)
+                if self.at(&Token::Dot) {
+                    // err.name — error reference
+                    self.advance();
+                    let name = self.expect_ident();
+                    Expr::ErrRef(name)
+                } else {
+                    // bare err — used as variable (from let x, err = ...)
+                    Expr::Ident("err".to_string())
+                }
             }
             Token::Ok => {
                 self.advance();

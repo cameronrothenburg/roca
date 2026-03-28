@@ -6,3 +6,4 @@ mod errors;
 mod structs;
 mod satisfies;
 mod contracts;
+mod integration;
