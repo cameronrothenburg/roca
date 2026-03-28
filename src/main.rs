@@ -55,12 +55,46 @@ fn main() {
             }
 
             let js = emit::emit(&file);
-
             let out_path = args[2].replace(".roca", ".js");
+
+            // Write main JS
             fs::write(&out_path, &js).unwrap_or_else(|e| {
                 eprintln!("error writing {}: {}", out_path, e);
                 std::process::exit(1);
             });
+
+            // Emit + run test harness
+            if let Some(test_js) = emit::test_harness::emit_tests(&file) {
+                let test_path = args[2].replace(".roca", ".test.js");
+                fs::write(&test_path, &test_js).unwrap_or_else(|e| {
+                    eprintln!("error writing {}: {}", test_path, e);
+                    std::process::exit(1);
+                });
+
+                // Run tests via bun
+                let output = std::process::Command::new("bun")
+                    .arg(&test_path)
+                    .output()
+                    .expect("failed to run bun");
+
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let stderr = String::from_utf8_lossy(&output.stderr);
+
+                if !output.status.success() {
+                    eprint!("{}", stderr);
+                    print!("{}", stdout);
+                    // Clean up — tests failed, remove the JS
+                    let _ = fs::remove_file(&out_path);
+                    let _ = fs::remove_file(&test_path);
+                    eprintln!("\n✗ proof tests failed — no JS emitted");
+                    std::process::exit(1);
+                }
+
+                print!("{}", stdout);
+                // Clean up test file
+                let _ = fs::remove_file(&test_path);
+            }
+
             println!("✓ built → {}", out_path);
         }
         _ => {

@@ -5,6 +5,7 @@ mod contracts;
 mod functions;
 mod structs;
 mod crash;
+pub mod test_harness;
 
 use std::collections::HashMap;
 use crate::ast::{self, Item, FnDef};
