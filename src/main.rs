@@ -3,6 +3,7 @@ mod parse;
 mod check;
 mod emit;
 mod errors;
+mod init;
 
 use std::env;
 use std::fs;
@@ -13,12 +14,20 @@ fn main() {
 
     if args.len() < 2 {
         eprintln!("usage: roca <command> [args]");
+        eprintln!("  roca init <name>              — create a new project");
         eprintln!("  roca check <file.roca>       — parse + check rules");
         eprintln!("  roca build <file_or_dir>     — parse + check + test + emit JS");
         std::process::exit(1);
     }
 
     match args[1].as_str() {
+        "init" => {
+            if args.len() < 3 {
+                eprintln!("usage: roca init <project-name>");
+                std::process::exit(1);
+            }
+            init::init_project(&args[2]);
+        }
         "check" => {
             if args.len() < 3 {
                 eprintln!("usage: roca check <file.roca>");
