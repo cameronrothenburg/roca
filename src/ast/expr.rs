@@ -37,6 +37,9 @@ pub enum Expr {
         value: Box<Expr>,
         arms: Vec<MatchArm>,
     },
+    /// String interpolation: "hello {name}, you are {age}"
+    /// Parts alternate: literal, expr, literal, expr, ...
+    StringInterp(Vec<StringPart>),
     /// Error reference: err.name
     ErrRef(String),
     /// self keyword
@@ -57,6 +60,12 @@ pub enum BinOp {
     Gte,
     And,
     Or,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum StringPart {
+    Literal(String),
+    Expr(Expr),
 }
 
 #[derive(Debug, Clone, PartialEq)]

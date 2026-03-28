@@ -1,4 +1,4 @@
-use crate::ast::{Expr, BinOp, MatchArm};
+use crate::ast::{Expr, BinOp, MatchArm, StringPart};
 use super::tokenizer::Token;
 
 /// Parser state — shared cursor over token stream
@@ -237,7 +237,11 @@ impl Parser {
         match self.peek().clone() {
             Token::StringLit(s) => {
                 self.advance();
-                Expr::String(s)
+                if s.contains('{') && s.contains('}') {
+                    parse_string_interp(&s)
+                } else {
+                    Expr::String(s)
+                }
             }
             Token::NumberLit(n) => {
                 self.advance();
@@ -359,6 +363,48 @@ impl Parser {
         }
         args
     }
+}
+
+/// Parse "hello {name}, age {age}" into StringInterp parts
+fn parse_string_interp(s: &str) -> Expr {
+    let mut parts = Vec::new();
+    let mut current = String::new();
+    let mut chars = s.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        if c == '{' {
+            if !current.is_empty() {
+                parts.push(StringPart::Literal(current.clone()));
+                current.clear();
+            }
+            let mut expr_str = String::new();
+            while let Some(&c) = chars.peek() {
+                if c == '}' {
+                    chars.next();
+                    break;
+                }
+                expr_str.push(c);
+                chars.next();
+            }
+            // Parse the expression inside braces — for simple cases, just an identifier
+            let trimmed = expr_str.trim();
+            if trimmed.contains('.') {
+                // Method call or field access: parse as tokens
+                let tokens = super::tokenize(trimmed);
+                let mut p = Parser::new(tokens);
+                parts.push(StringPart::Expr(p.parse_expr()));
+            } else {
+                parts.push(StringPart::Expr(Expr::Ident(trimmed.to_string())));
+            }
+        } else {
+            current.push(c);
+        }
+    }
+    if !current.is_empty() {
+        parts.push(StringPart::Literal(current));
+    }
+
+    Expr::StringInterp(parts)
 }
 
 #[cfg(test)]

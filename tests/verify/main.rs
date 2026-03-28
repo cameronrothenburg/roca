@@ -16,5 +16,6 @@ mod loggable;
 mod mocks;
 mod satisfies_type;
 mod stdlib;
+mod string_interp;
 mod type_coercion;
 mod integration;

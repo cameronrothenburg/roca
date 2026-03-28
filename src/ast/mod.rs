@@ -9,7 +9,7 @@ pub mod nodes;
 
 pub use nodes::*;
 pub use types::TypeRef;
-pub use expr::{Expr, BinOp, MatchArm};
+pub use expr::{Expr, BinOp, MatchArm, StringPart};
 pub use stmt::Stmt;
 pub use err::ErrDecl;
 pub use mock::{MockDef, MockEntry};

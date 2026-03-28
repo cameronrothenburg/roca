@@ -129,6 +129,38 @@ pub(crate) fn build_expr<'a>(ast: &AstBuilder<'a>, expr: &roca::Expr) -> Express
             }
             ast.expression_array(SPAN, items)
         }
+        roca::Expr::StringInterp(parts) => {
+            // Emit as JS template literal: `lit${expr}lit${expr}lit`
+            let mut quasis = ast.vec();
+            let mut expressions = ast.vec();
+
+            for (i, part) in parts.iter().enumerate() {
+                match part {
+                    roca::StringPart::Literal(s) => {
+                        let raw: oxc_span::Atom = ast.str(s).into();
+                        let tail = i == parts.len() - 1;
+                        let value = TemplateElementValue { raw, cooked: None };
+                        quasis.push(ast.template_element(SPAN, value, tail, false));
+                    }
+                    roca::StringPart::Expr(expr) => {
+                        if quasis.is_empty() {
+                            let raw: oxc_span::Atom = ast.str("").into();
+                            let value = TemplateElementValue { raw, cooked: None };
+                            quasis.push(ast.template_element(SPAN, value, false, false));
+                        }
+                        expressions.push(build_expr(ast, expr));
+                    }
+                }
+            }
+
+            if quasis.len() <= expressions.len() {
+                let raw: oxc_span::Atom = ast.str("").into();
+                let value = TemplateElementValue { raw, cooked: None };
+                quasis.push(ast.template_element(SPAN, value, true, false));
+            }
+
+            ast.expression_template_literal(SPAN, quasis, expressions)
+        }
         roca::Expr::Index { target, index } => {
             let obj = build_expr(ast, target);
             let idx = build_expr(ast, index);
