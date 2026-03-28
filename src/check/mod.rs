@@ -61,7 +61,6 @@ mod check_tests {
                 value: String
                 validate(raw: String) -> Email, err {
                     err missing = "required"
-                    err invalid = "invalid"
                 }
             }{
                 fn validate(raw: String) -> Email, err {

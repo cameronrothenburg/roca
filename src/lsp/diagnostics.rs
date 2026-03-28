@@ -75,6 +75,9 @@ fn extract_search_term(err: &RuleError) -> Option<String> {
         "const-reassign" | "unknown-method" | "not-loggable" | "unhandled-call" => {
             quoted_name()
         }
+        "untested-error" | "no-success-test" => {
+            quoted_name()
+        }
         _ => None,
     }
 }
@@ -431,5 +434,61 @@ mod tests {
         "#);
         // missing-test + const-reassign + missing-crash + unknown-method
         assert!(diags.len() >= 3, "expected multiple errors, got {}", diags.len());
+    }
+
+    // ─── Test coverage errors ───────────────────────────
+
+    #[test]
+    fn untested_error_detected() {
+        let diags = check_source(r#"
+            pub fn validate(s: String) -> String, err {
+                if s == "" { return err.empty }
+                if s == "bad" { return err.invalid }
+                return s
+                test {
+                    self("ok") == "ok"
+                    self("") is err.empty
+                }
+            }
+        "#);
+        assert!(has_code(&diags, "untested-error"),
+            "should detect untested 'invalid' error");
+        let d = get_with_code(&diags, "untested-error").unwrap();
+        assert!(d.message.contains("invalid"));
+    }
+
+    #[test]
+    fn no_success_test_detected() {
+        let diags = check_source(r#"
+            pub fn validate(s: String) -> String, err {
+                if s == "" { return err.empty }
+                return s
+                test {
+                    self("") is err.empty
+                }
+            }
+        "#);
+        assert!(has_code(&diags, "no-success-test"),
+            "should require a success test case");
+    }
+
+    #[test]
+    fn full_coverage_no_errors() {
+        let diags = check_source(r#"
+            pub fn validate(s: String) -> String, err {
+                if s == "" { return err.empty }
+                if s == "bad" { return err.invalid }
+                return s
+                test {
+                    self("ok") == "ok"
+                    self("") is err.empty
+                    self("bad") is err.invalid
+                }
+            }
+        "#);
+        let coverage_errors: Vec<_> = diags.iter()
+            .filter(|d| matches!(&d.code, Some(NumberOrString::String(c)) if c == "untested-error" || c == "no-success-test"))
+            .collect();
+        assert!(coverage_errors.is_empty(), "full coverage should pass, got: {:?}", coverage_errors);
     }
 }
