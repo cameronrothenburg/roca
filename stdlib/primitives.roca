@@ -1,6 +1,7 @@
 // std — core primitive contracts
 // Always loaded. No import needed for primitives.
 
+// Loggable — types must implement to_log() to be passed to log/error/warn
 contract Loggable {
     to_log() -> String
 }
@@ -21,15 +22,18 @@ contract String {
     split(separator: String) -> Array
     charAt(index: Number) -> String
     toString() -> String
+    to_log() -> String
 }
 
 contract Number {
     toString() -> String
     toFixed(digits: Number) -> String
+    to_log() -> String
 }
 
 contract Bool {
     toString() -> String
+    to_log() -> String
 }
 
 contract Array {
@@ -44,6 +48,7 @@ contract Array {
 contract Bytes {
     toString() -> String
     slice(start: Number) -> Bytes
+    to_log() -> String
 }
 
 contract Map {

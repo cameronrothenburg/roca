@@ -24,12 +24,12 @@ pub(crate) fn build_struct<'a>(
 
     // Struct's own methods
     for method in &s.methods {
-        build_class_method(ast, method, &mut class_body);
+        build_class_method(ast, method, false, &mut class_body);
     }
 
-    // Satisfies methods
+    // Satisfies methods — always instance
     for method in satisfies_methods {
-        build_class_method(ast, method, &mut class_body);
+        build_class_method(ast, method, true, &mut class_body);
     }
 
     let body = ast.class_body(SPAN, class_body);
@@ -83,6 +83,7 @@ fn build_constructor<'a>(
 fn build_class_method<'a>(
     ast: &AstBuilder<'a>,
     method: &roca::FnDef,
+    force_instance: bool,
     elements: &mut oxc_allocator::Vec<'a, ClassElement<'a>>,
 ) {
     let mut params_list = ast.vec();
@@ -102,7 +103,7 @@ fn build_class_method<'a>(
     let body = ast.function_body(SPAN, ast.vec(), stmts);
 
     let uses_self = body_uses_self(&method.body);
-    let is_static = !uses_self && !method.params.iter().any(|p| p.name == "self");
+    let is_static = !force_instance && !uses_self && !method.params.iter().any(|p| p.name == "self");
 
     let func = ast.function(
         SPAN, FunctionType::FunctionExpression, None, false, false, false,

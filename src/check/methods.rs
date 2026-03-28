@@ -109,9 +109,20 @@ fn check_stmts(stmts: &[Stmt], scope: &Scope, registry: &ContractRegistry, ctx: 
     }
 }
 
+const CONSOLE_BUILTINS: &[&str] = &["log", "error", "warn"];
+
 fn check_expr(expr: &Expr, scope: &Scope, registry: &ContractRegistry, ctx: &str, errors: &mut Vec<RuleError>) {
     match expr {
         Expr::Call { target, args } => {
+            // Check log/error/warn — args must have to_log()
+            if let Expr::Ident(name) = target.as_ref() {
+                if CONSOLE_BUILTINS.contains(&name.as_str()) {
+                    for arg in args {
+                        check_loggable(arg, scope, registry, ctx, name, errors);
+                    }
+                }
+            }
+
             // Check if the call target is a method on a known type
             if let Expr::FieldAccess { target: obj, field } = target.as_ref() {
                 if let Some(type_name) = resolve_type(obj, scope) {
@@ -173,6 +184,39 @@ fn check_expr(expr: &Expr, scope: &Scope, registry: &ContractRegistry, ctx: &str
     }
 }
 
+/// Check that an expression passed to log/error/warn has to_log() on its type
+fn check_loggable(
+    expr: &Expr,
+    scope: &Scope,
+    registry: &ContractRegistry,
+    ctx: &str,
+    fn_name: &str,
+    errors: &mut Vec<RuleError>,
+) {
+    // If the arg is a method call like x.to_log(), that returns String — fine
+    if let Expr::Call { target, .. } = expr {
+        if let Expr::FieldAccess { field, .. } = target.as_ref() {
+            if field == "to_log" {
+                return;
+            }
+        }
+    }
+
+    // Resolve the type of the argument
+    if let Some(type_name) = resolve_type(expr, scope) {
+        if !registry.has_method(&type_name, "to_log") {
+            errors.push(RuleError {
+                code: "not-loggable".into(),
+                message: format!(
+                    "{}() requires Loggable — '{}' has no to_log() method. Call .to_log() or implement it",
+                    fn_name, type_name
+                ),
+                context: Some(ctx.to_string()),
+            });
+        }
+    }
+}
+
 /// Resolve the type of an expression from scope
 fn resolve_type(expr: &Expr, scope: &Scope) -> Option<String> {
     match expr {
@@ -189,6 +233,23 @@ fn resolve_type(expr: &Expr, scope: &Scope) -> Option<String> {
 /// Infer the type of an expression
 fn infer_type(expr: &Expr, scope: &Scope) -> Option<String> {
     match expr {
+        // Constructor call: Map(), Email(...) → type is the name
+        Expr::Call { target, .. } => {
+            if let Expr::Ident(name) = target.as_ref() {
+                if name.chars().next().map_or(false, |c| c.is_uppercase()) {
+                    return Some(name.clone());
+                }
+            }
+            // Static method: Email.validate(...) → type is Email
+            if let Expr::FieldAccess { target: obj, .. } = target.as_ref() {
+                if let Expr::Ident(name) = obj.as_ref() {
+                    if name.chars().next().map_or(false, |c| c.is_uppercase()) {
+                        return Some(name.clone());
+                    }
+                }
+            }
+            None
+        }
         Expr::String(_) => Some("String".to_string()),
         Expr::Number(_) => Some("Number".to_string()),
         Expr::Bool(_) => Some("Bool".to_string()),

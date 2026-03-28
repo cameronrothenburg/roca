@@ -58,12 +58,18 @@ pub(crate) fn build_expr<'a>(ast: &AstBuilder<'a>, expr: &roca::Expr) -> Express
             }
         }
         roca::Expr::Call { target, args } => {
-            // Map log() to console.log()
+            // Map log/error/warn to console.log/error/warn
             if let roca::Expr::Ident(name) = target.as_ref() {
-                if name == "log" {
+                let console_method = match name.as_str() {
+                    "log" => Some("log"),
+                    "error" => Some("error"),
+                    "warn" => Some("warn"),
+                    _ => None,
+                };
+                if let Some(method) = console_method {
                     let callee = Expression::from(ast.member_expression_static(
                         SPAN, ast.expression_identifier(SPAN, "console"),
-                        ast.identifier_name(SPAN, "log"), false,
+                        ast.identifier_name(SPAN, method), false,
                     ));
                     let mut oxc_args = ast.vec();
                     for a in args {
