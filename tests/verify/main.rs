@@ -9,6 +9,7 @@ mod contracts;
 mod arrays;
 mod cross_module;
 mod crash;
+mod fuzz;
 mod match_expr;
 mod imports;
 mod loggable;

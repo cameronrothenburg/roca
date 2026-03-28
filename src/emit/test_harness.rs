@@ -81,6 +81,15 @@ pub fn emit_tests(file: &roca::SourceFile, import_path: &str) -> Option<(String,
         }
     }
 
+    // Auto-generate fuzz tests for pub functions with typed params
+    for item in &file.items {
+        if let roca::Item::Function(f) = item {
+            if f.is_pub && !f.params.is_empty() {
+                test_count += emit_fuzz_tests(&ast, &f.name, &f.params, f.returns_err, &mut body);
+            }
+        }
+    }
+
     // console.log(_passed + " passed, " + _failed + " failed")
     body.push(ast.statement_expression(SPAN, make_summary(&ast)));
 
@@ -315,6 +324,150 @@ fn make_process_exit<'a>(ast: &AstBuilder<'a>, code: i32) -> Expression<'a> {
         )),
         NONE, args, false,
     )
+}
+
+// ─── Fuzz testing ───────────────────────────────────────
+
+/// Generate fuzz test cases based on parameter types.
+/// For each param type, generate edge-case values and verify the function
+/// doesn't throw an uncaught exception (all errors must be contracted).
+fn emit_fuzz_tests<'a>(
+    ast: &AstBuilder<'a>,
+    fn_name: &str,
+    params: &[roca::Param],
+    returns_err: bool,
+    body: &mut oxc_allocator::Vec<'a, Statement<'a>>,
+) -> usize {
+    // Generate edge-case inputs per type
+    let fuzz_inputs = generate_fuzz_inputs(params);
+    let mut count = 0;
+
+    for (i, inputs) in fuzz_inputs.iter().enumerate() {
+        let label = format!("{}[fuzz:{}]", fn_name, i);
+
+        // Build: try { fn(args); _passed++; } catch(_e) { _failed++; console.log("FAIL: ..."); }
+        let mut call_args = ast.vec();
+        for input in inputs {
+            call_args.push(Argument::from(build_fuzz_value(ast, input)));
+        }
+        let n = ast.str(fn_name);
+        let call = ast.expression_call(SPAN, ast.expression_identifier(SPAN, n), NONE, call_args, false);
+
+        // try block: call the function, increment passed
+        let mut try_stmts = ast.vec();
+        try_stmts.push(ast.statement_expression(SPAN, call));
+        let pass_target = SimpleAssignmentTarget::AssignmentTargetIdentifier(ast.alloc(ast.identifier_reference(SPAN, "_passed")));
+        try_stmts.push(ast.statement_expression(SPAN, ast.expression_update(SPAN, UpdateOperator::Increment, false, pass_target)));
+        let try_block = ast.block_statement(SPAN, try_stmts);
+
+        // catch block: increment failed, log
+        let fail_target = SimpleAssignmentTarget::AssignmentTargetIdentifier(ast.alloc(ast.identifier_reference(SPAN, "_failed")));
+        let fail_inc = ast.expression_update(SPAN, UpdateOperator::Increment, false, fail_target);
+        let fail_msg = ast.str(&format!("FAIL: {} (fuzz threw uncaught)", label));
+        let mut log_args = ast.vec();
+        log_args.push(Argument::from(ast.expression_string_literal(SPAN, fail_msg, None)));
+        let log_call = ast.expression_call(
+            SPAN,
+            Expression::from(ast.member_expression_static(
+                SPAN, ast.expression_identifier(SPAN, "console"), ast.identifier_name(SPAN, "log"), false,
+            )),
+            NONE, log_args, false,
+        );
+        let mut catch_stmts = ast.vec();
+        catch_stmts.push(ast.statement_expression(SPAN, fail_inc));
+        catch_stmts.push(ast.statement_expression(SPAN, log_call));
+        let catch_body = ast.block_statement(SPAN, catch_stmts);
+        let err_pattern = ast.binding_pattern_binding_identifier(SPAN, "_e");
+        let catch_clause = ast.catch_clause(SPAN, Some(ast.catch_parameter(SPAN, err_pattern, NONE)), catch_body);
+
+        body.push(ast.statement_try(SPAN, ast.alloc(try_block), Some(ast.alloc(catch_clause)), NONE));
+        count += 1;
+    }
+
+    count
+}
+
+#[derive(Clone)]
+enum FuzzValue {
+    Str(String),
+    Num(f64),
+    Bool(bool),
+}
+
+fn generate_fuzz_inputs(params: &[roca::Param]) -> Vec<Vec<FuzzValue>> {
+    // Edge cases per type
+    let string_cases = vec![
+        FuzzValue::Str(String::new()),              // empty
+        FuzzValue::Str(" ".to_string()),             // whitespace
+        FuzzValue::Str("a".repeat(1000)),            // long
+        FuzzValue::Str("<script>".to_string()),      // XSS attempt
+        FuzzValue::Str("null".to_string()),          // null string
+        FuzzValue::Str("\n\t\r".to_string()),        // control chars
+    ];
+    let number_cases = vec![
+        FuzzValue::Num(0.0),
+        FuzzValue::Num(-1.0),
+        FuzzValue::Num(f64::MAX),
+        FuzzValue::Num(f64::MIN),
+        FuzzValue::Num(0.1 + 0.2),                  // float precision
+    ];
+    let bool_cases = vec![
+        FuzzValue::Bool(true),
+        FuzzValue::Bool(false),
+    ];
+
+    // For each param, pick the right edge cases
+    let cases_per_param: Vec<&Vec<FuzzValue>> = params.iter().map(|p| {
+        match &p.type_ref {
+            roca::TypeRef::String => &string_cases,
+            roca::TypeRef::Number => &number_cases,
+            roca::TypeRef::Bool => &bool_cases,
+            _ => &string_cases, // default to string for unknown types
+        }
+    }).collect();
+
+    // Generate combinations — take up to 10 total
+    let mut results = Vec::new();
+    if params.len() == 1 {
+        for case in cases_per_param[0] {
+            results.push(vec![case.clone()]);
+        }
+    } else if params.len() == 2 {
+        for a in cases_per_param[0] {
+            for b in cases_per_param[1] {
+                results.push(vec![a.clone(), b.clone()]);
+                if results.len() >= 10 { break; }
+            }
+            if results.len() >= 10 { break; }
+        }
+    } else {
+        // For 3+ params, just use first edge case for each
+        for case in cases_per_param[0] {
+            let mut combo = vec![case.clone()];
+            for other in &cases_per_param[1..] {
+                combo.push(other[0].clone());
+            }
+            results.push(combo);
+            if results.len() >= 10 { break; }
+        }
+    }
+
+    results
+}
+
+fn build_fuzz_value<'a>(ast: &AstBuilder<'a>, val: &FuzzValue) -> Expression<'a> {
+    match val {
+        FuzzValue::Str(s) => {
+            let s = ast.str(s);
+            ast.expression_string_literal(SPAN, s, None)
+        }
+        FuzzValue::Num(n) => {
+            ast.expression_numeric_literal(SPAN, *n, None, NumberBase::Decimal)
+        }
+        FuzzValue::Bool(b) => {
+            ast.expression_boolean_literal(SPAN, *b)
+        }
+    }
 }
 
 /// Emit a mock object for a contract with a mock block.
