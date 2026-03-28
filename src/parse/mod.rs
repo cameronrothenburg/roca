@@ -9,6 +9,6 @@ pub mod test_block;
 pub mod mock;
 pub mod parser;
 
-pub use tokenizer::{Token, tokenize};
+pub use tokenizer::{Token, tokenize, tokenize_with_lines};
 pub use expr::Parser;
 pub use parser::parse;

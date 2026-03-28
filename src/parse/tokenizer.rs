@@ -92,165 +92,188 @@ pub struct Located {
     pub col: usize,
 }
 
-pub fn tokenize(source: &str) -> Vec<Token> {
+/// Tokenize and return (tokens, line_numbers) — parallel vectors
+pub fn tokenize_with_lines(source: &str) -> (Vec<Token>, Vec<usize>) {
     let mut tokens = Vec::new();
+    let mut lines = Vec::new();
     let chars: Vec<char> = source.chars().collect();
     let mut i = 0;
+    let mut line = 1usize;
 
     while i < chars.len() {
         let c = chars[i];
 
-        // Skip whitespace
-        if c.is_whitespace() {
+        if c == '\n' {
+            line += 1;
             i += 1;
             continue;
         }
 
-        // Skip comments
-        if c == '/' && i + 1 < chars.len() && chars[i + 1] == '/' {
-            while i < chars.len() && chars[i] != '\n' {
-                i += 1;
-            }
-            continue;
+        // Record line for each token pushed
+        let line_before = line;
+        let token = tokenize_one(&chars, &mut i, &mut line);
+        if let Some(tok) = token {
+            tokens.push(tok);
+            lines.push(line_before);
         }
-
-        // String literals
-        if c == '"' || c == '\'' {
-            let quote = c;
-            i += 1;
-            let mut s = String::new();
-            while i < chars.len() && chars[i] != quote {
-                if chars[i] == '\\' && i + 1 < chars.len() {
-                    i += 1;
-                    match chars[i] {
-                        'n' => s.push('\n'),
-                        't' => s.push('\t'),
-                        '\\' => s.push('\\'),
-                        '"' => s.push('"'),
-                        '\'' => s.push('\''),
-                        other => {
-                            s.push('\\');
-                            s.push(other);
-                        }
-                    }
-                } else {
-                    s.push(chars[i]);
-                }
-                i += 1;
-            }
-            i += 1; // closing quote
-            tokens.push(Token::StringLit(s));
-            continue;
-        }
-
-        // Numbers
-        if c.is_ascii_digit() {
-            let mut num = String::new();
-            while i < chars.len() && (chars[i].is_ascii_digit() || chars[i] == '.') {
-                // Only consume dot if next char is a digit (not a method call)
-                if chars[i] == '.' {
-                    if i + 1 < chars.len() && chars[i + 1].is_ascii_digit() {
-                        num.push(chars[i]);
-                    } else {
-                        break;
-                    }
-                } else {
-                    num.push(chars[i]);
-                }
-                i += 1;
-            }
-            tokens.push(Token::NumberLit(num.parse().unwrap()));
-            continue;
-        }
-
-        // Identifiers and keywords
-        if c.is_alphabetic() || c == '_' {
-            let mut ident = String::new();
-            while i < chars.len() && (chars[i].is_alphanumeric() || chars[i] == '_') {
-                ident.push(chars[i]);
-                i += 1;
-            }
-            tokens.push(match ident.as_str() {
-                "contract" => Token::Contract,
-                "struct" => Token::Struct,
-                "satisfies" => Token::Satisfies,
-                "fn" => Token::Fn,
-                "pub" => Token::Pub,
-                "const" => Token::Const,
-                "let" => Token::Let,
-                "return" => Token::Return,
-                "if" => Token::If,
-                "else" => Token::Else,
-                "for" => Token::For,
-                "in" => Token::In,
-                "match" => Token::Match,
-                "crash" => Token::Crash,
-                "test" => Token::Test,
-                "mock" => Token::Mock,
-                "err" => Token::Err,
-                "Ok" => Token::Ok,
-                "retry" => Token::Retry,
-                "skip" => Token::Skip,
-                "halt" => Token::Halt,
-                "fallback" => Token::Fallback,
-                "default" => Token::Default,
-                "import" => Token::Import,
-                "from" => Token::From,
-                "std" => Token::Std,
-                "log" => Token::Ident("log".to_string()),
-                "self" => Token::SelfKw,
-                "is" => Token::Is,
-                "true" => Token::BoolLit(true),
-                "false" => Token::BoolLit(false),
-                _ => Token::Ident(ident),
-            });
-            continue;
-        }
-
-        // Two-character operators
-        if i + 1 < chars.len() {
-            let two = format!("{}{}", c, chars[i + 1]);
-            match two.as_str() {
-                "::" => { tokens.push(Token::ColonColon); i += 2; continue; }
-                "->" => { tokens.push(Token::Arrow); i += 2; continue; }
-                "=>" => { tokens.push(Token::FatArrow); i += 2; continue; }
-                "==" => { tokens.push(Token::Eq); i += 2; continue; }
-                "!=" => { tokens.push(Token::Neq); i += 2; continue; }
-                "<=" => { tokens.push(Token::Lte); i += 2; continue; }
-                ">=" => { tokens.push(Token::Gte); i += 2; continue; }
-                "&&" => { tokens.push(Token::And); i += 2; continue; }
-                "||" => { tokens.push(Token::Or); i += 2; continue; }
-                _ => {}
-            }
-        }
-
-        // Single-character tokens
-        match c {
-            '+' => tokens.push(Token::Plus),
-            '-' => tokens.push(Token::Minus),
-            '*' => tokens.push(Token::Star),
-            '/' => tokens.push(Token::Slash),
-            '=' => tokens.push(Token::Assign),
-            '<' => tokens.push(Token::Lt),
-            '>' => tokens.push(Token::Gt),
-            '!' => tokens.push(Token::Not),
-            '.' => tokens.push(Token::Dot),
-            ',' => tokens.push(Token::Comma),
-            ':' => tokens.push(Token::Colon),
-            ';' => tokens.push(Token::Semicolon),
-            '(' => tokens.push(Token::LParen),
-            ')' => tokens.push(Token::RParen),
-            '{' => tokens.push(Token::LBrace),
-            '}' => tokens.push(Token::RBrace),
-            '[' => tokens.push(Token::LBracket),
-            ']' => tokens.push(Token::RBracket),
-            _ => panic!("unexpected character: '{}'", c),
-        }
-        i += 1;
     }
 
     tokens.push(Token::EOF);
-    tokens
+    lines.push(line);
+    (tokens, lines)
+}
+
+pub fn tokenize(source: &str) -> Vec<Token> {
+    tokenize_with_lines(source).0
+}
+
+fn tokenize_one(chars: &[char], i: &mut usize, _line: &mut usize) -> Option<Token> {
+    let c = chars[*i];
+
+    // Skip whitespace (not newlines — handled by caller)
+    if c.is_whitespace() {
+        *i += 1;
+        return None;
+    }
+
+    // Skip comments
+    if c == '/' && *i + 1 < chars.len() && chars[*i + 1] == '/' {
+        while *i < chars.len() && chars[*i] != '\n' {
+            *i += 1;
+        }
+        return None;
+    }
+
+    // String literals
+    if c == '"' || c == '\'' {
+        let quote = c;
+        *i += 1;
+        let mut s = String::new();
+        while *i < chars.len() && chars[*i] != quote {
+            if chars[*i] == '\\' && *i + 1 < chars.len() {
+                *i += 1;
+                match chars[*i] {
+                    'n' => s.push('\n'),
+                    't' => s.push('\t'),
+                    '\\' => s.push('\\'),
+                    '"' => s.push('"'),
+                    '\'' => s.push('\''),
+                    other => {
+                        s.push('\\');
+                        s.push(other);
+                    }
+                }
+            } else {
+                s.push(chars[*i]);
+            }
+            *i += 1;
+        }
+        *i += 1;
+        return Some(Token::StringLit(s));
+    }
+
+    // Numbers
+    if c.is_ascii_digit() {
+        let mut num = String::new();
+        while *i < chars.len() && (chars[*i].is_ascii_digit() || chars[*i] == '.') {
+            if chars[*i] == '.' {
+                if *i + 1 < chars.len() && chars[*i + 1].is_ascii_digit() {
+                    num.push(chars[*i]);
+                } else {
+                    break;
+                }
+            } else {
+                num.push(chars[*i]);
+            }
+            *i += 1;
+        }
+        return Some(Token::NumberLit(num.parse().unwrap()));
+    }
+
+    // Identifiers and keywords
+    if c.is_alphabetic() || c == '_' {
+        let mut ident = String::new();
+        while *i < chars.len() && (chars[*i].is_alphanumeric() || chars[*i] == '_') {
+            ident.push(chars[*i]);
+            *i += 1;
+        }
+        return Some(match ident.as_str() {
+            "contract" => Token::Contract,
+            "struct" => Token::Struct,
+            "satisfies" => Token::Satisfies,
+            "fn" => Token::Fn,
+            "pub" => Token::Pub,
+            "const" => Token::Const,
+            "let" => Token::Let,
+            "return" => Token::Return,
+            "if" => Token::If,
+            "else" => Token::Else,
+            "for" => Token::For,
+            "in" => Token::In,
+            "match" => Token::Match,
+            "crash" => Token::Crash,
+            "test" => Token::Test,
+            "mock" => Token::Mock,
+            "err" => Token::Err,
+            "Ok" => Token::Ok,
+            "retry" => Token::Retry,
+            "skip" => Token::Skip,
+            "halt" => Token::Halt,
+            "fallback" => Token::Fallback,
+            "default" => Token::Default,
+            "import" => Token::Import,
+            "from" => Token::From,
+            "std" => Token::Std,
+            "log" => Token::Ident("log".to_string()),
+            "self" => Token::SelfKw,
+            "is" => Token::Is,
+            "true" => Token::BoolLit(true),
+            "false" => Token::BoolLit(false),
+            _ => Token::Ident(ident),
+        });
+    }
+
+    // Two-character operators
+    if *i + 1 < chars.len() {
+        let two = format!("{}{}", c, chars[*i + 1]);
+        match two.as_str() {
+            "::" => { *i += 2; return Some(Token::ColonColon); }
+            "->" => { *i += 2; return Some(Token::Arrow); }
+            "=>" => { *i += 2; return Some(Token::FatArrow); }
+            "==" => { *i += 2; return Some(Token::Eq); }
+            "!=" => { *i += 2; return Some(Token::Neq); }
+            "<=" => { *i += 2; return Some(Token::Lte); }
+            ">=" => { *i += 2; return Some(Token::Gte); }
+            "&&" => { *i += 2; return Some(Token::And); }
+            "||" => { *i += 2; return Some(Token::Or); }
+            _ => {}
+        }
+    }
+
+    // Single-character tokens
+    let tok = match c {
+        '+' => Token::Plus,
+        '-' => Token::Minus,
+        '*' => Token::Star,
+        '/' => Token::Slash,
+        '=' => Token::Assign,
+        '<' => Token::Lt,
+        '>' => Token::Gt,
+        '!' => Token::Not,
+        '.' => Token::Dot,
+        ',' => Token::Comma,
+        ':' => Token::Colon,
+        ';' => Token::Semicolon,
+        '(' => Token::LParen,
+        ')' => Token::RParen,
+        '{' => Token::LBrace,
+        '}' => Token::RBrace,
+        '[' => Token::LBracket,
+        ']' => Token::RBracket,
+        _ => panic!("unexpected character: '{}'", c),
+    };
+    *i += 1;
+    Some(tok)
 }
 
 #[cfg(test)]
