@@ -102,6 +102,9 @@ fn collect_roca_paths(dir: &Path, files: &mut Vec<PathBuf>) {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_dir() {
+                if path.file_name().map_or(false, |n| n == "out") {
+                    continue;
+                }
                 collect_roca_paths(&path, files);
             } else if path.extension().map_or(false, |e| e == "roca") {
                 files.push(path);

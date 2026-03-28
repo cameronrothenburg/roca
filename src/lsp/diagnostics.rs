@@ -1,7 +1,7 @@
 use crate::errors::RuleError;
 use tower_lsp::lsp_types::*;
 
-/// Parse and check a Roca source file, returning LSP diagnostics.
+/// Wraps parse + check in catch_unwind so the LSP never crashes on bad input.
 pub fn check_source(source: &str) -> Vec<Diagnostic> {
     let errors = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let file = crate::parse::parse(source);
@@ -57,47 +57,26 @@ fn find_error_range(err: &RuleError, source: &str) -> Range {
 }
 
 fn extract_search_term(err: &RuleError) -> Option<String> {
+    let quoted_name = || err.message.split('\'').nth(1).map(str::to_string);
+
     match err.code.as_str() {
         "missing-test" | "missing-crash" => {
-            if let Some(name) = err.message.split('\'').nth(1) {
-                return Some(format!("fn {}", name));
-            }
+            quoted_name().map(|n| format!("fn {}", n))
         }
         "missing-impl" | "undeclared-method" => {
-            if let Some(ctx) = &err.context {
-                if let Some(name) = ctx.split('.').last() {
-                    return Some(name.to_string());
-                }
-            }
+            err.context.as_ref().and_then(|ctx| ctx.split('.').last().map(str::to_string))
         }
         "unknown-contract" | "missing-satisfies" | "satisfies-mismatch" => {
-            if let Some(name) = err.message.split('\'').nth(1) {
-                return Some(format!("satisfies {}", name));
-            }
-        }
-        "const-reassign" => {
-            if let Some(name) = err.message.split('\'').nth(1) {
-                return Some(name.to_string());
-            }
-        }
-        "unknown-method" | "not-loggable" => {
-            if let Some(name) = err.message.split('\'').nth(1) {
-                return Some(name.to_string());
-            }
+            quoted_name().map(|n| format!("satisfies {}", n))
         }
         "duplicate-err" => {
-            if let Some(name) = err.message.split('\'').nth(1) {
-                return Some(format!("err {}", name));
-            }
+            quoted_name().map(|n| format!("err {}", n))
         }
-        "unhandled-call" => {
-            if let Some(name) = err.message.split('\'').nth(1) {
-                return Some(name.to_string());
-            }
+        "const-reassign" | "unknown-method" | "not-loggable" | "unhandled-call" => {
+            quoted_name()
         }
-        _ => {}
+        _ => None,
     }
-    None
 }
 
 #[cfg(test)]

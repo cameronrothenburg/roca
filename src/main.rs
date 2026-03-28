@@ -130,11 +130,16 @@ fn output_path_for(source_path: &Path, src_dir: &Path, out_dir: &Path) -> PathBu
     out_dir.join(relative).with_extension("js")
 }
 
-/// Build a single .roca file with import resolution
 fn build_file(path: &Path) {
     let project = resolve::resolve_file(path);
-    let source = read_file(path.to_str().unwrap());
-    let file = parse::parse(&source);
+    let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let file = match project.files.get(&canonical) {
+        Some(f) => f.clone(),
+        None => {
+            let source = read_file(path.to_str().unwrap());
+            parse::parse(&source)
+        }
+    };
     let errors = check::check_with_registry(&file, &project.registry);
 
     if !errors.is_empty() {
@@ -217,8 +222,14 @@ fn build_directory(dir: &Path) {
     let mut failed_files = Vec::new();
 
     for file_path in &files {
-        let source = read_file(file_path.to_str().unwrap());
-        let file = parse::parse(&source);
+        let canonical = file_path.canonicalize().unwrap_or_else(|_| file_path.clone());
+        let file = match project.files.get(&canonical) {
+            Some(f) => f.clone(),
+            None => {
+                let source = read_file(file_path.to_str().unwrap());
+                parse::parse(&source)
+            }
+        };
         let errors = check::check_with_registry(&file, &project.registry);
 
         if !errors.is_empty() {
