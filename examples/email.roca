@@ -1,0 +1,48 @@
+contract Stringable {
+    to_string() -> String
+}
+
+contract Serializable {
+    serialize() -> String
+}
+
+pub struct Email {
+    value: String
+    validate(raw: String) -> Email, err {
+        err missing = "value is required"
+        err invalid = "format is not valid"
+    }
+}{
+    fn validate(raw: String) -> Email, err {
+        if raw == "" { return err.missing }
+        return Email { value: raw }
+        test {
+            self("a@b.com") is Ok
+            self("") is err.missing
+        }
+    }
+}
+
+Email satisfies Stringable {
+    fn to_string() -> String {
+        return self.value
+        test { self() == "a@b.com" }
+    }
+}
+
+Email satisfies Serializable {
+    fn serialize() -> String {
+        return self.value
+        test { self() == "a@b.com" }
+    }
+}
+
+pub fn greet(name: String) -> String {
+    let trimmed = name.trim()
+    return "Hello " + trimmed
+    crash { name.trim -> halt }
+    test {
+        self("cam") == "Hello cam"
+        self(" cam ") == "Hello cam"
+    }
+}

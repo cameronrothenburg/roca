@@ -1,0 +1,10 @@
+[package]
+name = "roca"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+oxc_allocator = "0.122"
+oxc_ast = "0.122"
+oxc_codegen = "0.122"
+oxc_span = "0.122"
