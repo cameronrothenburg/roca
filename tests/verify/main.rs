@@ -12,6 +12,7 @@ mod crash;
 mod match_expr;
 mod imports;
 mod loggable;
+mod mocks;
 mod satisfies_type;
 mod stdlib;
 mod type_coercion;

@@ -51,9 +51,17 @@ pub fn emit_tests(file: &roca::SourceFile, import_path: &str) -> Option<(String,
     let mut body = ast.vec();
     let mut test_count: usize = 0;
 
-    // let _passed = 0; let _failed = 0;
     body.push(make_let_init(&ast, "_passed", 0.0));
     body.push(make_let_init(&ast, "_failed", 0.0));
+
+    // Emit mock objects for contracts with mock blocks
+    for item in &file.items {
+        if let roca::Item::Contract(c) = item {
+            if let Some(mock_def) = &c.mock {
+                emit_mock_object(&ast, &c.name, mock_def, &mut body);
+            }
+        }
+    }
 
     for item in &file.items {
         match item {
@@ -307,4 +315,46 @@ fn make_process_exit<'a>(ast: &AstBuilder<'a>, code: i32) -> Expression<'a> {
         )),
         NONE, args, false,
     )
+}
+
+/// Emit a mock object for a contract with a mock block.
+/// Generates: const __mock_ContractName = { method() { return mockValue; }, ... };
+fn emit_mock_object<'a>(
+    ast: &AstBuilder<'a>,
+    contract_name: &str,
+    mock_def: &roca::MockDef,
+    body: &mut oxc_allocator::Vec<'a, Statement<'a>>,
+) {
+    let mut props = ast.vec();
+
+    for entry in &mock_def.entries {
+        let value = super::expressions::build_expr(ast, &entry.value);
+
+        // Build a method that returns the mock value
+        let mut stmts = ast.vec();
+        stmts.push(ast.statement_return(SPAN, Some(value)));
+        let fn_body = ast.function_body(SPAN, ast.vec(), stmts);
+        let formal_params = ast.formal_parameters(SPAN, FormalParameterKind::FormalParameter, ast.vec(), NONE);
+        let func = ast.function(
+            SPAN, FunctionType::FunctionExpression, None, false, false, false,
+            NONE, NONE, formal_params, NONE, Some(fn_body),
+        );
+
+        let method_name = ast.str(&entry.method);
+        let key = PropertyKey::StaticIdentifier(ast.alloc(ast.identifier_name(SPAN, method_name)));
+        let method = ast.object_property_kind_object_property(
+            SPAN, PropertyKind::Init, key,
+            Expression::FunctionExpression(ast.alloc(func)),
+            false, false, false,
+        );
+        props.push(method);
+    }
+
+    let obj = ast.expression_object(SPAN, props);
+    let var_name = format!("__mock_{}", contract_name);
+    let n = ast.str(&var_name);
+    let pattern = ast.binding_pattern_binding_identifier(SPAN, n);
+    let declarator = ast.variable_declarator(SPAN, VariableDeclarationKind::Const, pattern, NONE, Some(obj), false);
+    let decl = ast.variable_declaration(SPAN, VariableDeclarationKind::Const, ast.vec1(declarator), false);
+    body.push(Statement::from(Declaration::VariableDeclaration(ast.alloc(decl))));
 }
