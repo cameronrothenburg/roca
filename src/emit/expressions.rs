@@ -90,5 +90,41 @@ pub(crate) fn build_expr<'a>(ast: &AstBuilder<'a>, expr: &roca::Expr) -> Express
             args.push(Argument::from(obj));
             ast.expression_new(SPAN, callee, NONE, args)
         }
+        roca::Expr::Array(elements) => {
+            let mut items = ast.vec();
+            for el in elements {
+                items.push(ArrayExpressionElement::from(build_expr(ast, el)));
+            }
+            ast.expression_array(SPAN, items)
+        }
+        roca::Expr::Index { target, index } => {
+            let obj = build_expr(ast, target);
+            let idx = build_expr(ast, index);
+            Expression::from(ast.member_expression_computed(SPAN, obj, idx, false))
+        }
+        roca::Expr::Match { value, arms } => {
+            // Emit as nested ternaries: val === p1 ? r1 : val === p2 ? r2 : default
+            // Build from the end (default first, then wrap)
+            let mut result: Option<Expression<'a>> = None;
+
+            for arm in arms.iter().rev() {
+                match &arm.pattern {
+                    None => {
+                        // Default arm
+                        result = Some(build_expr(ast, &arm.value));
+                    }
+                    Some(pattern) => {
+                        let val = build_expr(ast, value);
+                        let pat = build_expr(ast, pattern);
+                        let test = ast.expression_binary(SPAN, val, BinaryOperator::StrictEquality, pat);
+                        let consequent = build_expr(ast, &arm.value);
+                        let alternate = result.unwrap_or_else(|| ast.expression_identifier(SPAN, "undefined"));
+                        result = Some(ast.expression_conditional(SPAN, test, consequent, alternate));
+                    }
+                }
+            }
+
+            result.unwrap_or_else(|| ast.expression_identifier(SPAN, "undefined"))
+        }
     }
 }

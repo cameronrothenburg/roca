@@ -142,6 +142,22 @@ fn collect_calls_in_expr(expr: &Expr, calls: &mut Vec<String>) {
                 collect_calls_in_expr(val, calls);
             }
         }
+        Expr::Array(elements) => {
+            for el in elements {
+                collect_calls_in_expr(el, calls);
+            }
+        }
+        Expr::Index { target, index } => {
+            collect_calls_in_expr(target, calls);
+            collect_calls_in_expr(index, calls);
+        }
+        Expr::Match { value, arms } => {
+            collect_calls_in_expr(value, calls);
+            for arm in arms {
+                if let Some(p) = &arm.pattern { collect_calls_in_expr(p, calls); }
+                collect_calls_in_expr(&arm.value, calls);
+            }
+        }
         _ => {}
     }
 }

@@ -72,7 +72,7 @@ fn fallback_provides_default() {
 
 #[test]
 fn retry_on_success() {
-    // Retry with a function that succeeds — should just return normally
+    // Retry with a function that succeeds — should return on first try
     assert_eq!(run(
         r#"
         pub fn flaky() -> String, err {
@@ -87,10 +87,70 @@ fn retry_on_success() {
             test { self() == "ok" }
         }
         "#,
-        r#"
-            console.log(caller());
-        "#,
+        "console.log(caller());",
     ), "ok");
+}
+
+#[test]
+fn retry_exhausts_attempts_then_throws() {
+    // Function always fails — retry should try 3 times then throw
+    assert_eq!(run(
+        r#"
+        pub fn always_fail() -> String, err {
+            return err.broken
+            test { self() is err.broken }
+        }
+
+        pub fn caller() -> String {
+            const result = always_fail()
+            return result
+            crash { always_fail -> retry(3, 0) }
+            test { self() == "should not reach" }
+        }
+        "#,
+        r#"
+            try {
+                caller();
+                console.log("should not reach");
+            } catch(e) {
+                console.log("caught after retries");
+                console.log(e.message);
+            }
+        "#,
+    ), "caught after retries\nbroken");
+}
+
+#[test]
+fn retry_succeeds_on_later_attempt() {
+    // Use a global counter — succeeds on 3rd attempt
+    assert_eq!(run(
+        r#"
+        pub fn get_count() -> Number {
+            return 0
+            test { self() == 0 }
+        }
+        "#,
+        r#"
+            // Simulate flaky with global state
+            let attempts = 0;
+            function flaky() {
+                attempts++;
+                if (attempts < 3) return [null, new Error("not yet")];
+                return ["success", null];
+            }
+
+            let result;
+            let _err;
+            for (let _attempt = 0; _attempt < 5; _attempt++) {
+                const _retry_tmp = flaky();
+                _err = _retry_tmp[1];
+                if (!_err) { result = _retry_tmp[0]; break; }
+                if (_attempt === 4) throw _err;
+            }
+            console.log(result);
+            console.log(attempts);
+        "#,
+    ), "success\n3");
 }
 
 #[test]

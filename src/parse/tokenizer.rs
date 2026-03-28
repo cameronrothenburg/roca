@@ -78,6 +78,14 @@ pub enum Token {
     EOF,
 }
 
+/// Token with source location
+#[derive(Debug, Clone)]
+pub struct Located {
+    pub token: Token,
+    pub line: usize,
+    pub col: usize,
+}
+
 pub fn tokenize(source: &str) -> Vec<Token> {
     let mut tokens = Vec::new();
     let chars: Vec<char> = source.chars().collect();

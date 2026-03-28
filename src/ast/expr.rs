@@ -25,6 +25,18 @@ pub enum Expr {
         name: String,
         fields: Vec<(String, Expr)>,
     },
+    /// Array literal: [1, 2, 3]
+    Array(Vec<Expr>),
+    /// Index access: expr[index]
+    Index {
+        target: Box<Expr>,
+        index: Box<Expr>,
+    },
+    /// Match expression: match value { pattern => result, _ => default }
+    Match {
+        value: Box<Expr>,
+        arms: Vec<MatchArm>,
+    },
     /// Error reference: err.name
     ErrRef(String),
     /// self keyword
@@ -45,4 +57,11 @@ pub enum BinOp {
     Gte,
     And,
     Or,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MatchArm {
+    /// None = default/wildcard (_)
+    pub pattern: Option<Expr>,
+    pub value: Expr,
 }

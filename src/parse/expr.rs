@@ -1,4 +1,4 @@
-use crate::ast::{Expr, BinOp};
+use crate::ast::{Expr, BinOp, MatchArm};
 use super::tokenizer::Token;
 
 /// Parser state — shared cursor over token stream
@@ -216,6 +216,16 @@ impl Parser {
                         args,
                     };
                 }
+                // Index access: expr[index]
+                Token::LBracket => {
+                    self.advance();
+                    let index = self.parse_expr();
+                    self.expect(&Token::RBracket);
+                    expr = Expr::Index {
+                        target: Box::new(expr),
+                        index: Box::new(index),
+                    };
+                }
                 _ => break,
             }
         }
@@ -281,6 +291,20 @@ impl Parser {
                     Expr::Ident(name)
                 }
             }
+            Token::LBracket => {
+                // Array literal: [1, 2, 3]
+                self.advance();
+                let mut elements = Vec::new();
+                if !self.at(&Token::RBracket) {
+                    elements.push(self.parse_expr());
+                    while self.eat(&Token::Comma) {
+                        if self.at(&Token::RBracket) { break; }
+                        elements.push(self.parse_expr());
+                    }
+                }
+                self.expect(&Token::RBracket);
+                Expr::Array(elements)
+            }
             Token::LParen => {
                 self.advance();
                 let expr = self.parse_expr();
@@ -290,11 +314,35 @@ impl Parser {
             Token::Not => {
                 self.advance();
                 let expr = self.parse_unary();
-                // Represent !expr as expr == false
                 Expr::BinOp {
                     left: Box::new(expr),
                     op: BinOp::Eq,
                     right: Box::new(Expr::Bool(false)),
+                }
+            }
+            Token::Match => {
+                self.advance();
+                let value = self.parse_expr();
+                self.expect(&Token::LBrace);
+                let mut arms = Vec::new();
+                while !self.at(&Token::RBrace) && !self.at(&Token::EOF) {
+                    if self.peek() == &Token::Ident("_".to_string()) {
+                        // Default arm: _ => expr
+                        self.advance();
+                        self.expect(&Token::FatArrow);
+                        let result = self.parse_expr();
+                        arms.push(MatchArm { pattern: None, value: result });
+                    } else {
+                        let pattern = self.parse_expr();
+                        self.expect(&Token::FatArrow);
+                        let result = self.parse_expr();
+                        arms.push(MatchArm { pattern: Some(pattern), value: result });
+                    }
+                }
+                self.expect(&Token::RBrace);
+                Expr::Match {
+                    value: Box::new(value),
+                    arms,
                 }
             }
             other => panic!("unexpected token in expression: {:?}", other),

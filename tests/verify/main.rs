@@ -6,5 +6,7 @@ mod errors;
 mod structs;
 mod satisfies;
 mod contracts;
+mod arrays;
 mod crash;
+mod match_expr;
 mod integration;

@@ -153,6 +153,13 @@ fn expr_uses_self(expr: &roca::Expr) -> bool {
         }
         roca::Expr::FieldAccess { target, .. } => expr_uses_self(target),
         roca::Expr::StructLit { fields, .. } => fields.iter().any(|(_, v)| expr_uses_self(v)),
+        roca::Expr::Array(elements) => elements.iter().any(|e| expr_uses_self(e)),
+        roca::Expr::Index { target, index } => expr_uses_self(target) || expr_uses_self(index),
+        roca::Expr::Match { value, arms } => {
+            expr_uses_self(value) || arms.iter().any(|a| {
+                a.pattern.as_ref().map_or(false, |p| expr_uses_self(p)) || expr_uses_self(&a.value)
+            })
+        }
         _ => false,
     }
 }

@@ -20,7 +20,7 @@ pub(crate) fn build_stmt<'a>(
             if let Some(handler) = find_crash_handler(value, crash) {
                 if !is_halt(&handler.strategy) {
                     let call_expr = build_expr(ast, value);
-                    return wrap_with_strategy(ast, call_expr, name, &handler.strategy);
+                    return wrap_with_strategy(ast, call_expr, name, &handler.strategy, value);
                 }
             }
             let n = ast.str(name);
@@ -34,7 +34,7 @@ pub(crate) fn build_stmt<'a>(
             if let Some(handler) = find_crash_handler(value, crash) {
                 if !is_halt(&handler.strategy) {
                     let call_expr = build_expr(ast, value);
-                    return wrap_with_strategy(ast, call_expr, name, &handler.strategy);
+                    return wrap_with_strategy(ast, call_expr, name, &handler.strategy, value);
                 }
             }
             let n = ast.str(name);
@@ -87,7 +87,7 @@ pub(crate) fn build_stmt<'a>(
                 if !is_halt(&handler.strategy) {
                     let call_expr = build_expr(ast, expr);
                     let var_name = "_result";
-                    return wrap_with_strategy(ast, call_expr, var_name, &handler.strategy);
+                    return wrap_with_strategy(ast, call_expr, var_name, &handler.strategy, expr);
                 }
             }
             let val = build_expr(ast, expr);

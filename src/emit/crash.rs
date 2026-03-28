@@ -8,15 +8,17 @@ use super::expressions::build_expr;
 
 /// Wrap a call expression with a crash strategy, returning flat statements.
 /// Roca functions return [value, err] tuples — crash handlers check the err element.
+/// `source_expr` is the original roca expression, needed for retry to rebuild the call.
 pub(crate) fn wrap_with_strategy<'a>(
     ast: &AstBuilder<'a>,
     call_expr: Expression<'a>,
     var_name: &str,
     strategy: &roca::CrashHandlerKind,
+    source_expr: &roca::Expr,
 ) -> Vec<Statement<'a>> {
     match strategy {
         roca::CrashHandlerKind::Simple(strat) => {
-            wrap_simple(ast, call_expr, var_name, strat)
+            wrap_simple(ast, call_expr, var_name, strat, source_expr)
         }
         roca::CrashHandlerKind::Detailed { arms, default } => {
             wrap_detailed(ast, call_expr, var_name, arms, default)
@@ -29,6 +31,7 @@ fn wrap_simple<'a>(
     call_expr: Expression<'a>,
     var_name: &str,
     strategy: &roca::CrashStrategy,
+    source_expr: &roca::Expr,
 ) -> Vec<Statement<'a>> {
     let tmp = format!("_{}_tmp", var_name);
     let err_name = format!("_{}_err", var_name);
@@ -65,13 +68,70 @@ fn wrap_simple<'a>(
             let conditional = ast.expression_conditional(SPAN, test, fallback_expr, val_access);
             stmts.push(make_const_decl(ast, var_name, conditional));
         }
-        roca::CrashStrategy::Retry { .. } => {
-            // For now, same as halt
-            let test = ast.expression_identifier(SPAN, ast.str(&err_name));
-            let throw = ast.statement_throw(SPAN, ast.expression_identifier(SPAN, ast.str(&err_name)));
-            stmts.push(ast.statement_if(SPAN, test, throw, None));
-            let val_access = make_index_access(ast, &tmp, 0);
-            stmts.push(make_const_decl(ast, var_name, val_access));
+        roca::CrashStrategy::Retry { attempts, .. } => {
+            // let var_name; let _err;
+            // for (let _attempt = 0; _attempt < N; _attempt++) {
+            //   const _tmp = call();
+            //   _err = _tmp[1];
+            //   if (!_err) { var_name = _tmp[0]; break; }
+            //   if (_attempt === N-1) throw _err;
+            // }
+            stmts.clear(); // remove the initial _tmp and _err we added above
+
+            stmts.push(make_let_decl(ast, var_name));
+            stmts.push(make_let_decl(ast, &err_name));
+
+            // for init: let _attempt = 0
+            let attempt_pattern = ast.binding_pattern_binding_identifier(SPAN, "_attempt");
+            let zero = ast.expression_numeric_literal(SPAN, 0.0, None, NumberBase::Decimal);
+            let init_decl = ast.variable_declarator(SPAN, VariableDeclarationKind::Let, attempt_pattern, NONE, Some(zero), false);
+            let init = ast.variable_declaration(SPAN, VariableDeclarationKind::Let, ast.vec1(init_decl), false);
+
+            // test: _attempt < N
+            let test = ast.expression_binary(
+                SPAN,
+                ast.expression_identifier(SPAN, "_attempt"),
+                BinaryOperator::LessThan,
+                ast.expression_numeric_literal(SPAN, *attempts as f64, None, NumberBase::Decimal),
+            );
+
+            // update: _attempt++
+            let update_target = SimpleAssignmentTarget::AssignmentTargetIdentifier(ast.alloc(ast.identifier_reference(SPAN, "_attempt")));
+            let update = ast.expression_update(SPAN, UpdateOperator::Increment, false, update_target);
+
+            // loop body
+            let mut loop_stmts = ast.vec();
+
+            // const _retry_tmp = call() — rebuild from source
+            let retry_call = build_expr(ast, source_expr);
+            loop_stmts.push(make_const_decl(ast, "_retry_tmp", retry_call));
+
+            // _err = _retry_tmp[1]
+            let err_assign = make_assign_expr(ast, &err_name, make_index_access(ast, "_retry_tmp", 1));
+            loop_stmts.push(ast.statement_expression(SPAN, err_assign));
+
+            // if (!_err) { var_name = _retry_tmp[0]; break; }
+            let not_err = ast.expression_unary(SPAN, UnaryOperator::LogicalNot, ast.expression_identifier(SPAN, ast.str(&err_name)));
+            let val_assign = make_assign_expr(ast, var_name, make_index_access(ast, "_retry_tmp", 0));
+            let mut success_stmts = ast.vec();
+            success_stmts.push(ast.statement_expression(SPAN, val_assign));
+            success_stmts.push(ast.statement_break(SPAN, None));
+            let success_block = Statement::BlockStatement(ast.alloc(ast.block_statement(SPAN, success_stmts)));
+            loop_stmts.push(ast.statement_if(SPAN, not_err, success_block, None));
+
+            // if (_attempt === N-1) throw _err
+            let last_check = ast.expression_binary(
+                SPAN,
+                ast.expression_identifier(SPAN, "_attempt"),
+                BinaryOperator::StrictEquality,
+                ast.expression_numeric_literal(SPAN, (*attempts - 1) as f64, None, NumberBase::Decimal),
+            );
+            let throw_err = ast.statement_throw(SPAN, ast.expression_identifier(SPAN, ast.str(&err_name)));
+            loop_stmts.push(ast.statement_if(SPAN, last_check, throw_err, None));
+
+            let loop_body = Statement::BlockStatement(ast.alloc(ast.block_statement(SPAN, loop_stmts)));
+            let for_init = ForStatementInit::VariableDeclaration(ast.alloc(init));
+            stmts.push(ast.statement_for(SPAN, Some(for_init), Some(test), Some(update), loop_body));
         }
     }
 
@@ -181,6 +241,20 @@ fn make_const_decl<'a>(ast: &AstBuilder<'a>, name: &str, value: Expression<'a>) 
     let declarator = ast.variable_declarator(SPAN, VariableDeclarationKind::Const, pattern, NONE, Some(value), false);
     let decl = ast.variable_declaration(SPAN, VariableDeclarationKind::Const, ast.vec1(declarator), false);
     Statement::from(Declaration::VariableDeclaration(ast.alloc(decl)))
+}
+
+fn make_let_decl<'a>(ast: &AstBuilder<'a>, name: &str) -> Statement<'a> {
+    let n = ast.str(name);
+    let pattern = ast.binding_pattern_binding_identifier(SPAN, n);
+    let declarator = ast.variable_declarator(SPAN, VariableDeclarationKind::Let, pattern, NONE, None, false);
+    let decl = ast.variable_declaration(SPAN, VariableDeclarationKind::Let, ast.vec1(declarator), false);
+    Statement::from(Declaration::VariableDeclaration(ast.alloc(decl)))
+}
+
+fn make_assign_expr<'a>(ast: &AstBuilder<'a>, name: &str, value: Expression<'a>) -> Expression<'a> {
+    let n = ast.str(name);
+    let target = SimpleAssignmentTarget::AssignmentTargetIdentifier(ast.alloc(ast.identifier_reference(SPAN, n)));
+    ast.expression_assignment(SPAN, AssignmentOperator::Assign, AssignmentTarget::from(target), value)
 }
 
 fn make_index_access<'a>(ast: &AstBuilder<'a>, name: &str, index: u32) -> Expression<'a> {
