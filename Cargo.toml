@@ -1,3 +1,6 @@
+[workspace]
+members = [".", "roca-lsp"]
+
 [package]
 name = "roca"
 version = "0.1.0"
