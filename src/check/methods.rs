@@ -109,7 +109,7 @@ fn check_stmts(stmts: &[Stmt], scope: &Scope, registry: &ContractRegistry, ctx: 
     }
 }
 
-const CONSOLE_BUILTINS: &[&str] = &["log", "error", "warn"];
+use crate::constants::CONSOLE_BUILTINS;
 
 fn check_expr(expr: &Expr, scope: &Scope, registry: &ContractRegistry, ctx: &str, errors: &mut Vec<RuleError>) {
     match expr {

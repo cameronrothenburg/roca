@@ -1,4 +1,5 @@
 mod ast;
+mod constants;
 mod parse;
 mod check;
 mod emit;
