@@ -95,7 +95,9 @@ fn build_class_method<'a>(
 
     let mut stmts = ast.vec();
     for s in &method.body {
-        stmts.push(build_stmt(ast, s, method.returns_err));
+        for emitted in build_stmt(ast, s, method.returns_err, method.crash.as_ref()) {
+            stmts.push(emitted);
+        }
     }
     let body = ast.function_body(SPAN, ast.vec(), stmts);
 

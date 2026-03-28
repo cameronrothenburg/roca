@@ -1,0 +1,12 @@
+pub fn get_value() -> Number, err {
+    if true { return err.not_found }
+    return 42
+    test { self() is err.not_found }
+}
+
+pub fn with_default() -> Number {
+    const result = get_value()
+    return result
+    crash { get_value -> fallback(99) }
+    test { self() == 99 }
+}

@@ -1,0 +1,29 @@
+contract Stringable {
+    to_string() -> String
+}
+
+pub struct Email {
+    value: String
+    validate(raw: String) -> Email, err {
+        err missing = "required"
+    }
+}{
+    fn validate(raw: String) -> Email, err {
+        return Email { value: raw }
+    }
+}
+
+Email satisfies Stringable {
+    fn bad_name() -> String {
+        return self.value
+        test { self() == "test" }
+    }
+}
+
+pub fn greet(name: String) -> String {
+    const x = "hello"
+    x = "world"
+    let trimmed = name.trim()
+    return trimmed
+    test { self("cam") == "cam" }
+}

@@ -11,7 +11,6 @@ pub(crate) fn build_function<'a>(ast: &AstBuilder<'a>, f: &roca::FnDef) -> Funct
     let n = ast.str(&f.name);
     let id = ast.binding_identifier(SPAN, n);
 
-    // Parameters
     let mut params_list = ast.vec();
     for p in &f.params {
         let pn = ast.str(&p.name);
@@ -20,10 +19,11 @@ pub(crate) fn build_function<'a>(ast: &AstBuilder<'a>, f: &roca::FnDef) -> Funct
     }
     let formal_params = ast.formal_parameters(SPAN, FormalParameterKind::FormalParameter, params_list, NONE);
 
-    // Body: only emit logic statements (skip crash/test blocks — they're compile-time only)
     let mut stmts = ast.vec();
     for s in &f.body {
-        stmts.push(build_stmt(ast, s, f.returns_err));
+        for emitted in build_stmt(ast, s, f.returns_err, f.crash.as_ref()) {
+            stmts.push(emitted);
+        }
     }
     let body = ast.function_body(SPAN, ast.vec(), stmts);
 
@@ -31,13 +31,7 @@ pub(crate) fn build_function<'a>(ast: &AstBuilder<'a>, f: &roca::FnDef) -> Funct
         SPAN,
         FunctionType::FunctionDeclaration,
         Some(id),
-        false, // generator
-        false, // async
-        false, // declare
-        NONE,  // decorators
-        NONE,  // type_params
-        formal_params,
-        NONE,  // return_type
-        Some(body),
+        false, false, false,
+        NONE, NONE, formal_params, NONE, Some(body),
     )
 }
