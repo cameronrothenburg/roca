@@ -251,6 +251,10 @@ impl Parser {
                 self.advance();
                 Expr::Bool(b)
             }
+            Token::Null => {
+                self.advance();
+                Expr::Null
+            }
             Token::SelfKw => {
                 self.advance();
                 Expr::SelfRef

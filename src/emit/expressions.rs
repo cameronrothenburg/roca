@@ -27,6 +27,9 @@ pub(crate) fn build_expr<'a>(ast: &AstBuilder<'a>, expr: &roca::Expr) -> Express
                 ast.expression_identifier(SPAN, n)
             }
         }
+        roca::Expr::Null => {
+            ast.expression_null_literal(SPAN)
+        }
         roca::Expr::SelfRef => {
             ast.expression_this(SPAN)
         }

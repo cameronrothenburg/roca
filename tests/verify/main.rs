@@ -16,6 +16,7 @@ mod match_expr;
 mod imports;
 mod loggable;
 mod mocks;
+mod safe_cast;
 mod satisfies_type;
 mod stdlib;
 mod string_interp;

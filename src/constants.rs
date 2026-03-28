@@ -9,7 +9,7 @@ pub const KEYWORDS: &[&str] = &[
     "retry", "skip", "halt", "fallback", "default",
     "import", "from", "std",
     "self", "is",
-    "true", "false",
+    "null", "true", "false",
     "log", "error", "warn",
     "wait", "waitAll", "waitFirst",
 ];

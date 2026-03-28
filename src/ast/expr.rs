@@ -42,6 +42,8 @@ pub enum Expr {
     StringInterp(Vec<StringPart>),
     /// Error reference: err.name
     ErrRef(String),
+    /// null literal
+    Null,
     /// self keyword
     SelfRef,
 }

@@ -29,6 +29,7 @@ pub enum Token {
     // Error
     Err,
     Ok,
+    Null,
 
     // Async
     Wait,
@@ -221,6 +222,7 @@ fn tokenize_one(chars: &[char], i: &mut usize, _line: &mut usize) -> Option<Toke
             "mock" => Token::Mock,
             "err" => Token::Err,
             "Ok" => Token::Ok,
+            "null" => Token::Null,
             "retry" => Token::Retry,
             "skip" => Token::Skip,
             "halt" => Token::Halt,
