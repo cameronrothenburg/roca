@@ -40,4 +40,20 @@ pub enum Stmt {
         iter: Expr,
         body: Vec<Stmt>,
     },
+    /// let result, failed = wait call()
+    Wait {
+        names: Vec<String>,
+        failed_name: String,
+        kind: WaitKind,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum WaitKind {
+    /// wait call() — single async
+    Single(Expr),
+    /// wait all { call1() call2() } — parallel, all must succeed
+    All(Vec<Expr>),
+    /// wait first { call1() call2() } — first to resolve wins
+    First(Vec<Expr>),
 }

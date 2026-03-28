@@ -30,6 +30,11 @@ pub enum Token {
     Err,
     Ok,
 
+    // Async
+    Wait,
+    All,
+    First,
+
     // Crash strategies
     Retry,
     Skip,
@@ -221,6 +226,9 @@ fn tokenize_one(chars: &[char], i: &mut usize, _line: &mut usize) -> Option<Toke
             "halt" => Token::Halt,
             "fallback" => Token::Fallback,
             "default" => Token::Default,
+            "wait" => Token::Wait,
+            "waitAll" => Token::All,
+            "waitFirst" => Token::First,
             "import" => Token::Import,
             "from" => Token::From,
             "std" => Token::Std,

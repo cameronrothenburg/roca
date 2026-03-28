@@ -10,7 +10,7 @@ pub mod nodes;
 pub use nodes::*;
 pub use types::TypeRef;
 pub use expr::{Expr, BinOp, MatchArm, StringPart};
-pub use stmt::Stmt;
+pub use stmt::{Stmt, WaitKind};
 pub use err::ErrDecl;
 pub use mock::{MockDef, MockEntry};
 pub use crash::{CrashBlock, CrashHandler, CrashHandlerKind, CrashArm, CrashStrategy};

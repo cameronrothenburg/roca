@@ -131,7 +131,118 @@ pub(crate) fn build_stmt<'a>(
             let body_stmt = Statement::BlockStatement(ast.alloc(ast.block_statement(SPAN, stmts)));
             vec![ast.statement_for_of(SPAN, false, left, right, body_stmt)]
         }
+        roca::Stmt::Wait { names, failed_name, kind } => {
+            emit_wait(ast, names, failed_name, kind)
+        }
     }
+}
+
+fn emit_wait<'a>(
+    ast: &AstBuilder<'a>,
+    names: &[String],
+    failed_name: &str,
+    kind: &roca::WaitKind,
+) -> Vec<Statement<'a>> {
+    let mut stmts = Vec::new();
+
+    // Declare result variables
+    for name in names {
+        let n = ast.str(name);
+        let pattern = ast.binding_pattern_binding_identifier(SPAN, n);
+        let declarator = ast.variable_declarator(SPAN, VariableDeclarationKind::Let, pattern, NONE, None, false);
+        let decl = ast.variable_declaration(SPAN, VariableDeclarationKind::Let, ast.vec1(declarator), false);
+        stmts.push(Statement::from(Declaration::VariableDeclaration(ast.alloc(decl))));
+    }
+    // Declare failed variable
+    let fn_str = ast.str(failed_name);
+    let f_pattern = ast.binding_pattern_binding_identifier(SPAN, fn_str);
+    let f_declarator = ast.variable_declarator(SPAN, VariableDeclarationKind::Let, f_pattern, NONE, None, false);
+    let f_decl = ast.variable_declaration(SPAN, VariableDeclarationKind::Let, ast.vec1(f_declarator), false);
+    stmts.push(Statement::from(Declaration::VariableDeclaration(ast.alloc(f_decl))));
+
+    // Build the await expression
+    let await_expr = match kind {
+        roca::WaitKind::Single(expr) => {
+            // await call()
+            ast.expression_await(SPAN, build_expr(ast, expr))
+        }
+        roca::WaitKind::All(exprs) => {
+            // await Promise.all([call1(), call2()])
+            let mut items = ast.vec();
+            for e in exprs {
+                items.push(ArrayExpressionElement::from(build_expr(ast, e)));
+            }
+            let arr = ast.expression_array(SPAN, items);
+            let promise_all = Expression::from(ast.member_expression_static(
+                SPAN, ast.expression_identifier(SPAN, "Promise"), ast.identifier_name(SPAN, "all"), false,
+            ));
+            let mut args = ast.vec();
+            args.push(Argument::from(arr));
+            let call = ast.expression_call(SPAN, promise_all, NONE, args, false);
+            ast.expression_await(SPAN, call)
+        }
+        roca::WaitKind::First(exprs) => {
+            // await Promise.race([call1(), call2()])
+            let mut items = ast.vec();
+            for e in exprs {
+                items.push(ArrayExpressionElement::from(build_expr(ast, e)));
+            }
+            let arr = ast.expression_array(SPAN, items);
+            let promise_race = Expression::from(ast.member_expression_static(
+                SPAN, ast.expression_identifier(SPAN, "Promise"), ast.identifier_name(SPAN, "race"), false,
+            ));
+            let mut args = ast.vec();
+            args.push(Argument::from(arr));
+            let call = ast.expression_call(SPAN, promise_race, NONE, args, false);
+            ast.expression_await(SPAN, call)
+        }
+    };
+
+    // try { result = await ...; } catch(e) { failed = e; }
+    let mut try_stmts = ast.vec();
+
+    if names.len() == 1 {
+        // Single result: name = await ...
+        let n = ast.str(&names[0]);
+        let target = SimpleAssignmentTarget::AssignmentTargetIdentifier(ast.alloc(ast.identifier_reference(SPAN, n)));
+        let assign = ast.expression_assignment(SPAN, AssignmentOperator::Assign, AssignmentTarget::from(target), await_expr);
+        try_stmts.push(ast.statement_expression(SPAN, assign));
+    } else {
+        // Multiple results (wait all): const _wait_result = await ...; a = _wait_result[0]; b = _wait_result[1];
+        let temp_pattern = ast.binding_pattern_binding_identifier(SPAN, "_wait_result");
+        let temp_decl = ast.variable_declarator(SPAN, VariableDeclarationKind::Const, temp_pattern, NONE, Some(await_expr), false);
+        let temp = ast.variable_declaration(SPAN, VariableDeclarationKind::Const, ast.vec1(temp_decl), false);
+        try_stmts.push(Statement::from(Declaration::VariableDeclaration(ast.alloc(temp))));
+
+        for (idx, name) in names.iter().enumerate() {
+            let n = ast.str(name);
+            let target = SimpleAssignmentTarget::AssignmentTargetIdentifier(ast.alloc(ast.identifier_reference(SPAN, n)));
+            let index = ast.expression_numeric_literal(SPAN, idx as f64, None, NumberBase::Decimal);
+            let access = Expression::from(ast.member_expression_computed(
+                SPAN, ast.expression_identifier(SPAN, "_wait_result"), index, false,
+            ));
+            let assign = ast.expression_assignment(SPAN, AssignmentOperator::Assign, AssignmentTarget::from(target), access);
+            try_stmts.push(ast.statement_expression(SPAN, assign));
+        }
+    }
+
+    let try_block = ast.block_statement(SPAN, try_stmts);
+
+    // catch(e) { failed = e; }
+    let fn2 = ast.str(failed_name);
+    let fail_target = SimpleAssignmentTarget::AssignmentTargetIdentifier(ast.alloc(ast.identifier_reference(SPAN, fn2)));
+    let fail_assign = ast.expression_assignment(
+        SPAN, AssignmentOperator::Assign, AssignmentTarget::from(fail_target),
+        ast.expression_identifier(SPAN, "_e"),
+    );
+    let mut catch_stmts = ast.vec();
+    catch_stmts.push(ast.statement_expression(SPAN, fail_assign));
+    let catch_body = ast.block_statement(SPAN, catch_stmts);
+    let err_pattern = ast.binding_pattern_binding_identifier(SPAN, "_e");
+    let catch_clause = ast.catch_clause(SPAN, Some(ast.catch_parameter(SPAN, err_pattern, NONE)), catch_body);
+
+    stmts.push(ast.statement_try(SPAN, ast.alloc(try_block), Some(ast.alloc(catch_clause)), NONE));
+    stmts
 }
 
 /// Extract the dotted call name from an expression (e.g. "http.get", "Email.validate", "name.trim")

@@ -113,6 +113,14 @@ fn collect_calls_in_stmt(stmt: &Stmt, calls: &mut Vec<String>) {
                 collect_calls_in_stmt(s, calls);
             }
         }
+        Stmt::Wait { kind, .. } => {
+            match kind {
+                crate::ast::WaitKind::Single(expr) => collect_calls_in_expr(expr, calls),
+                crate::ast::WaitKind::All(exprs) | crate::ast::WaitKind::First(exprs) => {
+                    for e in exprs { collect_calls_in_expr(e, calls); }
+                }
+            }
+        }
     }
 }
 

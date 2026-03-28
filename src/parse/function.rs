@@ -78,17 +78,32 @@ impl Parser {
                 self.advance();
                 let name = self.expect_ident();
 
-                // Check for destructuring: let name, err = expr
+                // Check for destructuring: let name, err = expr OR let a, b, failed = wait all { }
                 if self.eat(&Token::Comma) {
-                    // err is a keyword token, so handle it specially
-                    let err_name = match self.advance() {
-                        Token::Ident(s) => s,
-                        Token::Err => "err".to_string(),
-                        other => panic!("expected identifier after comma in let, got {:?}", other),
-                    };
+                    let mut names = vec![name.clone()];
+                    // Collect all names separated by commas
+                    loop {
+                        let next_name = match self.advance() {
+                            Token::Ident(s) => s,
+                            Token::Err => "err".to_string(),
+                            other => panic!("expected identifier after comma in let, got {:?}", other),
+                        };
+                        names.push(next_name);
+                        if !self.eat(&Token::Comma) { break; }
+                    }
                     self.expect(&Token::Assign);
+
+                    // Last name is the error/failed name
+                    let failed_name = names.pop().unwrap();
+                    let result_names = names;
+
+                    if self.at(&Token::Wait) || self.at(&Token::All) || self.at(&Token::First) {
+                        return self.parse_wait_stmt(result_names, failed_name);
+                    }
+
+                    // Regular destructure — only supports 1 result name
                     let value = self.parse_expr();
-                    return Stmt::LetResult { name, err_name, value };
+                    return Stmt::LetResult { name: result_names.into_iter().next().unwrap_or_default(), err_name: failed_name, value };
                 }
 
                 let type_ann = if self.eat(&Token::Colon) {
@@ -165,6 +180,41 @@ impl Parser {
                 Stmt::Expr(expr)
             }
         }
+    }
+
+    /// Parse: wait call() | wait all { calls } | wait first { calls }
+    fn parse_wait_stmt(&mut self, names: Vec<String>, failed_name: String) -> Stmt {
+        let kind = match self.peek() {
+            Token::Wait => {
+                self.advance();
+                WaitKind::Single(self.parse_expr())
+            }
+            Token::All => {
+                // waitAll { call1() call2() }
+                self.advance();
+                self.expect(&Token::LBrace);
+                let mut calls = Vec::new();
+                while !self.at(&Token::RBrace) && !self.at(&Token::EOF) {
+                    calls.push(self.parse_expr());
+                }
+                self.expect(&Token::RBrace);
+                WaitKind::All(calls)
+            }
+            Token::First => {
+                // waitFirst { call1() call2() }
+                self.advance();
+                self.expect(&Token::LBrace);
+                let mut calls = Vec::new();
+                while !self.at(&Token::RBrace) && !self.at(&Token::EOF) {
+                    calls.push(self.parse_expr());
+                }
+                self.expect(&Token::RBrace);
+                WaitKind::First(calls)
+            }
+            other => panic!("expected wait, waitAll, or waitFirst, got {:?}", other),
+        };
+
+        Stmt::Wait { names, failed_name, kind }
     }
 }
 

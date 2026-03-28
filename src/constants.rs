@@ -11,6 +11,7 @@ pub const KEYWORDS: &[&str] = &[
     "self", "is",
     "true", "false",
     "log", "error", "warn",
+    "wait", "waitAll", "waitFirst",
 ];
 
 /// Built-in type names.
