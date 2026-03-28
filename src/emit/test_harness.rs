@@ -584,7 +584,7 @@ fn generate_battle_tests(file: &roca::SourceFile) -> String {
         match item {
             roca::Item::Function(f) if f.is_pub && !f.params.is_empty() => {
                 let errors = collect_error_names(&f.body);
-                if let Some(test) = generate_battle_test_for_fn(&f.name, &f.params, f.returns_err, &errors) {
+                if let Some(test) = generate_battle_test_for_fn(&f.name, &f.params, f.returns_err, &errors, file) {
                     tests.push(test);
                 }
             }
@@ -600,7 +600,7 @@ fn generate_battle_tests(file: &roca::SourceFile) -> String {
                         for e in body_errors { if !errors.contains(&e) { errors.push(e); } }
 
                         let full_name = format!("{}.{}", s.name, method.name);
-                        if let Some(test) = generate_battle_test_for_method(&full_name, &s.name, &method.name, &method.params, method.returns_err, &errors) {
+                        if let Some(test) = generate_battle_test_for_method(&full_name, &s.name, &method.name, &method.params, method.returns_err, &errors, file) {
                             tests.push(test);
                         }
                     }
@@ -639,8 +639,9 @@ fn generate_battle_test_for_fn(
     params: &[roca::Param],
     returns_err: bool,
     errors: &[String],
+    file: &roca::SourceFile,
 ) -> Option<String> {
-    let arbs = params_to_arbs(params)?;
+    let arbs = params_to_arbs(params, file)?;
     let param_names: Vec<String> = params.iter().map(|p| p.name.clone()).collect();
     let error_list = format!("[{}]", errors.iter().map(|e| format!("\"{}\"", e)).collect::<Vec<_>>().join(", "));
 
@@ -659,8 +660,9 @@ fn generate_battle_test_for_method(
     params: &[roca::Param],
     returns_err: bool,
     errors: &[String],
+    file: &roca::SourceFile,
 ) -> Option<String> {
-    let arbs = params_to_arbs(params)?;
+    let arbs = params_to_arbs(params, file)?;
     let error_list = format!("[{}]", errors.iter().map(|e| format!("\"{}\"", e)).collect::<Vec<_>>().join(", "));
 
     Some(format!(
@@ -672,21 +674,55 @@ fn generate_battle_test_for_method(
     ))
 }
 
-fn params_to_arbs(params: &[roca::Param]) -> Option<String> {
+fn params_to_arbs(params: &[roca::Param], file: &roca::SourceFile) -> Option<String> {
     let arbs: Vec<String> = params.iter().map(|p| {
-        match &p.type_ref {
-            roca::TypeRef::String => "arb.String()".to_string(),
-            roca::TypeRef::Number => "arb.Number()".to_string(),
-            roca::TypeRef::Bool => "arb.Bool()".to_string(),
-            _ => return "null".to_string(), // unknown type — skip
-        }
+        type_to_arb(&p.type_ref, file)
     }).collect();
 
     if arbs.iter().any(|a| a == "null") {
-        return None; // Can't generate arbs for non-primitive params
+        return None;
     }
 
     Some(arbs.join(", "))
+}
+
+fn type_to_arb(t: &roca::TypeRef, file: &roca::SourceFile) -> String {
+    match t {
+        roca::TypeRef::String => "arb.String()".to_string(),
+        roca::TypeRef::Number => "arb.Number()".to_string(),
+        roca::TypeRef::Bool => "arb.Bool()".to_string(),
+        roca::TypeRef::Named(name) => {
+            // Look up the struct and generate from its fields
+            for item in &file.items {
+                if let roca::Item::Struct(s) = item {
+                    if s.name == *name && !s.fields.is_empty() {
+                        return struct_to_arb(s, file);
+                    }
+                }
+            }
+            "null".to_string()
+        }
+        _ => "null".to_string(),
+    }
+}
+
+/// Generate a fast-check arbitrary that produces a struct instance from field arbs
+/// fc.record({ name: fc.string(), age: fc.double() }).map(fields => new Name(fields))
+fn struct_to_arb(s: &roca::StructDef, file: &roca::SourceFile) -> String {
+    let field_arbs: Vec<String> = s.fields.iter().map(|f| {
+        let arb = type_to_arb(&f.type_ref, file);
+        format!("{}: {}", f.name, arb)
+    }).collect();
+
+    if field_arbs.iter().any(|a| a.contains("null")) {
+        return "null".to_string();
+    }
+
+    format!(
+        "fc.record({{ {} }}).map(_f => new {}(_f))",
+        field_arbs.join(", "),
+        s.name,
+    )
 }
 
 fn collect_error_names(stmts: &[roca::Stmt]) -> Vec<String> {
