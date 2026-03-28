@@ -1,7 +1,6 @@
-// std — core primitive contracts
-// Always loaded. No import needed for primitives.
+// Roca Standard Library — Primitive Contracts
+// The compiler maps these to JS — AI can only call what's declared here.
 
-// Loggable — types must implement to_log() to be passed to log/error/warn
 contract Loggable {
     to_log() -> String
 }
@@ -46,9 +45,34 @@ contract Array {
 }
 
 contract Bytes {
-    toString() -> String
+    // Properties
+    byteLength() -> Number
+
+    // Read
+    at(index: Number) -> Number
     slice(start: Number) -> Bytes
+
+    // Convert
+    toString() -> String
     to_log() -> String
+    toHex() -> String
+    toBase64() -> String
+    toArray() -> Array
+}
+
+contract Buffer {
+    // Write
+    write(data: Bytes) -> Buffer
+    writeString(data: String) -> Buffer
+    writeByte(value: Number) -> Buffer
+
+    // Read
+    toBytes() -> Bytes
+    toString() -> String
+    byteLength() -> Number
+
+    // Clear
+    clear() -> Buffer
 }
 
 contract Map {
