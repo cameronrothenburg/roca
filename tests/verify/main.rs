@@ -10,5 +10,6 @@ mod arrays;
 mod crash;
 mod match_expr;
 mod imports;
+mod stdlib;
 mod type_coercion;
 mod integration;

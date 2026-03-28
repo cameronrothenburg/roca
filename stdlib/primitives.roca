@@ -1,0 +1,57 @@
+// std — core primitive contracts
+// Always loaded. No import needed for primitives.
+
+contract Loggable {
+    to_log() -> String
+}
+
+contract String {
+    trim() -> String
+    trimStart() -> String
+    trimEnd() -> String
+    toUpperCase() -> String
+    toLowerCase() -> String
+    replace(search: String, replacement: String) -> String
+    slice(start: Number) -> String
+    repeat(count: Number) -> String
+    includes(search: String) -> Bool
+    startsWith(search: String) -> Bool
+    endsWith(search: String) -> Bool
+    indexOf(search: String) -> Number
+    split(separator: String) -> Array
+    charAt(index: Number) -> String
+    toString() -> String
+}
+
+contract Number {
+    toString() -> String
+    toFixed(digits: Number) -> String
+}
+
+contract Bool {
+    toString() -> String
+}
+
+contract Array {
+    includes(item: String) -> Bool
+    indexOf(item: String) -> Number
+    join(separator: String) -> String
+    reverse() -> Array
+    push(item: String) -> Number
+    pop() -> String
+}
+
+contract Bytes {
+    toString() -> String
+    slice(start: Number) -> Bytes
+}
+
+contract Map {
+    get(key: String) -> String
+    set(key: String, value: String) -> Map
+    has(key: String) -> Bool
+    delete(key: String) -> Bool
+    keys() -> Array
+    values() -> Array
+    size() -> Number
+}

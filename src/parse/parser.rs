@@ -40,7 +40,7 @@ impl Parser {
         SourceFile { items }
     }
 
-    /// Parse: import { Name1, Name2 } from "./path"
+    /// Parse: import { X } from "./path" or import { X } from std or import { X } from std::module
     fn parse_import(&mut self) -> ImportDef {
         self.expect(&Token::Import);
         self.expect(&Token::LBrace);
@@ -54,11 +54,23 @@ impl Parser {
         }
         self.expect(&Token::RBrace);
         self.expect(&Token::From);
-        let path = match self.advance() {
-            Token::StringLit(s) => s,
-            other => panic!("expected string path after from, got {:?}", other),
+
+        let source = if self.at(&Token::Std) {
+            self.advance();
+            if self.eat(&Token::ColonColon) {
+                let module = self.expect_ident();
+                ImportSource::Std(Some(module))
+            } else {
+                ImportSource::Std(None)
+            }
+        } else {
+            match self.advance() {
+                Token::StringLit(s) => ImportSource::Path(s),
+                other => panic!("expected string path or std after from, got {:?}", other),
+            }
         };
-        ImportDef { names, path }
+
+        ImportDef { names, source }
     }
 }
 

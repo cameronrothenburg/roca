@@ -33,15 +33,23 @@ pub fn emit(file: &ast::SourceFile) -> String {
     }
 
     // Collect import lines (emitted as raw string prefix)
+    // std:: imports are resolved by the compiler — not emitted as JS imports
     let mut import_lines = Vec::new();
     for item in &file.items {
         if let Item::Import(imp) = item {
-            let js_path = imp.path.replace(".roca", ".js");
-            import_lines.push(format!(
-                "import {{ {} }} from \"{}\";",
-                imp.names.join(", "),
-                js_path,
-            ));
+            match &imp.source {
+                ast::ImportSource::Path(path) => {
+                    let js_path = path.replace(".roca", ".js");
+                    import_lines.push(format!(
+                        "import {{ {} }} from \"{}\";",
+                        imp.names.join(", "),
+                        js_path,
+                    ));
+                }
+                ast::ImportSource::Std(_) => {
+                    // Stdlib imports are resolved at compile time, not emitted as JS
+                }
+            }
         }
     }
 

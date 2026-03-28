@@ -5,6 +5,7 @@ pub mod satisfies;
 pub mod crash;
 pub mod tests;
 pub mod variables;
+pub mod methods;
 
 use crate::ast::SourceFile;
 use crate::errors::RuleError;
@@ -34,6 +35,9 @@ pub fn check(file: &SourceFile) -> Vec<RuleError> {
 
     // 7. Validate const/let rules
     errors.extend(variables::check_variables(file));
+
+    // 8. Validate method calls exist on types
+    errors.extend(methods::check_methods(file, &registry));
 
     errors
 }

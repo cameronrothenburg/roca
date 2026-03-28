@@ -40,6 +40,8 @@ pub enum Token {
     // Import
     Import,
     From,
+    Std,
+    ColonColon, // ::
 
     // Self
     SelfKw,
@@ -194,6 +196,8 @@ pub fn tokenize(source: &str) -> Vec<Token> {
                 "default" => Token::Default,
                 "import" => Token::Import,
                 "from" => Token::From,
+                "std" => Token::Std,
+                "log" => Token::Ident("log".to_string()),
                 "self" => Token::SelfKw,
                 "is" => Token::Is,
                 "true" => Token::BoolLit(true),
@@ -207,6 +211,7 @@ pub fn tokenize(source: &str) -> Vec<Token> {
         if i + 1 < chars.len() {
             let two = format!("{}{}", c, chars[i + 1]);
             match two.as_str() {
+                "::" => { tokens.push(Token::ColonColon); i += 2; continue; }
                 "->" => { tokens.push(Token::Arrow); i += 2; continue; }
                 "=>" => { tokens.push(Token::FatArrow); i += 2; continue; }
                 "==" => { tokens.push(Token::Eq); i += 2; continue; }

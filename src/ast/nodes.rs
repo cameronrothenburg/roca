@@ -21,11 +21,19 @@ pub enum Item {
     Function(FnDef),
 }
 
-/// import { Name1, Name2 } from "./path"
+/// import { Name1, Name2 } from "./path" or from std::module
 #[derive(Debug, Clone, PartialEq)]
 pub struct ImportDef {
     pub names: Vec<String>,
-    pub path: String,
+    pub source: ImportSource,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ImportSource {
+    /// import from "./file.roca"
+    Path(String),
+    /// import from std or std::module
+    Std(Option<String>),
 }
 
 /// Function parameter

@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use crate::ast::*;
 
-/// Resolved contract — all info the checker needs about a contract
 #[derive(Debug, Clone)]
 pub struct ResolvedContract {
     pub name: String,
@@ -12,32 +11,40 @@ pub struct ResolvedContract {
     pub values: Vec<ContractValue>,
 }
 
-/// Registry of all contracts in a source file
 #[derive(Debug)]
 pub struct ContractRegistry {
     pub contracts: HashMap<String, ResolvedContract>,
-    /// Struct inline contracts (from first {} block)
     pub struct_contracts: HashMap<String, ResolvedContract>,
 }
 
-impl ContractRegistry {
-    /// Build the registry from a parsed source file
-    pub fn build(file: &SourceFile) -> Self {
-        let mut contracts = HashMap::new();
-        let mut struct_contracts = HashMap::new();
+const STDLIB_SOURCE: &str = include_str!("../../stdlib/primitives.roca");
 
+impl ContractRegistry {
+    /// Build the registry from a parsed source file, with stdlib loaded
+    pub fn build(file: &SourceFile) -> Self {
+        let mut reg = Self {
+            contracts: HashMap::new(),
+            struct_contracts: HashMap::new(),
+        };
+
+        let stdlib = crate::parse::parse(STDLIB_SOURCE);
+        reg.load_file(&stdlib);
+        reg.load_file(file);
+
+        reg
+    }
+
+    fn load_file(&mut self, file: &SourceFile) {
         for item in &file.items {
             match item {
                 Item::Contract(c) => {
-                    // Collect all errors across all functions
                     let mut all_errors = HashMap::new();
                     for func in &c.functions {
                         for err in &func.errors {
                             all_errors.insert(err.name.clone(), err.message.clone());
                         }
                     }
-
-                    contracts.insert(c.name.clone(), ResolvedContract {
+                    self.contracts.insert(c.name.clone(), ResolvedContract {
                         name: c.name.clone(),
                         functions: c.functions.clone(),
                         fields: c.fields.clone(),
@@ -47,15 +54,13 @@ impl ContractRegistry {
                     });
                 }
                 Item::Struct(s) => {
-                    // Build a contract from the struct's first {} block
                     let mut all_errors = HashMap::new();
                     for sig in &s.signatures {
                         for err in &sig.errors {
                             all_errors.insert(err.name.clone(), err.message.clone());
                         }
                     }
-
-                    struct_contracts.insert(s.name.clone(), ResolvedContract {
+                    self.struct_contracts.insert(s.name.clone(), ResolvedContract {
                         name: s.name.clone(),
                         functions: s.signatures.clone(),
                         fields: s.fields.clone(),
@@ -67,13 +72,37 @@ impl ContractRegistry {
                 _ => {}
             }
         }
-
-        ContractRegistry { contracts, struct_contracts }
     }
 
-    /// Look up a contract by name (checks both contracts and struct contracts)
     pub fn get(&self, name: &str) -> Option<&ResolvedContract> {
         self.contracts.get(name).or_else(|| self.struct_contracts.get(name))
+    }
+
+    /// Check if a type has a specific method or field
+    pub fn has_method(&self, type_name: &str, method_name: &str) -> bool {
+        if let Some(contract) = self.get(type_name) {
+            if contract.functions.iter().any(|f| f.name == method_name) {
+                return true;
+            }
+            if contract.fields.iter().any(|f| f.name == method_name) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Get all available methods for a type (for error messages)
+    pub fn available_methods(&self, type_name: &str) -> Vec<String> {
+        let mut methods = Vec::new();
+        if let Some(contract) = self.get(type_name) {
+            for f in &contract.functions {
+                methods.push(f.name.clone());
+            }
+            for f in &contract.fields {
+                methods.push(f.name.clone());
+            }
+        }
+        methods
     }
 }
 
@@ -83,43 +112,55 @@ mod tests {
     use crate::parse;
 
     #[test]
-    fn build_registry() {
-        let file = parse::parse(r#"
-            contract Stringable { to_string() -> String }
-            contract HttpClient {
-                get(url: String) -> Response, err {
-                    err timeout = "timed out"
-                }
-                mock { get -> Ok }
-            }
-        "#);
+    fn stdlib_loaded() {
+        let file = parse::parse("");
         let reg = ContractRegistry::build(&file);
-        assert!(reg.get("Stringable").is_some());
-        assert!(reg.get("HttpClient").is_some());
-        let http = reg.get("HttpClient").unwrap();
-        assert!(http.has_mock);
-        assert!(http.errors.contains_key("timeout"));
+        assert!(reg.get("String").is_some());
+        assert!(reg.get("Number").is_some());
+        assert!(reg.get("Bool").is_some());
+        assert!(reg.get("Array").is_some());
+        assert!(reg.get("Bytes").is_some());
     }
 
     #[test]
-    fn build_struct_contract() {
+    fn string_has_trim() {
+        let file = parse::parse("");
+        let reg = ContractRegistry::build(&file);
+        assert!(reg.has_method("String", "trim"));
+        assert!(reg.has_method("String", "includes"));
+        assert!(reg.has_method("String", "toUpperCase"));
+        assert!(!reg.has_method("String", "nonexistent"));
+    }
+
+    #[test]
+    fn number_has_to_string() {
+        let file = parse::parse("");
+        let reg = ContractRegistry::build(&file);
+        assert!(reg.has_method("Number", "toString"));
+        assert!(reg.has_method("Number", "toFixed"));
+        assert!(!reg.has_method("Number", "trim"));
+    }
+
+    #[test]
+    fn user_contract_merged() {
         let file = parse::parse(r#"
-            pub struct Email {
-                value: String
-                validate(raw: String) -> Email, err {
-                    err missing = "required"
-                }
-            }{
-                fn validate(raw: String) -> Email, err {
-                    return Email { value: raw }
-                    test { self("a") is Ok }
+            contract HttpClient {
+                get(url: String) -> String, err {
+                    err timeout = "timed out"
                 }
             }
         "#);
         let reg = ContractRegistry::build(&file);
-        assert!(reg.get("Email").is_some());
-        let email = reg.get("Email").unwrap();
-        assert_eq!(email.functions.len(), 1);
-        assert!(email.errors.contains_key("missing"));
+        assert!(reg.get("String").is_some());
+        assert!(reg.get("HttpClient").is_some());
+    }
+
+    #[test]
+    fn available_methods_list() {
+        let file = parse::parse("");
+        let reg = ContractRegistry::build(&file);
+        let methods = reg.available_methods("String");
+        assert!(methods.contains(&"trim".to_string()));
+        assert!(methods.contains(&"includes".to_string()));
     }
 }

@@ -58,6 +58,32 @@ pub(crate) fn build_expr<'a>(ast: &AstBuilder<'a>, expr: &roca::Expr) -> Express
             }
         }
         roca::Expr::Call { target, args } => {
+            // Map log() to console.log()
+            if let roca::Expr::Ident(name) = target.as_ref() {
+                if name == "log" {
+                    let callee = Expression::from(ast.member_expression_static(
+                        SPAN, ast.expression_identifier(SPAN, "console"),
+                        ast.identifier_name(SPAN, "log"), false,
+                    ));
+                    let mut oxc_args = ast.vec();
+                    for a in args {
+                        oxc_args.push(Argument::from(build_expr(ast, a)));
+                    }
+                    return ast.expression_call(SPAN, callee, NONE, oxc_args, false);
+                }
+            }
+            // Uppercase function calls → new X() (constructor pattern)
+            if let roca::Expr::Ident(name) = target.as_ref() {
+                if name.chars().next().map_or(false, |c| c.is_uppercase()) {
+                    let n = ast.str(name);
+                    let callee = ast.expression_identifier(SPAN, n);
+                    let mut oxc_args = ast.vec();
+                    for a in args {
+                        oxc_args.push(Argument::from(build_expr(ast, a)));
+                    }
+                    return ast.expression_new(SPAN, callee, NONE, oxc_args);
+                }
+            }
             let callee = build_expr(ast, target);
             let mut oxc_args = ast.vec();
             for a in args {
