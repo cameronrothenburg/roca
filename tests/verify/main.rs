@@ -20,5 +20,6 @@ mod satisfies_type;
 mod stdlib;
 mod string_interp;
 mod type_coercion;
+mod type_convert;
 mod wait;
 mod integration;

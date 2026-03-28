@@ -78,7 +78,7 @@ pub(crate) fn build_expr<'a>(ast: &AstBuilder<'a>, expr: &roca::Expr) -> Express
                     return ast.expression_call(SPAN, callee, NONE, oxc_args, false);
                 }
             }
-            // Uppercase function calls → new X() (constructor pattern)
+            // Uppercase calls: primitives = type conversion (no new), structs = constructor (new)
             if let roca::Expr::Ident(name) = target.as_ref() {
                 if name.chars().next().map_or(false, |c| c.is_uppercase()) {
                     let n = ast.str(name);
@@ -86,6 +86,16 @@ pub(crate) fn build_expr<'a>(ast: &AstBuilder<'a>, expr: &roca::Expr) -> Express
                     let mut oxc_args = ast.vec();
                     for a in args {
                         oxc_args.push(Argument::from(build_expr(ast, a)));
+                    }
+                    // Primitive conversions: String(x), Number(x), Bool(x) — no new
+                    if matches!(name.as_str(), "String" | "Number") {
+                        return ast.expression_call(SPAN, callee, NONE, oxc_args, false);
+                    }
+                    // Bool → Boolean in JS
+                    if name == "Bool" {
+                        let js_name = ast.str("Boolean");
+                        let js_callee = ast.expression_identifier(SPAN, js_name);
+                        return ast.expression_call(SPAN, js_callee, NONE, oxc_args, false);
                     }
                     return ast.expression_new(SPAN, callee, NONE, oxc_args);
                 }
