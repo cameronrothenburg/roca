@@ -1,5 +1,16 @@
 # Getting Started
 
+## Prerequisites
+
+- [Rust](https://rustup.rs/) — to build the compiler
+- [Bun](https://bun.sh/) — runs proof tests and `roca run` under the hood
+
+Install the compiler:
+
+```bash
+cargo install --path .
+```
+
 ## Create a project
 
 ```bash

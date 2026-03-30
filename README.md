@@ -42,6 +42,8 @@ The compiler checks the logic, runs the tests, and only then emits JavaScript. I
 
 ## Quick Start
 
+Requires [Rust](https://rustup.rs/) and [Bun](https://bun.sh/) (Bun runs proof tests and `roca run`).
+
 ```bash
 cargo install --path .
 roca init my-app && cd my-app
