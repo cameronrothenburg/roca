@@ -14,7 +14,7 @@ Planned work is tracked as GitHub issues with milestone labels:
 
 - [**v0.3.0**](https://github.com/cameronrothenburg/roca/milestone/1) — Stdlib expansion (std::http, std::crypto, std::time, std::url, std::encoding)
 - [**v0.4.0**](https://github.com/cameronrothenburg/roca/milestone/2) — Language features (type aliases, destructuring, pipe operator)
-- [**v1.0.0**](https://github.com/cameronrothenburg/roca/milestone/3) — Production ready (package registry, formatter, CI action, watch mode)
+- [**v0.5.0**](https://github.com/cameronrothenburg/roca/milestone/3) — Tooling (formatter, CI action, watch mode, VS Code publish)
 
 ## Contributing
 
