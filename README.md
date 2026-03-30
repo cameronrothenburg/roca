@@ -52,24 +52,26 @@ roca build
 
 ## Documentation
 
-Full documentation is in the [Roca Book](docs/src/SUMMARY.md):
+Full documentation in the [Roca Book](docs/src/SUMMARY.md):
 
-- [Introduction](docs/src/introduction.md) — what Roca is and why
-- [Getting Started](docs/src/getting-started.md) — install, init, first build
-- **Philosophy**
-  - [Happy Path](docs/src/philosophy/happy-path.md) — function bodies are pure success
-  - [No Null](docs/src/philosophy/no-null.md) — errors not null
-  - [Crash Blocks](docs/src/philosophy/crash-blocks.md) — error handling
-- **Syntax** — [Functions](docs/src/syntax/functions.md) | [Structs](docs/src/syntax/structs.md) | [Contracts](docs/src/syntax/contracts.md) | [Types](docs/src/syntax/types.md) | [Control Flow](docs/src/syntax/control-flow.md) | [Closures](docs/src/syntax/closures.md) | [Async](docs/src/syntax/async.md)
-- **Integration** — [Extern Contracts](docs/src/integration/extern-contracts.md) | [JS Wiring](docs/src/integration/js-wiring.md) | [TypeScript](docs/src/integration/typescript.md) | [Stdlib Modules](docs/src/integration/stdlib-modules.md)
-- **Reference** — [Compiler Rules](docs/src/reference/compiler-rules.md) | [CLI](docs/src/reference/cli.md) | [Stdlib](docs/src/reference/stdlib.md)
+**Philosophy** — [Safety by Compilation](docs/src/philosophy/safety.md) | [Happy Path](docs/src/philosophy/happy-path.md) | [No Null](docs/src/philosophy/no-null.md) | [Crash Blocks](docs/src/philosophy/crash-blocks.md)
+
+**Syntax** — [Functions](docs/src/syntax/functions.md) | [Structs](docs/src/syntax/structs.md) | [Contracts](docs/src/syntax/contracts.md) | [Types](docs/src/syntax/types.md) | [Control Flow](docs/src/syntax/control-flow.md) | [Closures](docs/src/syntax/closures.md) | [Async](docs/src/syntax/async.md)
+
+**Integration** — [Using in Projects](docs/src/integration/using-in-projects.md) | [Extern Contracts](docs/src/integration/extern-contracts.md) | [JS Wiring](docs/src/integration/js-wiring.md) | [TypeScript](docs/src/integration/typescript.md) | [Stdlib Modules](docs/src/integration/stdlib-modules.md)
+
+**Reference** — [Compiler Rules](docs/src/reference/compiler-rules.md) | [CLI](docs/src/reference/cli.md) | [Stdlib](docs/src/reference/stdlib.md)
+
+**Project** — [Getting Started](docs/src/getting-started.md) | [Roadmap](ROADMAP.md)
 
 Or use the CLI:
 
 ```bash
 roca man              # Full language manual
-roca patterns         # Coding patterns and JS integration examples
+roca patterns         # Coding patterns and JS integration
 roca search trim      # Search stdlib and project
+roca repl             # Interactive REPL
+roca skills           # Generate AI assistant skills
 ```
 
 ## How It Works
@@ -94,4 +96,5 @@ if (err) {
 
 ## License
 
-MIT
+Compiler: [AGPL-3.0](LICENSE-AGPL) — modifications must stay open source.
+Compiled output: [MIT](LICENSE-MIT) — use your JS however you want.
