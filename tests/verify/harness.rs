@@ -1,7 +1,5 @@
-use std::process::Command;
-
-/// Compile roca source to JS, append test script, run via bun, return stdout.
-/// Panics with full JS + stderr if execution fails.
+/// Compile roca source to JS, append test script, run via embedded QuickJS, return stdout.
+/// Panics with full JS + error if execution fails.
 pub fn run(source: &str, test_script: &str) -> String {
     let file = roca::parse::parse(source);
     let js = roca::emit::emit(&file);
@@ -10,19 +8,12 @@ pub fn run(source: &str, test_script: &str) -> String {
     let js = js.replace("export ", "");
     let full = format!("{}\n{}", js, test_script);
 
-    let output = Command::new("bun")
-        .arg("-e")
-        .arg(&full)
-        .output()
-        .expect("failed to run bun");
+    let (stdout, success) = roca::cli::runtime::run_tests(&full);
 
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-
-    if !output.status.success() {
+    if !success {
         panic!(
-            "bun execution failed:\n\n--- JS ---\n{}\n\n--- stderr ---\n{}",
-            full, stderr
+            "JS execution failed:\n\n--- JS ---\n{}\n\n--- output ---\n{}",
+            full, stdout
         );
     }
 
@@ -37,19 +28,12 @@ pub fn run_with_tests(source: &str, test_script: &str) -> String {
     if let Some((harness_js, _)) = roca::emit::test_harness::emit_tests(&file, "__embed__") {
         let full = format!("{}\n{}", harness_js, test_script);
 
-        let output = Command::new("bun")
-            .arg("-e")
-            .arg(&full)
-            .output()
-            .expect("failed to run bun");
+        let (stdout, success) = roca::cli::runtime::run_tests(&full);
 
-        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-
-        if !output.status.success() {
+        if !success {
             panic!(
-                "bun execution failed:\n\n--- JS ---\n{}\n\n--- stderr ---\n{}",
-                full, stderr
+                "JS execution failed:\n\n--- JS ---\n{}\n\n--- output ---\n{}",
+                full, stdout
             );
         }
 
@@ -60,7 +44,7 @@ pub fn run_with_tests(source: &str, test_script: &str) -> String {
     run(source, test_script)
 }
 
-/// Compile roca source to JS, append test script, run via bun.
+/// Compile roca source to JS, append test script, run via embedded QuickJS.
 /// Expects execution to fail (non-zero exit).
 pub fn run_expect_fail(source: &str, test_script: &str) -> String {
     let file = roca::parse::parse(source);
@@ -68,13 +52,8 @@ pub fn run_expect_fail(source: &str, test_script: &str) -> String {
     let js = js.replace("export ", "");
     let full = format!("{}\n{}", js, test_script);
 
-    let output = Command::new("bun")
-        .arg("-e")
-        .arg(&full)
-        .output()
-        .expect("failed to run bun");
+    let (stdout, success) = roca::cli::runtime::run_tests(&full);
 
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-    assert!(!output.status.success(), "expected failure but got success");
-    stderr.trim().to_string()
+    assert!(!success, "expected failure but got success");
+    stdout.trim().to_string()
 }
