@@ -35,3 +35,4 @@ mod type_convert;
 mod wait;
 mod while_loop;
 mod integration;
+mod repl;
