@@ -1,3 +1,5 @@
+//! AST walker — traverses functions and statements, builds scopes, and invokes rules.
+
 use crate::ast::*;
 use crate::errors::RuleError;
 use super::context::*;

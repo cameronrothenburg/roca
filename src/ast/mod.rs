@@ -1,3 +1,6 @@
+//! Abstract syntax tree for the Roca language.
+//! Re-exports all node types used by the parser, checker, and emitter.
+
 pub mod types;
 pub mod expr;
 pub mod stmt;

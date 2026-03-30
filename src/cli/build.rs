@@ -1,3 +1,5 @@
+//! Build command — compiles `.roca` files (or directories) into JS, .d.ts, and test outputs.
+
 use std::fs;
 use std::path::Path;
 

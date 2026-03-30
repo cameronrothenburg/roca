@@ -1,3 +1,6 @@
+//! Battle test generation — stress-tests functions with adversarial and edge-case inputs.
+//! Verifies that functions never throw and always return well-formed results.
+
 use crate::ast as roca;
 
 pub(crate) fn generate_battle_tests(file: &roca::SourceFile) -> String {

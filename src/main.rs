@@ -1,3 +1,6 @@
+//! CLI entry point for the Roca compiler.
+//! Handles `roca build`, `roca check`, `roca init`, and `roca lsp` commands.
+
 mod ast;
 mod constants;
 mod parse;

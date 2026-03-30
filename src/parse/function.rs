@@ -1,3 +1,5 @@
+//! Function parser — `[pub] fn name(params) -> Type { body crash test }`.
+
 use crate::ast::*;
 use super::expr::{Parser, ParseResult};
 use super::tokenizer::Token;

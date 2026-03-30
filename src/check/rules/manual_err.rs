@@ -1,3 +1,6 @@
+//! Rule: err-in-body, manual-err-check
+//! Enforces that errors are handled via crash blocks, not manual destructuring.
+
 use crate::ast::*;
 use crate::errors::{self, RuleError};
 use crate::check::rule::Rule;

@@ -1,3 +1,5 @@
+//! Satisfies parser — `StructName satisfies ContractName { methods }`.
+
 use crate::ast::*;
 use super::expr::{Parser, ParseResult};
 use super::tokenizer::Token;

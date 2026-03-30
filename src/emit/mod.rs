@@ -1,3 +1,7 @@
+//! JavaScript code generation from the Roca AST.
+//! Converts checked Roca source files into valid JS modules with error tuples,
+//! contracts, structs, and optional test harnesses.
+
 pub(crate) mod ast_helpers;
 mod helpers;
 mod expressions;

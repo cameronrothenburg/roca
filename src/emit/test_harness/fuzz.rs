@@ -1,3 +1,6 @@
+//! Fuzz test emission — generates randomized input tests for primitive-param functions.
+//! Produces boundary and edge-case inputs (NaN, empty string, MAX_SAFE_INTEGER, etc.).
+
 use crate::ast as roca;
 use oxc_ast::ast::*;
 use oxc_ast::NONE;

@@ -1,3 +1,6 @@
+//! Struct codegen — emits Roca structs as JS classes.
+//! Generates constructors, methods, and `satisfies` trait implementations.
+
 use crate::ast as roca;
 use oxc_ast::ast::*;
 use oxc_ast::NONE;

@@ -1,3 +1,6 @@
+//! Rule: duplicate-err, err-no-errors, mock-null
+//! Validates contract error declarations and mock blocks.
+
 use std::collections::HashSet;
 use crate::ast::*;
 use crate::errors::{self, RuleError};

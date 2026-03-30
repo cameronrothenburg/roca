@@ -1,3 +1,6 @@
+//! Rule: missing-test, untested-error, no-success-test, invalid-mock-ref
+//! Validates inline test blocks — coverage of error paths and success cases.
+
 use std::collections::HashSet;
 use crate::ast::*;
 use crate::errors::{self, RuleError};

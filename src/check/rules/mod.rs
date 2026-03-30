@@ -1,3 +1,5 @@
+//! All checker rules — each module enforces a category of diagnostics.
+
 pub mod contracts;
 pub mod constraints;
 pub mod structs;

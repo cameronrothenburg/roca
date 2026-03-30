@@ -1,3 +1,6 @@
+//! Function codegen — builds OXC `Function` nodes from Roca function definitions.
+//! Handles params, async detection, and body statement emission.
+
 use crate::ast as roca;
 use oxc_ast::ast::*;
 use oxc_ast::NONE;

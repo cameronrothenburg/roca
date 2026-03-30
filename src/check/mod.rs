@@ -1,3 +1,6 @@
+//! Static analysis and rule checking for Roca source files.
+//! Orchestrates all rules and walks the AST to produce diagnostics.
+
 pub mod context;
 pub mod walker;
 pub mod rule;

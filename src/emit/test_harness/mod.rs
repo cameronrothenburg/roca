@@ -1,3 +1,6 @@
+//! Test harness codegen — generates JS test files from Roca `test` and `mock` blocks.
+//! Emits case-based tests, fuzz tests, battle tests, and mock object wiring.
+
 mod cases;
 mod fuzz;
 mod mocks;

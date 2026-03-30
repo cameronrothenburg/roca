@@ -1,3 +1,5 @@
+//! Check command — parses and validates `.roca` files without emitting JS.
+
 use std::path::{Path, PathBuf};
 
 use crate::resolve;

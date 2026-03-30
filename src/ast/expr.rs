@@ -1,3 +1,5 @@
+//! Expression AST nodes — literals, binary ops, calls, field access, match arms.
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     String(String),

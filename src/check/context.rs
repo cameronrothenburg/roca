@@ -1,3 +1,5 @@
+//! Check contexts passed to rules — file, item, function, statement, and expression scopes.
+
 use std::collections::HashMap;
 use crate::ast::*;
 use super::registry::ContractRegistry;

@@ -1,3 +1,6 @@
+//! Language Server Protocol implementation for Roca.
+//! Provides diagnostics, completions, and document symbols via `tower-lsp`.
+
 mod backend;
 mod completion;
 mod diagnostics;

@@ -1,3 +1,6 @@
+//! LSP backend — implements `LanguageServer` trait, manages document state,
+//! and dispatches to diagnostics, completions, and symbols on each change.
+
 use dashmap::DashMap;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;

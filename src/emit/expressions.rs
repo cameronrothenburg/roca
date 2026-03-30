@@ -1,3 +1,6 @@
+//! Expression codegen — translates Roca expressions into OXC JS expressions.
+//! Handles literals, match arms, field access, calls, and error-result wrapping.
+
 use crate::ast as roca;
 use oxc_ast::ast::*;
 use oxc_ast::NONE;

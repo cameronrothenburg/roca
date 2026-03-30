@@ -1,3 +1,6 @@
+//! Error types and diagnostic codes for the Roca compiler.
+//! Defines all rule error codes and the `RuleError`/`ParseError` structs.
+
 // Rule error codes — single source of truth for all checker diagnostics.
 // Crash rules
 pub const MISSING_CRASH: &str = "missing-crash";

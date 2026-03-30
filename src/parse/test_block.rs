@@ -1,3 +1,5 @@
+//! Test block parser — inline test cases with equality, Ok, and error assertions.
+
 use crate::ast::*;
 use super::expr::{Parser, ParseResult};
 use super::tokenizer::Token;

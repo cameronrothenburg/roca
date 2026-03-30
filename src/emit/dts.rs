@@ -1,3 +1,6 @@
+//! TypeScript declaration (.d.ts) generation from a Roca source file.
+//! Emits type signatures for exported functions, structs, contracts, and enums.
+
 use crate::ast::*;
 
 /// Generate TypeScript declaration file (.d.ts) from a Roca source file.

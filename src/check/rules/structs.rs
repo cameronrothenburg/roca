@@ -1,3 +1,6 @@
+//! Rule: empty-struct, missing-impl, sig-mismatch, undeclared-method
+//! Validates struct definitions, method implementations, and signature consistency.
+
 use crate::ast::*;
 use crate::errors::{self, RuleError};
 use crate::check::rule::Rule;

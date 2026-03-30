@@ -1,3 +1,6 @@
+//! Rule: missing-crash, crash-on-safe, panic-warning
+//! Validates crash block presence and strategy correctness.
+
 use crate::ast::*;
 use crate::errors::{self, RuleError};
 use crate::check::rule::Rule;

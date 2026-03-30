@@ -1,3 +1,5 @@
+//! Contract parser — `contract Name { signatures, errors, mock }`.
+
 use crate::ast::*;
 use super::expr::{Parser, ParseResult};
 use super::tokenizer::Token;

@@ -1,3 +1,5 @@
+//! Type reference AST nodes — String, Number, Bool, Named, Generic, Nullable, Ok.
+
 /// Type references in Roca
 #[derive(Debug, Clone, PartialEq)]
 pub enum TypeRef {

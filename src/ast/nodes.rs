@@ -1,3 +1,6 @@
+//! Top-level AST node definitions.
+//! Source files, items (contracts, structs, functions, enums), and their components.
+
 use super::crash::CrashBlock;
 use super::err::ErrDecl;
 use super::mock::MockDef;

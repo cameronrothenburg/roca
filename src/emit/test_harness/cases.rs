@@ -1,3 +1,6 @@
+//! Case-based test emission — converts Roca `test { case ... }` blocks into JS assertions.
+//! Each case becomes an invocation that checks the return value against the expected output.
+
 use crate::ast as roca;
 use oxc_ast::ast::*;
 use oxc_ast::NONE;

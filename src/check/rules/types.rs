@@ -1,3 +1,8 @@
+//! Rule: nullable-type, nullable-return, return-type-mismatch, return-null,
+//! return-err-not-declared, type-annotation-mismatch, field-type-mismatch,
+//! unknown-field, arg-type-mismatch
+//! Validates type annotations, return types, and struct literal fields.
+
 use crate::ast::*;
 use crate::errors::{self, RuleError};
 use crate::check::rule::Rule;

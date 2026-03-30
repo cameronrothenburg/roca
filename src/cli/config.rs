@@ -1,3 +1,5 @@
+//! Project configuration — resolves src/out directories from `roca.toml` and builds source files.
+
 use std::fs;
 use std::path::{Path, PathBuf};
 

@@ -1,3 +1,6 @@
+//! Rule: unhandled-error
+//! Detects calls to error-returning functions that lack crash block coverage.
+
 use crate::ast::*;
 use crate::errors::{self, RuleError};
 use crate::check::rule::Rule;

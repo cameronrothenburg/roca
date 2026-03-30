@@ -1,3 +1,6 @@
+//! Value rendering utilities for test emission.
+//! Converts Roca expressions and types into JS string representations for mock values.
+
 use crate::ast as roca;
 
 /// Render a Roca expression as a JS string (for mock values)

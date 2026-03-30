@@ -1,3 +1,6 @@
+//! Contract codegen — emits Roca contracts as JS const objects and error maps.
+//! Handles both enum-style value contracts and interface contracts with errors.
+
 use crate::ast as roca;
 use oxc_ast::ast::*;
 use oxc_ast::AstBuilder;

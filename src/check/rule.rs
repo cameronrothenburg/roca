@@ -1,3 +1,5 @@
+//! Rule trait — the interface every checker rule implements.
+
 use crate::errors::RuleError;
 use super::context::*;
 

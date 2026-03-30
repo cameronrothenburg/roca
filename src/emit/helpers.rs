@@ -1,3 +1,6 @@
+//! Shared emit helpers for building result/error tuple objects.
+//! Provides `make_result`, `make_error`, and `null` constructors.
+
 use oxc_ast::ast::*;
 use oxc_ast::AstBuilder;
 

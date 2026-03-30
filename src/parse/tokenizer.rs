@@ -1,3 +1,5 @@
+//! Lexer — converts Roca source text into a stream of tokens.
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Token {
     // Literals

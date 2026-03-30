@@ -1,3 +1,7 @@
+//! Rule: nullable-access, unknown-method, private-method, generic-mismatch,
+//! constraint-violation, type-mismatch, struct-comparison, invalid-ordering, not-loggable
+//! Validates method calls, field access, and type compatibility on expressions.
+
 use std::collections::HashMap;
 use crate::ast::*;
 use crate::errors::{self, RuleError};

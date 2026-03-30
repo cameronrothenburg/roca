@@ -1,3 +1,6 @@
+//! Rule: invalid-constraint, missing-default
+//! Validates field constraints on contracts and structs.
+
 use crate::ast::*;
 use crate::errors::{self, RuleError};
 use crate::check::rule::Rule;

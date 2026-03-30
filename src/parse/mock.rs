@@ -1,3 +1,5 @@
+//! Mock block parser — `mock { method -> value, ... }`.
+
 use crate::ast::{MockDef, MockEntry};
 use super::expr::{Parser, ParseResult};
 use super::tokenizer::Token;

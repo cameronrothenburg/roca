@@ -1,3 +1,5 @@
+//! Expression parser — literals, binary ops, calls, match, and the core `Parser` struct.
+
 use crate::ast::{Expr, BinOp, MatchArm, StringPart};
 use crate::errors::ParseError;
 use super::tokenizer::Token;

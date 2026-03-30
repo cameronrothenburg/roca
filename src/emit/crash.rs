@@ -1,3 +1,6 @@
+//! Crash-handler codegen — emits JS for Roca's `crash` strategies.
+//! Supports retry, fallback, propagate, and detailed error matching.
+
 use crate::ast as roca;
 use oxc_ast::ast::*;
 use oxc_ast::NONE;

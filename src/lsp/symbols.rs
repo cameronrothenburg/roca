@@ -1,3 +1,5 @@
+//! Document symbol provider — extracts functions, structs, contracts, and enums for the outline view.
+
 use crate::ast as roca;
 use tower_lsp::lsp_types::*;
 

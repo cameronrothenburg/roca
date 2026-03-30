@@ -1,3 +1,5 @@
+//! Mock block AST nodes — test doubles for contract methods.
+
 use super::expr::Expr;
 
 /// Mock block on a contract

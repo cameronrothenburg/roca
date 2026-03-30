@@ -1,3 +1,5 @@
+//! Autocompletion provider — suggests keywords, types, and contract methods at the cursor.
+
 use crate::check::registry::ContractRegistry;
 use crate::constants::{KEYWORDS, BUILTIN_TYPES};
 use tower_lsp::lsp_types::*;

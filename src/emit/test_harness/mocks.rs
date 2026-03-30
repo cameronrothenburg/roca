@@ -1,3 +1,6 @@
+//! Mock object emission — generates `__mock_ContractName` objects from Roca `mock` blocks.
+//! Patches contract dependencies in tests with user-defined return values.
+
 use crate::ast as roca;
 use oxc_ast::ast::*;
 use oxc_ast::AstBuilder;

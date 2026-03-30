@@ -1,3 +1,5 @@
+//! Structured event logging — writes build, test, and error events to `roca.jsonl`.
+
 use std::fs;
 use std::path::Path;
 use std::io::Write;

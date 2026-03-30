@@ -1,3 +1,5 @@
+//! Statement AST nodes — const, let, assign, return, if/else, for, while, match.
+
 use super::expr::Expr;
 use super::types::TypeRef;
 

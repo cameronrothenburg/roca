@@ -1,3 +1,6 @@
+//! Statement codegen — translates Roca statements into OXC JS statements.
+//! Handles let/const bindings, returns, loops, crash handlers, and control flow.
+
 use crate::ast as roca;
 use oxc_ast::ast::*;
 use oxc_ast::NONE;

@@ -1,3 +1,5 @@
+//! Struct parser — `struct Name { contract }{ impl }`.
+
 use crate::ast::*;
 use super::expr::{Parser, ParseResult};
 use super::tokenizer::Token;

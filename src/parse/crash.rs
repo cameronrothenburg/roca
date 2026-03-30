@@ -1,3 +1,5 @@
+//! Crash block parser — error recovery handlers with chain strategies.
+
 use crate::ast::*;
 use super::expr::{Parser, ParseResult};
 use super::tokenizer::Token;

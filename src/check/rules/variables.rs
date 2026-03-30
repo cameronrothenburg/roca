@@ -1,3 +1,6 @@
+//! Rule: const-reassign
+//! Detects reassignment of `const` bindings within function bodies.
+
 use std::collections::HashMap;
 use crate::ast::*;
 use crate::errors::{self, RuleError};

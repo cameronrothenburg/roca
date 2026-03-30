@@ -1,3 +1,5 @@
+//! Contract registry — resolves contracts, structs, and stdlib types for the checker.
+
 use std::collections::HashMap;
 use std::sync::LazyLock;
 use crate::ast::*;

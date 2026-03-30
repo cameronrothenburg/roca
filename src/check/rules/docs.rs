@@ -1,3 +1,6 @@
+//! Rule: missing-doc
+//! Requires doc comments on public functions, contracts, and structs.
+
 use crate::ast::*;
 use crate::errors::{self, RuleError};
 use crate::check::rule::Rule;

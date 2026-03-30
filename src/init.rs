@@ -1,3 +1,6 @@
+//! Project scaffolding for `roca init`.
+//! Creates the directory structure, config files, and starter source for a new Roca project.
+
 use std::fs;
 use std::path::Path;
 

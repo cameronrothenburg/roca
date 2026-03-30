@@ -1,3 +1,6 @@
+//! Language constants — keywords, built-in types, and console builtins.
+//! Single source of truth for the tokenizer, LSP, and syntax highlighting.
+
 /// All Roca keywords — single source of truth.
 /// Used by tokenizer, LSP completion, syntax highlighting.
 pub const KEYWORDS: &[&str] = &[

@@ -1,3 +1,5 @@
+//! Test block AST nodes — inline test cases for functions (equality, Ok, error assertions).
+
 use super::expr::Expr;
 
 /// Inline test block inside a function

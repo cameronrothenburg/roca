@@ -1,3 +1,5 @@
+//! Multi-file resolution — recursively parses imports and builds a combined contract registry.
+
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use crate::ast::{SourceFile, ImportSource};

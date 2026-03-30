@@ -1,3 +1,6 @@
+//! AST helper functions wrapping OXC's verbose builder API.
+//! One function per concept — ident, const_decl, if_stmt, etc.
+
 use oxc_ast::ast::*;
 use oxc_ast::NONE;
 use oxc_ast::AstBuilder;

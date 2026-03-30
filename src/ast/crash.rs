@@ -1,3 +1,5 @@
+//! Crash block AST nodes — error recovery strategies (retry, skip, halt, fallback).
+
 use super::expr::Expr;
 
 /// Crash block inside a function — one handler per call site

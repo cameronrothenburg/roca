@@ -1,3 +1,6 @@
+//! Rule: unknown-contract, missing-satisfies, satisfies-mismatch
+//! Validates satisfies declarations against their target contracts.
+
 use crate::ast::*;
 use crate::errors::{self, RuleError};
 use crate::check::rule::Rule;

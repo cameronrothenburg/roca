@@ -1,3 +1,5 @@
+//! Diagnostics provider — runs the Roca checker and converts rule errors into LSP diagnostics.
+
 use crate::errors::RuleError;
 use tower_lsp::lsp_types::*;
 

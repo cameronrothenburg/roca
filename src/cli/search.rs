@@ -1,3 +1,5 @@
+//! Search command — finds functions, structs, and contracts by name across stdlib and user source.
+
 use std::path::Path;
 use crate::ast::*;
 use crate::check::walker::type_ref_to_name;
