@@ -165,4 +165,33 @@ mod tests {
         assert!(!e.iter().any(|e| e.code == "err-in-body"));
         assert!(!e.iter().any(|e| e.code == "manual-err-check"));
     }
+
+    #[test]
+    fn manual_err_check_banned() {
+        let e = errors(r#"
+            /// Does something
+            pub fn bad() -> String {
+                let n, err = Number("42")
+                if err { return "0" }
+                return "ok"
+                test { self() == "ok" }
+            }
+        "#);
+        assert!(e.iter().any(|e| e.code == "manual-err-check"),
+            "expected manual-err-check for if err, got: {:?}", e);
+    }
+
+    #[test]
+    fn no_manual_err_check_without_err_var() {
+        let e = errors(r#"
+            /// Checks a condition
+            pub fn check(x: Number) -> String {
+                if x > 0 { return "positive" }
+                return "zero"
+                test { self(1) == "positive" }
+            }
+        "#);
+        assert!(!e.iter().any(|e| e.code == "manual-err-check"),
+            "normal if should not trigger manual-err-check, got: {:?}", e);
+    }
 }

@@ -134,6 +134,73 @@ mod tests {
         assert!(!e.iter().any(|e| e.code == "missing-crash"),
             "closure + stdlib calls should not require crash, got: {:?}", e);
     }
+
+    #[test]
+    fn panic_warning_fires() {
+        let e = errors(r#"
+            /// Does something risky
+            pub fn risky(s: String) -> String, err {
+                err fail = "fail"
+                return s
+                crash { risky -> panic }
+                test { self("a") == "a" }
+            }
+            /// Calls risky
+            pub fn caller() -> String {
+                const r = risky("x")
+                return r
+                crash { risky -> panic }
+                test { self() == "x" }
+            }
+        "#);
+        assert!(e.iter().any(|e| e.code == "panic-warning"),
+            "expected panic-warning, got: {:?}", e);
+    }
+
+    #[test]
+    fn halt_no_panic_warning() {
+        let e = errors(r#"
+            /// Does something risky
+            pub fn risky(s: String) -> String, err {
+                err fail = "fail"
+                return s
+                test { self("a") == "a" }
+            }
+            /// Calls risky
+            pub fn caller() -> String, err {
+                err fail = "fail"
+                const r = risky("x")
+                return r
+                crash { risky -> halt }
+                test { self() == "x" }
+            }
+        "#);
+        assert!(!e.iter().any(|e| e.code == "panic-warning"),
+            "halt should not trigger panic-warning, got: {:?}", e);
+    }
+
+    #[test]
+    fn crash_on_safe_positive() {
+        let e = errors(r#"
+            /// Validates input
+            pub fn validate(s: String) -> String, err {
+                err empty = "empty"
+                if s == "" { return err.empty }
+                return s
+                test { self("a") == "a" self("") is err.empty }
+            }
+            /// Uses validate
+            pub fn caller() -> String, err {
+                err empty = "empty"
+                const r = validate("x")
+                return r
+                crash { validate -> halt }
+                test { self() == "x" }
+            }
+        "#);
+        assert!(!e.iter().any(|e| e.code == "crash-on-safe"),
+            "halt on error-returning function should be fine, got: {:?}", e);
+    }
 }
 
 pub struct CrashRule;
