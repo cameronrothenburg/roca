@@ -1,6 +1,10 @@
 # Introduction
 
-Roca is a contractual language that compiles to JavaScript. It was born for AI-generated code -- the compiler enforces what humans can't review fast enough.
+Roca is a contractual language that compiles to JavaScript.
+
+Guaranteeing code is clean and error-free normally requires a stack of external tools — linters, scanners, test frameworks, type checkers — all configured and maintained separately. When an issue is found in one place, nothing forces fixing it everywhere else. AI makes this harder: it generates code fast, but without a feedback loop it has no reason to think about error handling, edge cases, or test coverage.
+
+Roca is a narrow corridor. The compiler won't emit JavaScript until every error is handled, every function is tested, and every type is correct. When something is missing, the compiler error fills the AI's context with exactly what it needs — which error path is untested, which crash handler is absent, which type doesn't match. The feedback loop is the language itself.
 
 ## Core idea
 

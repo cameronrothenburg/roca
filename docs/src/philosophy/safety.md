@@ -1,6 +1,6 @@
 # Safety by Compilation
 
-Roca doesn't trust the developer — human or AI. Safety is structural, enforced at compile time. No JS is emitted until the compiler proves the code is correct.
+The compiler is the feedback loop. Every error it emits tells the developer — human or AI — exactly what's missing: which error path isn't handled, which test case is absent, which type doesn't match. No JS is emitted until everything passes. This isn't external tooling bolted on — it's the language itself.
 
 ## What the compiler guarantees
 

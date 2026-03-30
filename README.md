@@ -4,13 +4,11 @@ A contractual language that compiles to JavaScript. Built for AI-generated code.
 
 ## The Problem
 
-AI writes code well. It just doesn't write *safe* code. It skips validation, forgets error handling, returns bare objects, logs secrets. Not because it's dumb — because nothing stops it.
-
-Code review catches these issues in human-written code. But when AI generates thousands of lines per day, review becomes a bottleneck. You need a compiler that enforces what humans can't review fast enough.
+Guaranteeing code is clean and error-free requires external tooling — linters, scanners, test frameworks, type checkers — all configured separately. When an issue is found in one place, nothing forces fixing it everywhere. AI makes this worse: it generates code fast, but has no feedback loop telling it to think about error handling, edge cases, or test coverage.
 
 ## The Solution
 
-Roca is a language where safety is structural, not cultural.
+Roca is a narrow corridor. The compiler forces the AI (or human) to think about testing and error handling because it won't emit JavaScript until they do. Every compiler error fills the AI's context with exactly what it needs — which error path is missing, which test case wasn't covered, which crash handler is absent. The feedback loop is the language itself.
 
 - **Every function has proof tests.** No JS emitted until tests pass.
 - **Every error is handled.** Crash blocks declare what happens when calls fail.
