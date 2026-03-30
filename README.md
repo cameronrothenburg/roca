@@ -12,6 +12,8 @@ Guaranteeing code is clean and error-free requires external tooling — linters,
 
 Roca is a narrow corridor. The compiler forces the AI (or human) to think about testing and error handling because it won't emit JavaScript until they do. Every compiler error fills the AI's context with exactly what it needs — which error path is missing, which test case wasn't covered, which crash handler is absent. The feedback loop is the language itself.
 
+This changes how you review code. The implementation has simple happy path logic and even simpler error handling — the compiler guarantees every error is handled and every path is tested. Bugs can still exist, but the surface area of unhandled, unsafe code shrinks dramatically. Review becomes: *is the contract verbose enough?* Does it cover the right error cases? Are the types precise?
+
 - **Every function has proof tests.** No JS emitted until tests pass.
 - **Every error is handled.** Crash blocks declare what happens when calls fail.
 - **Function bodies are pure happy path.** No error variables, no if-err checks.
