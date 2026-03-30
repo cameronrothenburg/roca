@@ -45,9 +45,16 @@ mod tests {
 
     #[test]
     fn empty_struct_flagged() {
-        let e = errors(r#"pub struct Empty { name: String }{}"#);
+        let e = errors(r#"pub struct Empty {}{}"#);
         assert!(e.iter().any(|e| e.code == "empty-struct"),
             "expected empty-struct, got: {:?}", e);
+    }
+
+    #[test]
+    fn data_struct_with_fields_ok() {
+        let e = errors(r#"pub struct Profile { name: String }{}"#);
+        assert!(!e.iter().any(|e| e.code == "empty-struct"),
+            "struct with fields should be valid, got: {:?}", e);
     }
 
     #[test]
@@ -72,15 +79,15 @@ impl Rule for StructsRule {
     fn check_item(&self, ctx: &ItemContext) -> Vec<RuleError> {
         let mut errors = Vec::new();
         if let Item::Struct(s) = ctx.item {
-            if s.methods.is_empty() && s.signatures.is_empty() {
-                // Check if there are satisfies blocks for this struct
+            if s.methods.is_empty() && s.signatures.is_empty() && s.fields.is_empty() {
+                // No fields, no methods, no point — use a contract
                 let has_satisfies = ctx.check.file.items.iter().any(|item| {
                     matches!(item, Item::Satisfies(sat) if sat.struct_name == s.name)
                 });
                 if !has_satisfies {
                     errors.push(RuleError {
                         code: errors::EMPTY_STRUCT.into(),
-                        message: format!("struct '{}' has no methods — use a contract instead", s.name),
+                        message: format!("struct '{}' has no fields or methods — use a contract instead", s.name),
                         context: None,
                     });
                     return errors;
