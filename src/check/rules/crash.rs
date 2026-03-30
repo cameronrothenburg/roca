@@ -220,31 +220,35 @@ impl Rule for CrashRule {
 
         // Only calls to error-returning functions need crash entries
         let err_calls: Vec<&String> = calls.iter()
-            .filter(|c| ctx.check.registry.call_returns_err_with_scope(c, ctx.check.file, &scope) == Some(true))
+            .filter(|c| ctx.check.registry.call_returns_err_with_scope(c, ctx.check.file, &scope, ctx.check.source_dir.as_deref()) == Some(true))
             .collect();
 
-        if err_calls.is_empty() { return errors; }
-
-        let crash = match &f.crash {
-            Some(c) => c,
-            None => {
-                for call in &err_calls {
-                    errors.push(RuleError::new(errors::MISSING_CRASH, format!("'{}' returns errors but has no crash handler in '{}'", call, f.name), Some(ctx.func.qualified_name.clone())));
+        if !err_calls.is_empty() {
+            let crash = match &f.crash {
+                Some(c) => c,
+                None => {
+                    for call in &err_calls {
+                        errors.push(RuleError::new(errors::MISSING_CRASH, format!("'{}' returns errors but has no crash handler in '{}'", call, f.name), Some(ctx.func.qualified_name.clone())));
+                    }
+                    return errors;
                 }
-                return errors;
-            }
-        };
+            };
 
-        let handled: Vec<&str> = crash.handlers.iter().map(|h| h.call.as_str()).collect();
-        for call in &err_calls {
-            if !handled.iter().any(|h| *h == call.as_str()) {
-                errors.push(RuleError::new(errors::UNHANDLED_CALL, format!("'{}' returns errors but has no crash handler in '{}'", call, f.name), Some(ctx.func.qualified_name.clone())));
+            let handled: Vec<&str> = crash.handlers.iter().map(|h| h.call.as_str()).collect();
+            for call in &err_calls {
+                if !handled.iter().any(|h| *h == call.as_str()) {
+                    errors.push(RuleError::new(errors::UNHANDLED_CALL, format!("'{}' returns errors but has no crash handler in '{}'", call, f.name), Some(ctx.func.qualified_name.clone())));
+                }
             }
         }
 
         // Check each crash handler for misuse: crash-on-safe and panic warnings
+        let crash = match &f.crash {
+            Some(c) => c,
+            None => return errors,
+        };
         for handler in &crash.handlers {
-            let returns_err = ctx.check.registry.call_returns_err_with_scope(&handler.call, ctx.check.file, &scope);
+            let returns_err = ctx.check.registry.call_returns_err_with_scope(&handler.call, ctx.check.file, &scope, ctx.check.source_dir.as_deref());
 
             // Crash entries with halt/fallback/retry on non-error functions are invalid —
             // these strategies destructure {value, err} but non-error functions return plain values

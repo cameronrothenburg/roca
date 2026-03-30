@@ -122,8 +122,8 @@ impl UnhandledErrorsRule {
         let parts: Vec<&str> = call.split('.').collect();
 
         if parts.len() == 1 {
-            // Top-level function or extern fn
             let name = parts[0];
+            // Check current file
             for item in &ctx.check.file.items {
                 match item {
                     Item::Function(f) if f.name == name => {
@@ -134,6 +134,10 @@ impl UnhandledErrorsRule {
                     }
                     _ => {}
                 }
+            }
+            // Check imported functions
+            if let Some(resolved) = crate::resolve::find_imported_fn(name, ctx.check.file, ctx.check.source_dir.as_deref()) {
+                return resolved.errors.iter().map(|e| e.name.clone()).collect();
             }
         } else {
             // Dotted call: resolve the last segment as method name

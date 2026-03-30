@@ -191,7 +191,7 @@ impl Rule for TestsRule {
         };
 
         check_test_coverage(f, declared_errors, &ctx.func.qualified_name, &mut errors);
-        check_mock_refs(f, ctx.check.file, &ctx.func.qualified_name, &mut errors);
+        check_mock_refs(f, ctx.check.file, ctx.check.source_dir.as_deref(), &ctx.func.qualified_name, &mut errors);
         errors
     }
 }
@@ -231,7 +231,7 @@ fn check_test_coverage(f: &FnDef, declared_errors: &[ErrDecl], qn: &str, errors:
     }
 }
 
-fn check_mock_refs(f: &FnDef, file: &SourceFile, qn: &str, errors: &mut Vec<RuleError>) {
+fn check_mock_refs(f: &FnDef, file: &SourceFile, source_dir: Option<&std::path::Path>, qn: &str, errors: &mut Vec<RuleError>) {
     let test = match &f.test {
         Some(t) => t,
         None => return,
@@ -249,7 +249,7 @@ fn check_mock_refs(f: &FnDef, file: &SourceFile, qn: &str, errors: &mut Vec<Rule
     for item in &file.items {
         if let Item::Import(imp) = item {
             if let ImportSource::Path(path) = &imp.source {
-                if let Some(imported) = crate::resolve::try_load_roca_file(path) {
+                if let Some(imported) = crate::resolve::try_load_roca_file_from(path, source_dir) {
                     for imp_item in &imported.items {
                         match imp_item {
                             Item::Contract(c) if c.mock.is_some() => { valid_mocks.insert(c.name.clone()); }

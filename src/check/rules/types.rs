@@ -137,13 +137,21 @@ impl Rule for TypeCheckRule {
             // Function call: check arg types match param types
             Expr::Call { target, args } => {
                 if let Expr::Ident(fn_name) = target.as_ref() {
-                    // Look up the function in the file
+                    // Look up the function in the current file
+                    let mut found = false;
                     for item in &ctx.check.file.items {
                         if let Item::Function(f) = item {
                             if f.name == *fn_name {
                                 check_call_args(fn_name, &f.params, args, ctx, &mut errors);
+                                found = true;
                                 break;
                             }
+                        }
+                    }
+                    // Check imported functions
+                    if !found {
+                        if let Some(resolved) = crate::resolve::find_imported_fn(fn_name, ctx.check.file, ctx.check.source_dir.as_deref()) {
+                            check_call_args(fn_name, &resolved.params, args, ctx, &mut errors);
                         }
                     }
                 }

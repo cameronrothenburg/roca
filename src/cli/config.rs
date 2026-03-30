@@ -81,7 +81,8 @@ pub fn resolve_file_from_project(path: &Path, project: &resolve::ResolvedProject
                 })?
         }
     };
-    let errors = check::check_with_registry(&file, &project.registry);
+    let source_dir = path.parent();
+    let errors = check::check_with_registry_and_dir(&file, &project.registry, source_dir);
     if !errors.is_empty() {
         // Only read source for error logging
         let source_text = fs::read_to_string(path).unwrap_or_default();

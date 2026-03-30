@@ -36,7 +36,11 @@ pub fn check(file: &SourceFile) -> Vec<RuleError> {
 }
 
 pub fn check_with_registry(file: &SourceFile, registry: &ContractRegistry) -> Vec<RuleError> {
-    walker::walk(file, registry, &all_rules())
+    walker::walk(file, registry, None, &all_rules())
+}
+
+pub fn check_with_registry_and_dir(file: &SourceFile, registry: &ContractRegistry, source_dir: Option<&std::path::Path>) -> Vec<RuleError> {
+    walker::walk(file, registry, source_dir, &all_rules())
 }
 
 #[cfg(test)]
