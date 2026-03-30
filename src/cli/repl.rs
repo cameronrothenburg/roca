@@ -7,7 +7,7 @@ pub fn run_repl() {
     println!("Type Roca expressions or statements. :help for commands, :q to quit.");
     println!();
 
-    let mut history: Vec<String> = Vec::new();
+    let mut defs: Vec<String> = Vec::new();
     let mut context = String::new();
 
     loop {
@@ -20,176 +20,139 @@ pub fn run_repl() {
 
         let mut line = String::new();
         if io::stdin().lock().read_line(&mut line).unwrap() == 0 {
-            break; // EOF
+            break;
         }
         let line = line.trim_end().to_string();
 
-        // Commands
         match line.as_str() {
             ":q" | ":quit" | ":exit" => break,
-            ":help" | ":h" => {
-                print_help();
-                continue;
-            }
-            ":clear" | ":c" => {
-                history.clear();
-                context.clear();
-                println!("cleared");
-                continue;
-            }
-            ":history" => {
-                for (i, h) in history.iter().enumerate() {
-                    println!("[{}] {}", i, h);
-                }
-                continue;
-            }
+            ":help" | ":h" => { print_help(); continue; }
+            ":clear" | ":c" => { defs.clear(); context.clear(); println!("cleared"); continue; }
             _ => {}
         }
 
-        // Multi-line: accumulate until braces balance
         context.push_str(&line);
         context.push('\n');
 
         let opens = context.chars().filter(|&c| c == '{').count();
         let closes = context.chars().filter(|&c| c == '}').count();
-        if opens > closes {
-            continue; // wait for more input
-        }
+        if opens > closes { continue; }
 
         let input = context.trim().to_string();
         context.clear();
+        if input.is_empty() { continue; }
 
-        if input.is_empty() {
-            continue;
-        }
-
-        history.push(input.clone());
-        eval_roca(&input, &history);
-    }
-
-    println!("bye");
-}
-
-fn eval_roca(input: &str, history: &[String]) {
-    // Build a complete source file from history context
-    let mut source = String::new();
-
-    // Include previous definitions (structs, contracts, functions)
-    for prev in &history[..history.len().saturating_sub(1)] {
-        if is_definition(prev) {
-            source.push_str(prev);
-            source.push('\n');
-        }
-    }
-
-    // If the input is a definition, just check it
-    if is_definition(input) {
-        source.push_str(input);
-        match crate::parse::try_parse(&source) {
-            Ok(file) => {
-                let errors = crate::check::check(&file);
-                if errors.is_empty() {
-                    println!("✓ defined");
-                } else {
-                    for e in &errors {
-                        println!("  {}", e);
-                    }
-                }
-            }
-            Err(e) => println!("  parse error: {}", e),
-        }
-        return;
-    }
-
-    // Wrap expression/statement in a function, emit, and run
-    let wrapped = format!(
-        "{}\nfn __repl__() -> String {{ return String({}) test {{}} }}",
-        source, input
-    );
-
-    match crate::parse::try_parse(&wrapped) {
-        Ok(file) => {
-            let errors = crate::check::check(&file);
-            // Filter out missing-doc since REPL functions aren't pub
-            let real_errors: Vec<_> = errors.iter()
-                .filter(|e| e.code != "missing-doc" && e.code != "missing-test")
-                .collect();
-            if !real_errors.is_empty() {
-                for e in &real_errors {
-                    println!("  {}", e);
-                }
-                return;
-            }
-
-            let js = crate::emit::emit(&file);
-            // Extract just the __repl__ call
-            let run_js = format!("{}\nconsole.log(__repl__());", js);
-            run_bun(&run_js);
-        }
-        Err(_) => {
-            // Try as a statement instead
-            let wrapped_stmt = format!(
-                "{}\nfn __repl__() -> Ok {{ {} return Ok test {{}} }}",
-                source, input
-            );
-            match crate::parse::try_parse(&wrapped_stmt) {
+        if is_definition(&input) {
+            // Check definition parses and type-checks
+            let mut src = defs.join("\n");
+            src.push('\n');
+            src.push_str(&input);
+            match crate::parse::try_parse(&src) {
                 Ok(file) => {
-                    let js = crate::emit::emit(&file);
-                    let run_js = format!("{}\n__repl__();", js);
-                    run_bun(&run_js);
+                    let errors = crate::check::check(&file);
+                    let real: Vec<_> = errors.iter().filter(|e| e.code != "missing-doc").collect();
+                    if real.is_empty() {
+                        defs.push(input);
+                        println!("✓ defined");
+                    } else {
+                        for e in &real { println!("  {}", e); }
+                    }
                 }
                 Err(e) => println!("  parse error: {}", e),
             }
+        } else {
+            eval_expr(&input, &defs);
         }
+    }
+    println!("bye");
+}
+
+fn eval_expr(input: &str, defs: &[String]) {
+    // Emit definitions as JS
+    let def_src = defs.join("\n");
+    let def_js = if def_src.is_empty() {
+        String::new()
+    } else {
+        match crate::parse::try_parse(&def_src) {
+            Ok(f) => crate::emit::emit(&f).replace("export ", ""),
+            Err(_) => String::new(),
+        }
+    };
+
+    // Try as expression — wrap in a function, capture result
+    let expr_src = format!(
+        "{}\nfn __repl__() -> Ok {{ const __v = {} return Ok test {{}} }}",
+        def_src, input
+    );
+    if let Ok(file) = crate::parse::try_parse(&expr_src) {
+        let errors = crate::check::check(&file);
+        let real: Vec<_> = errors.iter()
+            .filter(|e| e.code != "missing-doc" && e.code != "missing-test")
+            .collect();
+        if !real.is_empty() {
+            for e in &real { println!("  {}", e); }
+            return;
+        }
+        // Emit definitions, then extract expression JS and log it
+        let mini_src = format!("fn __e() -> Ok {{ const __v = {} return Ok test {{}} }}", input);
+        if let Ok(f) = crate::parse::try_parse(&mini_src) {
+            let emitted = crate::emit::emit(&f).replace("export ", "");
+            // Extract body between first { and last }
+            if let (Some(start), Some(end)) = (emitted.find('{'), emitted.rfind('}')) {
+                let body = emitted[start+1..end].trim().replace("return null;", "");
+                let run_js = format!(
+                    "{}\n{}\nconst __r = __v;\nconsole.log(typeof __r === 'object' && __r !== null ? JSON.stringify(__r) : __r);",
+                    def_js, body
+                );
+                run_bun(&run_js);
+                return;
+            }
+        }
+    }
+
+    // Try as statement
+    let stmt_src = format!(
+        "{}\nfn __repl__() -> Ok {{ {} return Ok test {{}} }}",
+        def_src, input
+    );
+    match crate::parse::try_parse(&stmt_src) {
+        Ok(file) => {
+            let js = crate::emit::emit(&file).replace("export ", "");
+            run_bun(&format!("{}\n__repl__();", js));
+        }
+        Err(e) => println!("  parse error: {}", e),
     }
 }
 
 fn run_bun(js: &str) {
-    let output = std::process::Command::new("bun")
-        .arg("-e")
-        .arg(js)
-        .output();
-
-    match output {
+    match std::process::Command::new("bun").arg("-e").arg(js).output() {
         Ok(out) => {
             let stdout = String::from_utf8_lossy(&out.stdout);
             let stderr = String::from_utf8_lossy(&out.stderr);
-            if !stdout.is_empty() {
-                print!("{}", stdout);
-            }
-            if !stderr.is_empty() {
-                eprint!("{}", stderr);
-            }
+            if !stdout.is_empty() { print!("{}", stdout); }
+            if !stderr.is_empty() { eprint!("{}", stderr); }
         }
         Err(e) => eprintln!("  failed to run bun: {}", e),
     }
 }
 
 fn is_definition(s: &str) -> bool {
-    let trimmed = s.trim();
-    trimmed.starts_with("pub struct ")
-        || trimmed.starts_with("struct ")
-        || trimmed.starts_with("pub contract ")
-        || trimmed.starts_with("contract ")
-        || trimmed.starts_with("pub fn ")
-        || trimmed.starts_with("fn ")
-        || trimmed.starts_with("extern ")
-        || trimmed.starts_with("enum ")
-        || trimmed.starts_with("pub enum ")
-        || trimmed.starts_with("import ")
-        || trimmed.contains(" satisfies ")
+    let t = s.trim();
+    t.starts_with("pub struct ") || t.starts_with("struct ")
+        || t.starts_with("pub contract ") || t.starts_with("contract ")
+        || t.starts_with("pub fn ") || t.starts_with("fn ")
+        || t.starts_with("extern ") || t.starts_with("enum ")
+        || t.starts_with("pub enum ") || t.starts_with("import ")
+        || t.contains(" satisfies ")
 }
 
 fn print_help() {
     println!("Commands:");
-    println!("  :q, :quit     Exit the REPL");
-    println!("  :clear        Clear history and definitions");
-    println!("  :history      Show input history");
-    println!("  :help         Show this help");
+    println!("  :q        Exit");
+    println!("  :clear    Clear definitions");
+    println!("  :help     Show this help");
     println!();
-    println!("Usage:");
-    println!("  Type expressions to evaluate:    1 + 2");
-    println!("  Define functions:                 fn add(a: Number, b: Number) -> Number {{ ... }}");
-    println!("  Call functions:                   add(1, 2)");
-    println!("  Multi-line input auto-detects unbalanced braces.");
+    println!("Type expressions:  1 + 2");
+    println!("Define functions:  fn add(a: Number, b: Number) -> Number {{ ... }}");
+    println!("Call functions:    add(1, 2)");
 }
