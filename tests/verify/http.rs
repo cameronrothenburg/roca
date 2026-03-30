@@ -5,9 +5,9 @@ fn http_contract_registered() {
         import { Http } from std::http
         /// Fetches a URL and returns the status
         pub fn get_status(url: String) -> Number {
-            const resp = wait Http.fetch(url)
+            const resp = wait Http.get(url)
             return resp.status()
-            crash { Http.fetch -> fallback(fn(e) -> Http) }
+            crash { Http.get -> fallback(fn(e) -> Http) }
             test { self("https://example.com") == 200 }
         }
     "#);
@@ -43,11 +43,11 @@ fn http_js_wrapper_emitted() {
         import { Http } from std::http
         /// Simple fetch
         pub fn get_body(url: String) -> String {
-            const resp = wait Http.fetch(url)
+            const resp = wait Http.get(url)
             const body = wait resp.text()
             return body
             crash {
-                Http.fetch -> fallback(fn(e) -> Http)
+                Http.get -> fallback(fn(e) -> Http)
                 resp.text -> fallback(fn(e) -> "error")
             }
             test { self("https://example.com") == "mock body" }

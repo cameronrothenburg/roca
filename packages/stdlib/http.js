@@ -39,7 +39,10 @@ const Http = (() => {
 	}
 
 	return {
-		async fetch(url) { return request(url); },
+		async get(url) { return request(url); },
 		async post(url, body) { return request(url, { method: "POST", body }); },
+		async put(url, body) { return request(url, { method: "PUT", body }); },
+		async patch(url, body) { return request(url, { method: "PATCH", body }); },
+		async delete(url) { return request(url, { method: "DELETE" }); },
 	};
 })();

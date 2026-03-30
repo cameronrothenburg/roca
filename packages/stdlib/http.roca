@@ -6,13 +6,28 @@
  * The embedded runtime does not provide fetch (proof tests use mocks).
  */
 pub extern contract Http {
-    /// Fetch a URL — returns a wrapped response
-    fetch(url: String) -> Http, err {
+    /// GET request
+    get(url: String) -> Http, err {
         err network = "network error"
         err abort = "request aborted"
     }
-    /// Fetch with POST method and body
+    /// POST request with body
     post(url: String, body: String) -> Http, err {
+        err network = "network error"
+        err abort = "request aborted"
+    }
+    /// PUT request with body
+    put(url: String, body: String) -> Http, err {
+        err network = "network error"
+        err abort = "request aborted"
+    }
+    /// PATCH request with body
+    patch(url: String, body: String) -> Http, err {
+        err network = "network error"
+        err abort = "request aborted"
+    }
+    /// DELETE request
+    delete(url: String) -> Http, err {
         err network = "network error"
         err abort = "request aborted"
     }
@@ -32,8 +47,11 @@ pub extern contract Http {
     /// Get a response header by name — null if missing
     header(name: String) -> Optional<String>
     mock {
-        fetch -> Http
+        get -> Http
         post -> Http
+        put -> Http
+        patch -> Http
+        delete -> Http
         status -> 200
         ok -> true
         text -> "mock body"
