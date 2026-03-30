@@ -2,14 +2,15 @@
 
 ## Prerequisites
 
-- [Rust](https://rustup.rs/) — to build the compiler
-- [Bun](https://bun.sh/) — runs proof tests and `roca run` under the hood
+- [Rust](https://rustup.rs/) — to build the compiler from source
 
 Install the compiler:
 
 ```bash
 cargo install --path .
 ```
+
+Or grab a prebuilt binary from the [releases page](https://github.com/cameronrothenburg/roca/releases).
 
 ## Create a project
 
@@ -57,7 +58,7 @@ pub fn greet(name: String) -> String {
 | `roca check [path]` | Parse, lint, and type check |
 | `roca build [path]` | Check, build JS, run proof tests |
 | `roca test [path]` | Build + test, then clean output |
-| `roca run [path]` | Build + execute via bun |
+| `roca run [path]` | Build + execute via embedded V8 |
 | `roca lsp` | Start the language server |
 | `roca man` | Show the language manual |
 | `roca --version` | Print version |

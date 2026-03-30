@@ -4,6 +4,15 @@ use crate::check::registry::ContractRegistry;
 use crate::constants::{KEYWORDS, BUILTIN_TYPES};
 use tower_lsp::lsp_types::*;
 
+const STDLIB_MODULES: &[(&str, &str)] = &[
+    ("json", "JSON parsing and serialization"),
+    ("http", "HTTP requests (get, post, put, patch, delete)"),
+    ("url", "URL parsing and query parameters"),
+    ("crypto", "Cryptographic operations (UUID, SHA)"),
+    ("encoding", "Text encoding/decoding and base64"),
+    ("time", "Timestamps and date parsing"),
+];
+
 pub fn completions(source: &str, position: Position) -> Vec<CompletionItem> {
     let line_idx = position.line as usize;
     let col = position.character as usize;
@@ -35,6 +44,16 @@ pub fn completions(source: &str, position: Position) -> Vec<CompletionItem> {
         if before_dot.ends_with("err") || before_dot.trim_end().ends_with("err") {
             return suggest_error_names(source);
         }
+    }
+
+    // After "from std::" — suggest stdlib modules
+    if before_cursor.contains("from std::") {
+        return STDLIB_MODULES.iter().map(|(name, desc)| CompletionItem {
+            label: name.to_string(),
+            kind: Some(CompletionItemKind::MODULE),
+            detail: Some(desc.to_string()),
+            ..Default::default()
+        }).collect();
     }
 
     // After "from " — suggest std
@@ -125,4 +144,63 @@ fn suggest_error_names(source: &str) -> Vec<CompletionItem> {
     }
 
     names
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pos(line: u32, col: u32) -> Position {
+        Position::new(line, col)
+    }
+
+    fn labels(items: &[CompletionItem]) -> Vec<String> {
+        items.iter().map(|i| i.label.clone()).collect()
+    }
+
+    #[test]
+    fn after_from_suggests_std() {
+        let items = completions("import { JSON } from ", pos(0, 21));
+        assert!(labels(&items).contains(&"std".to_string()));
+    }
+
+    #[test]
+    fn after_from_std_suggests_modules() {
+        let items = completions("import { Http } from std::", pos(0, 26));
+        let names = labels(&items);
+        assert!(names.contains(&"json".to_string()));
+        assert!(names.contains(&"http".to_string()));
+        assert!(names.contains(&"url".to_string()));
+        assert!(names.contains(&"crypto".to_string()));
+        assert!(names.contains(&"encoding".to_string()));
+        assert!(names.contains(&"time".to_string()));
+    }
+
+    #[test]
+    fn after_arrow_suggests_types() {
+        let items = completions("pub fn test() -> ", pos(0, 17));
+        let names = labels(&items);
+        assert!(names.contains(&"String".to_string()));
+        assert!(names.contains(&"Number".to_string()));
+        assert!(names.contains(&"Bool".to_string()));
+    }
+
+    #[test]
+    fn after_err_dot_suggests_error_names() {
+        let src = "pub fn test() -> String, err {\n    err missing = \"required\"\n    err invalid = \"bad\"\n    return err.";
+        let items = completions(src, pos(3, 15));
+        let names = labels(&items);
+        assert!(names.contains(&"missing".to_string()));
+        assert!(names.contains(&"invalid".to_string()));
+    }
+
+    #[test]
+    fn default_suggests_keywords() {
+        let items = completions("", pos(0, 0));
+        let names = labels(&items);
+        assert!(names.contains(&"pub".to_string()));
+        assert!(names.contains(&"fn".to_string()));
+        assert!(names.contains(&"struct".to_string()));
+        assert!(names.contains(&"contract".to_string()));
+    }
 }

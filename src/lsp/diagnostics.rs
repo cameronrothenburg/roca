@@ -83,6 +83,15 @@ fn extract_search_term(err: &RuleError) -> Option<String> {
         "invalid-constraint" => {
             quoted_name()
         }
+        "no-fn-error-def" => {
+            // Message: "standalone function 'name' cannot define error 'err_name'"
+            // Search for the return err.name statement
+            err.message.split('\'').nth(3).map(|n| format!("return err.{}", n))
+        }
+        "unhandled-error" => {
+            // Message: "error 'name' propagates via halt in 'fn_name' but is not declared"
+            quoted_name().map(|n| format!("err.{}", n))
+        }
         _ => None,
     }
 }
