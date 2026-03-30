@@ -22,6 +22,7 @@
 
 # Integration
 
+- [Using Roca in Your Project](./integration/using-in-projects.md)
 - [Extern Contracts](./integration/extern-contracts.md)
 - [JS Wiring](./integration/js-wiring.md)
 - [TypeScript](./integration/typescript.md)
