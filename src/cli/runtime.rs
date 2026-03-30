@@ -1,5 +1,6 @@
 //! Embedded V8 runtime (via deno_core) — executes compiled JS without external dependencies.
-//! Web APIs (URL, TextEncoder, etc.) are provided via custom Rust ops, not deno extension crates.
+//! Web APIs (URL, TextEncoder, etc.) are provided via polyfills and custom Rust ops.
+//! Compiled JS output uses globalThis APIs — works in any JS environment.
 
 use deno_core::{JsRuntime, RuntimeOptions, op2, extension};
 use std::cell::RefCell;
@@ -8,6 +9,7 @@ use std::sync::LazyLock;
 const BOOTSTRAP: &str = include_str!("../../packages/runtime/bootstrap.js");
 const POLYFILLS: &str = include_str!("../../packages/runtime/polyfills.js");
 const URL_BRIDGE: &str = include_str!("../../packages/runtime/url-bridge.js");
+const CRYPTO_BRIDGE: &str = include_str!("../../packages/runtime/crypto-bridge.js");
 const ROCA_TEST_JS: &str = include_str!("../../packages/stdlib/roca-test.js");
 
 const PROCESS_EXIT_SENTINEL: &str = "__PROCESS_EXIT__";
@@ -23,14 +25,12 @@ thread_local! {
     static CAPTURED: RefCell<Vec<String>> = RefCell::new(Vec::new());
 }
 
-// ─── Ops ───────────────────────────────────────────────────
-
 #[op2(fast)]
 fn op_capture_log(#[string] msg: &str) {
     CAPTURED.with(|c| c.borrow_mut().push(msg.to_string()));
 }
 
-/// Parse a URL string, return JSON with parsed components or empty string on failure.
+/// Parse a URL, return JSON with components or empty string on failure.
 #[op2]
 #[string]
 fn op_url_parse(#[string] raw: &str) -> String {
@@ -50,9 +50,34 @@ fn op_url_parse(#[string] raw: &str) -> String {
     }
 }
 
+/// SHA-256 hash, returns hex string.
+#[op2]
+#[string]
+fn op_sha256(#[string] data: &str) -> String {
+    use sha2::{Sha256, Digest};
+    let result = Sha256::digest(data.as_bytes());
+    result.iter().map(|b| format!("{:02x}", b)).collect()
+}
+
+/// SHA-512 hash, returns hex string.
+#[op2]
+#[string]
+fn op_sha512(#[string] data: &str) -> String {
+    use sha2::{Sha512, Digest};
+    let result = Sha512::digest(data.as_bytes());
+    result.iter().map(|b| format!("{:02x}", b)).collect()
+}
+
+/// Generate a v4 UUID.
+#[op2]
+#[string]
+fn op_random_uuid() -> String {
+    uuid::Uuid::new_v4().to_string()
+}
+
 extension!(
     roca_runtime,
-    ops = [op_capture_log, op_url_parse],
+    ops = [op_capture_log, op_url_parse, op_sha256, op_sha512, op_random_uuid],
 );
 
 fn create_runtime() -> JsRuntime {
@@ -77,7 +102,8 @@ fn bootstrap(runtime: &mut JsRuntime, capture: bool) -> Result<(), String> {
         .map_err(|e| format!("polyfill error: {}", e))?;
     runtime.execute_script("<url-bridge>", URL_BRIDGE.to_string())
         .map_err(|e| format!("url bridge error: {}", e))?;
-
+    runtime.execute_script("<crypto-bridge>", CRYPTO_BRIDGE.to_string())
+        .map_err(|e| format!("crypto bridge error: {}", e))?;
     Ok(())
 }
 

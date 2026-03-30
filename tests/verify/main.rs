@@ -39,3 +39,4 @@ mod repl;
 mod encoding;
 mod time;
 mod url;
+mod crypto;
