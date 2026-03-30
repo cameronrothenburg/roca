@@ -2,6 +2,7 @@
 //! Emits case-based tests, fuzz tests, battle tests, and mock object wiring.
 
 mod cases;
+mod error_mocks;
 mod fuzz;
 mod mocks;
 mod battle;
@@ -14,6 +15,7 @@ use oxc_codegen::Codegen;
 use oxc_span::{SPAN, SourceType};
 
 use cases::{CallKind, emit_test_cases};
+use error_mocks::generate_error_mock_tests;
 use fuzz::emit_fuzz_tests;
 use mocks::{emit_mock_object, generate_mock_patches};
 use battle::generate_battle_tests;
@@ -121,6 +123,10 @@ pub fn emit_tests(file: &roca::SourceFile, import_path: &str) -> Option<(String,
         }
     }
 
+    // Auto-generate error mock tests for crash halt on extern contract methods
+    let (error_mock_js, error_mock_count) = generate_error_mock_tests(file, &mock_files);
+    test_count += error_mock_count;
+
     let battle_tests = generate_battle_tests(file);
 
     let program = ast.program(SPAN, SourceType::mjs(), source_text, ast.vec(), None, ast.vec(), body);
@@ -134,6 +140,10 @@ pub fn emit_tests(file: &roca::SourceFile, import_path: &str) -> Option<(String,
     // battle tests and summary run after async assertions complete.
     let test_section = if has_async {
         let mut inner = test_code;
+        if !error_mock_js.is_empty() {
+            inner.push('\n');
+            inner.push_str(&error_mock_js);
+        }
         if !battle_tests.is_empty() {
             inner.push('\n');
             inner.push_str(&battle_tests);
@@ -169,6 +179,7 @@ pub fn emit_tests(file: &roca::SourceFile, import_path: &str) -> Option<(String,
         if !mock_patches.is_empty() { parts.push(mock_patches); }
         parts.push(test_section);
         if !has_async {
+            if !error_mock_js.is_empty() { parts.push(error_mock_js.clone()); }
             if !battle_tests.is_empty() { parts.push(battle_tests); }
             parts.push(summary_js.to_string());
         }
@@ -178,6 +189,7 @@ pub fn emit_tests(file: &roca::SourceFile, import_path: &str) -> Option<(String,
         if !mock_patches.is_empty() { parts.push(mock_patches); }
         parts.push(test_section);
         if !has_async {
+            if !error_mock_js.is_empty() { parts.push(error_mock_js); }
             if !battle_tests.is_empty() { parts.push(battle_tests); }
             parts.push(summary_js.to_string());
         }
