@@ -5,6 +5,7 @@
 
 # Philosophy
 
+- [Safety by Compilation](./philosophy/safety.md)
 - [Happy Path](./philosophy/happy-path.md)
 - [No Null](./philosophy/no-null.md)
 - [Crash Blocks](./philosophy/crash-blocks.md)
