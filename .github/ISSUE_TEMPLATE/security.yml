@@ -1,0 +1,56 @@
+name: Security Issue
+description: Report a security vulnerability
+labels: ["security"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **For critical vulnerabilities, please email security@roca-lang.dev instead of opening a public issue.**
+
+        Use this template for security-related issues that are safe to discuss publicly — such as compiler rules that should exist but don't, or cases where the compiler allows unsafe patterns through.
+
+  - type: input
+    id: version
+    attributes:
+      label: Roca version
+      description: Output of `roca --version`
+      placeholder: "0.2.0"
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What is the security concern?
+      description: Describe the vulnerability or gap in the compiler's safety guarantees.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: How to reproduce
+      description: Roca source code that demonstrates the issue.
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: impact
+    attributes:
+      label: Impact
+      description: What could go wrong if this is exploited? What safety guarantee is violated?
+    validations:
+      required: true
+
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      options:
+        - Critical — compiler emits unsafe JS that could be exploited
+        - High — safety rule can be bypassed
+        - Medium — missing rule for a common unsafe pattern
+        - Low — edge case, unlikely in practice
+    validations:
+      required: true
