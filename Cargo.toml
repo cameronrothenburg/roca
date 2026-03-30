@@ -3,7 +3,7 @@ name = "roca"
 version = "0.2.2"
 edition = "2024"
 license = "AGPL-3.0-only"
-description = "A contractual language that compiles to JavaScript"
+description = "A contractual language for the AI era"
 repository = "https://github.com/cameronrothenburg/roca"
 
 [dependencies]
