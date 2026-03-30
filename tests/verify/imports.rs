@@ -1,4 +1,3 @@
-use super::harness::run;
 
 #[test]
 fn import_parsed_and_emitted() {

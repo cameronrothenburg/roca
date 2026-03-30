@@ -1,4 +1,4 @@
-use super::harness::{run, run_expect_fail};
+use super::harness::run;
 
 // ─── What CAN be logged (has to_log) ────────────────────
 

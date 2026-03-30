@@ -57,17 +57,3 @@ pub fn run_with_tests(source: &str, test_script: &str) -> String {
 
     run(source, test_script)
 }
-
-/// Compile roca source to JS, run via embedded V8.
-/// Expects execution to fail (non-zero exit).
-pub fn run_expect_fail(source: &str, test_script: &str) -> String {
-    let file = roca::parse::parse(source);
-    let js = roca::emit::emit(&file);
-    let js = js.replace("export ", "");
-    let full = format!("{}\n{}", js, test_script);
-
-    let (stdout, success) = roca::cli::runtime::run_tests(&full);
-
-    assert!(!success, "expected failure but got success");
-    stdout.trim().to_string()
-}
