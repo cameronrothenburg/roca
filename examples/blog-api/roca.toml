@@ -1,8 +1,0 @@
-[project]
-name = "blog-api"
-version = "0.1.0"
-
-[build]
-src = "src/"
-out = "out/"
-mode = "jslib"

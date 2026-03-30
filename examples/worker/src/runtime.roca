@@ -1,17 +1,22 @@
-// runtime.roca — extern contracts + adapter
-
-extern contract KV {
-    get(key: String) -> String | null
+/** Key-value store for caching */
+pub extern contract KV {
+    /// Get a value by key
+    get(key: String) -> String, err {
+        err not_found = "key not found"
+    }
+    /// Store a key-value pair
     put(key: String, value: String) -> Ok, err {
         err write_failed = "write failed"
     }
     mock {
-        get -> null
+        get -> "cached"
         put -> Ok
     }
 }
 
-extern contract Fetcher {
+/** HTTP client for upstream API calls */
+pub extern contract Fetcher {
+    /// Fetch data from a URL
     get(url: String) -> String, err {
         err network = "network error"
         err timeout = "request timed out"
@@ -21,17 +26,14 @@ extern contract Fetcher {
     }
 }
 
-extern contract Logger {
+/** Structured logger */
+pub extern contract Logger {
+    /// Log an info message
     info(msg: String) -> Ok
+    /// Log an error message
     error(msg: String) -> Ok
     mock {
         info -> Ok
         error -> Ok
     }
 }
-
-pub struct Env {
-    kv: KV
-    fetcher: Fetcher
-    logger: Logger
-}{}

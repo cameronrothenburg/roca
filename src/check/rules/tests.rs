@@ -246,13 +246,37 @@ fn check_mock_refs(f: &FnDef, file: &SourceFile, qn: &str, errors: &mut Vec<Rule
         None => return,
     };
 
-    let valid_mocks: HashSet<String> = file.items.iter().filter_map(|item| {
+    let mut valid_mocks: HashSet<String> = file.items.iter().filter_map(|item| {
         match item {
             Item::Contract(c) if c.mock.is_some() => Some(c.name.clone()),
             Item::ExternContract(c) if c.mock.is_some() => Some(c.name.clone()),
             _ => None,
         }
     }).collect();
+
+    // Also check imported files for mock blocks
+    for item in &file.items {
+        if let Item::Import(imp) = item {
+            if let ImportSource::Path(path) = &imp.source {
+                let roca_path = std::path::Path::new(path);
+                for base in &[".", "src"] {
+                    let full_path = std::path::Path::new(base).join(roca_path);
+                    if let Ok(source) = std::fs::read_to_string(&full_path) {
+                        if let Ok(imported) = crate::parse::try_parse(&source) {
+                            for imp_item in &imported.items {
+                                match imp_item {
+                                    Item::Contract(c) if c.mock.is_some() => { valid_mocks.insert(c.name.clone()); }
+                                    Item::ExternContract(c) if c.mock.is_some() => { valid_mocks.insert(c.name.clone()); }
+                                    _ => {}
+                                }
+                            }
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+    }
 
     let mut mock_refs = Vec::new();
     for case in &test.cases {

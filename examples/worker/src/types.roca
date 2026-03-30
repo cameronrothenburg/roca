@@ -1,5 +1,4 @@
-// types.roca — application types
-
+/** API response with status code and body */
 pub struct ApiResponse {
     status: Number
     body: String
@@ -7,17 +6,20 @@ pub struct ApiResponse {
     created(body: String) -> ApiResponse
     fail(status: Number, message: String) -> ApiResponse
 }{
-    fn ok(body: String) -> ApiResponse {
+    /// Success response (200)
+    pub fn ok(body: String) -> ApiResponse {
         return ApiResponse { status: 200, body: body }
         test { self("hello") is Ok }
     }
 
-    fn created(body: String) -> ApiResponse {
+    /// Created response (201)
+    pub fn created(body: String) -> ApiResponse {
         return ApiResponse { status: 201, body: body }
         test { self("done") is Ok }
     }
 
-    fn fail(status: Number, message: String) -> ApiResponse {
+    /// Error response with custom status
+    pub fn fail(status: Number, message: String) -> ApiResponse {
         return ApiResponse { status: status, body: message }
         test { self(404, "not found") is Ok }
     }
