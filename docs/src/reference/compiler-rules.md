@@ -19,6 +19,7 @@ All rules are hard errors unless noted. Code that violates them does not compile
 | `err-in-body` | Use crash block, not `let val, err = call()` |
 | `manual-err-check` | Use crash block, not `if err { ... }` |
 | `unhandled-error` | Error propagates via `halt` but caller does not declare it |
+| `no-fn-error-def` | Standalone functions cannot define new errors — use a struct |
 | `crash-on-safe` | Crash entry on a function that does not return errors |
 | `panic-warning` | Warning: `panic` will crash the process |
 
