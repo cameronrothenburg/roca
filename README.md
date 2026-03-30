@@ -1,6 +1,6 @@
 # Roca
 
-*From the Spanish word for rock.*
+*Roca — Spanish for rock, stone, cliff. Firme como una roca — as solid as a rock.*
 
 A contractual language that compiles to JavaScript. Built for AI-generated code.
 
