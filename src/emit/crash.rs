@@ -14,6 +14,7 @@ use super::ast_helpers::{
     unary_not, console_call, args1, args2,
 };
 use super::expressions::build_expr;
+use super::helpers::{make_result, null};
 
 /// Wrap a call expression with a crash strategy, returning flat statements.
 /// Roca functions return [value, err] tuples — crash handlers check the err element.
@@ -24,10 +25,11 @@ pub(crate) fn wrap_with_strategy<'a>(
     var_name: &str,
     strategy: &roca::CrashHandlerKind,
     source_expr: &roca::Expr,
+    returns_err: bool,
 ) -> Vec<Statement<'a>> {
     match strategy {
         roca::CrashHandlerKind::Simple(chain) => {
-            wrap_chain(ast, call_expr, var_name, chain, source_expr)
+            wrap_chain(ast, call_expr, var_name, chain, source_expr, returns_err)
         }
         roca::CrashHandlerKind::Detailed { arms, default } => {
             wrap_detailed(ast, call_expr, var_name, arms, default)
@@ -41,13 +43,14 @@ fn wrap_chain<'a>(
     var_name: &str,
     chain: &roca::CrashChain,
     source_expr: &roca::Expr,
+    returns_err: bool,
 ) -> Vec<Statement<'a>> {
     // Find the terminal step (last in chain)
     let terminal = chain.last().unwrap_or(&roca::CrashStep::Halt);
     let has_log = chain.iter().any(|s| matches!(s, roca::CrashStep::Log));
 
     // Use the terminal step, with log/retry handled inline
-    wrap_terminal(ast, call_expr, var_name, terminal, has_log, source_expr)
+    wrap_terminal(ast, call_expr, var_name, terminal, has_log, source_expr, returns_err)
 }
 
 fn wrap_terminal<'a>(
@@ -57,6 +60,7 @@ fn wrap_terminal<'a>(
     strategy: &roca::CrashStep,
     has_log: bool,
     source_expr: &roca::Expr,
+    returns_err: bool,
 ) -> Vec<Statement<'a>> {
     let tmp = format!("_{}_tmp", var_name);
     let err_name = format!("_{}_err", var_name);
@@ -75,11 +79,18 @@ fn wrap_terminal<'a>(
 
     match strategy {
         roca::CrashStep::Halt => {
-            // if (_err) throw _err;
             let test = ident(ast, &err_name);
-            let throw = throw_stmt(ast, ident(ast, &err_name));
-            stmts.push(if_stmt(ast, test, throw, None));
-            // const var_name = _tmp[0]
+            if returns_err {
+                // if (_err) return { value: null, err: _err };
+                let ret_val = make_result(ast, null(ast), ident(ast, &err_name));
+                let ret_stmt = ast.statement_return(SPAN, Some(ret_val));
+                stmts.push(if_stmt(ast, test, ret_stmt, None));
+            } else {
+                // if (_err) throw _err;
+                let throw = throw_stmt(ast, ident(ast, &err_name));
+                stmts.push(if_stmt(ast, test, throw, None));
+            }
+            // const var_name = _tmp.value
             let val_access = static_field(ast, &tmp, "value");
             stmts.push(const_decl(ast, var_name, val_access));
         }

@@ -45,10 +45,10 @@ pub(crate) fn build_stmt<'a>(
 ) -> Vec<Statement<'a>> {
     match stmt {
         roca::Stmt::Const { name, value, .. } => {
-            emit_var_decl(ast, name, value, VariableDeclarationKind::Const, crash)
+            emit_var_decl(ast, name, value, VariableDeclarationKind::Const, crash, returns_err)
         }
         roca::Stmt::Let { name, value, .. } => {
-            emit_var_decl(ast, name, value, VariableDeclarationKind::Let, crash)
+            emit_var_decl(ast, name, value, VariableDeclarationKind::Let, crash, returns_err)
         }
         roca::Stmt::LetResult { name, err_name, value } => {
             if let Some((cast_type, input)) = extract_cast_input(value) {
@@ -135,7 +135,7 @@ pub(crate) fn build_stmt<'a>(
                 if is_fallback {
                     let call_expr = build_expr(ast, expr);
                     let tmp_name = "_ret";
-                    let mut stmts = wrap_with_strategy(ast, call_expr, tmp_name, &handler.strategy, expr);
+                    let mut stmts = wrap_with_strategy(ast, call_expr, tmp_name, &handler.strategy, expr, returns_err);
                     let ret_val = ident(ast, tmp_name);
                     if returns_err {
                         stmts.push(ast.statement_return(SPAN, Some(make_result(ast, ret_val, null(ast)))));
@@ -195,7 +195,7 @@ pub(crate) fn build_stmt<'a>(
                     let call_expr = build_expr(ast, expr);
                     let id = CRASH_COUNTER.fetch_add(1, Ordering::Relaxed);
                     let var_name = format!("_r{}", id);
-                    return wrap_with_strategy(ast, call_expr, &var_name, &handler.strategy, expr);
+                    return wrap_with_strategy(ast, call_expr, &var_name, &handler.strategy, expr, returns_err);
                 }
             }
             let val = build_expr(ast, expr);
@@ -269,11 +269,12 @@ fn emit_var_decl<'a>(
     value: &roca::Expr,
     kind: VariableDeclarationKind,
     crash: Option<&roca::CrashBlock>,
+    returns_err: bool,
 ) -> Vec<Statement<'a>> {
     if let Some(handler) = find_crash_handler(value, crash) {
         if !is_passthrough(&handler.strategy) {
             let call_expr = build_expr(ast, value);
-            return wrap_with_strategy(ast, call_expr, name, &handler.strategy, value);
+            return wrap_with_strategy(ast, call_expr, name, &handler.strategy, value, returns_err);
         }
     }
     let n = ast.str(name);
