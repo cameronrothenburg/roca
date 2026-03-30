@@ -189,19 +189,27 @@ fn struct_uses_another_struct() {
 fn let_result_destructure() {
     assert_eq!(run(
         r#"
-        pub fn safe_divide(a: Number, b: Number) -> Number, err {
-            if b == 0 { return err.div_zero }
-            return a / b
-            test {
-                self(10, 2) == 5
-                self(10, 0) is err.div_zero
+        /// Safe division
+        pub struct SafeDivide {
+            call(a: Number, b: Number) -> Number, err {
+                err div_zero = "div_zero"
+            }
+        }{
+            pub fn call(a: Number, b: Number) -> Number, err {
+                if b == 0 { return err.div_zero }
+                return a / b
+                test {
+                    self(10, 2) == 5
+                    self(10, 0) is err.div_zero
+                }
             }
         }
 
+        /// Computes division result
         pub fn compute(a: Number, b: Number) -> String {
-            const result = safe_divide(a, b)
+            const result = SafeDivide.call(a, b)
             return "result: " + result
-            crash { safe_divide -> fallback(fn(e) -> "error: " + e.message) }
+            crash { SafeDivide.call -> fallback(fn(e) -> "error: " + e.message) }
             test { self(10, 2) == "result: 5" }
         }
         "#,
@@ -297,26 +305,34 @@ fn error_checked_with_truthiness() {
     // In JS, Error objects are truthy, null is falsy
     assert_eq!(run(
         r#"
-        pub fn validate(s: String) -> String, err {
-            if s == "" { return err.empty }
-            if s == "bad" { return err.invalid }
-            return s
-            test {
-                self("ok") == "ok"
-                self("") is err.empty
-                self("bad") is err.invalid
+        /// Validates input
+        pub struct Validate {
+            call(s: String) -> String, err {
+                err empty = "empty"
+                err invalid = "invalid"
+            }
+        }{
+            pub fn call(s: String) -> String, err {
+                if s == "" { return err.empty }
+                if s == "bad" { return err.invalid }
+                return s
+                test {
+                    self("ok") == "ok"
+                    self("") is err.empty
+                    self("bad") is err.invalid
+                }
             }
         }
         "#,
         r#"
-            const { value: v1, err: e1 } = validate("hello");
+            const { value: v1, err: e1 } = Validate.call("hello");
             console.log(e1 ? "error" : "ok");
 
-            const { value: v2, err: e2 } = validate("");
+            const { value: v2, err: e2 } = Validate.call("");
             console.log(e2 ? "error" : "ok");
             console.log(e2.message);
 
-            const { value: v3, err: e3 } = validate("bad");
+            const { value: v3, err: e3 } = Validate.call("bad");
             console.log(e3 ? "error" : "ok");
             console.log(e3.message);
         "#,

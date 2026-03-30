@@ -57,6 +57,8 @@ pub const ERR_IN_BODY: &str = "err-in-body";
 pub const MANUAL_ERR_CHECK: &str = "manual-err-check";
 // Doc rules
 pub const MISSING_DOC: &str = "missing-doc";
+// Function error rules
+pub const FN_ERROR_DEF: &str = "no-fn-error-def";
 
 #[derive(Debug, Clone)]
 pub struct RuleError {

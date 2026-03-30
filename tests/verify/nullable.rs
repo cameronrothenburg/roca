@@ -105,19 +105,26 @@ fn nullable_field_with_value() {
 fn function_returns_nullable() {
     assert_eq!(run(
         r#"
-        pub fn find(id: String) -> String, err {
-            if id == "" { return err.not_found }
-            return "found: " + id
-            test {
-                self("1") == "found: 1"
-                self("") is err.not_found
+        /// Finds an item by id
+        pub struct Find {
+            call(id: String) -> String, err {
+                err not_found = "not_found"
+            }
+        }{
+            pub fn call(id: String) -> String, err {
+                if id == "" { return err.not_found }
+                return "found: " + id
+                test {
+                    self("1") == "found: 1"
+                    self("") is err.not_found
+                }
             }
         }
         "#,
         r#"
-            const { value: v1 } = find("1");
+            const { value: v1 } = Find.call("1");
             console.log(v1);
-            const { value: v2, err } = find("");
+            const { value: v2, err } = Find.call("");
             console.log(err ? "not_found" : v2);
         "#,
     ), "found: 1\nnot_found");
