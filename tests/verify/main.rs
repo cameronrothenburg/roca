@@ -41,3 +41,4 @@ mod time;
 mod url;
 mod crypto;
 mod http;
+mod serialize;

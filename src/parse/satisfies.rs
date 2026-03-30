@@ -9,6 +9,20 @@ impl Parser {
     pub fn parse_satisfies(&mut self, struct_name: String) -> ParseResult<SatisfiesDef> {
         self.expect(&Token::Satisfies)?;
         let contract_name = self.expect_ident()?;
+
+        // Parse optional type args: satisfies Contract<Type, Type>
+        let type_args = if self.at(&Token::Lt) {
+            self.advance();
+            let mut args = vec![self.parse_type_ref()?];
+            while self.eat(&Token::Comma) {
+                args.push(self.parse_type_ref()?);
+            }
+            self.expect(&Token::Gt)?;
+            args
+        } else {
+            Vec::new()
+        };
+
         self.expect(&Token::LBrace)?;
 
         let mut methods = Vec::new();
@@ -25,6 +39,7 @@ impl Parser {
         Ok(SatisfiesDef {
             struct_name,
             contract_name,
+            type_args,
             methods,
         })
     }

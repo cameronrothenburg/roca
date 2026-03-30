@@ -53,6 +53,21 @@ mod tests {
     }
 }
 
+/// Substitute generic type params in a type reference.
+/// e.g. with map {T → User}, TypeRef::Named("T") becomes TypeRef::Named("User")
+fn substitute_type(ty: &crate::ast::TypeRef, map: &std::collections::HashMap<String, &crate::ast::TypeRef>) -> crate::ast::TypeRef {
+    match ty {
+        crate::ast::TypeRef::Named(name) => {
+            if let Some(replacement) = map.get(name) {
+                (*replacement).clone()
+            } else {
+                ty.clone()
+            }
+        }
+        _ => ty.clone(),
+    }
+}
+
 pub struct SatisfiesRule;
 
 impl Rule for SatisfiesRule {
@@ -68,6 +83,13 @@ impl Rule for SatisfiesRule {
                     return errors;
                 }
             };
+            // Build type param → type arg substitution map
+            // e.g. Deserializable<User> with contract<T> → T maps to User
+            let type_map: std::collections::HashMap<String, &crate::ast::TypeRef> = contract.type_params.iter()
+                .zip(sat.type_args.iter())
+                .map(|(param, arg)| (param.name.clone(), arg))
+                .collect();
+
             for sig in &contract.functions {
                 match sat.methods.iter().find(|m| m.name == sig.name) {
                     None => {
@@ -77,8 +99,10 @@ impl Rule for SatisfiesRule {
                         if sig.params.len() != m.params.len() {
                             errors.push(RuleError::new(errors::SATISFIES_MISMATCH, format!("'{}.{}' has {} params but '{}' requires {}", sat.struct_name, m.name, m.params.len(), sat.contract_name, sig.params.len()), None));
                         }
-                        if sig.return_type != m.return_type {
-                            errors.push(RuleError::new(errors::SATISFIES_MISMATCH, format!("'{}.{}' returns {:?} but '{}' requires {:?}", sat.struct_name, m.name, m.return_type, sat.contract_name, sig.return_type), None));
+                        // Substitute generic type params before comparing return types
+                        let expected_return = substitute_type(&sig.return_type, &type_map);
+                        if expected_return != m.return_type {
+                            errors.push(RuleError::new(errors::SATISFIES_MISMATCH, format!("'{}.{}' returns {:?} but '{}' requires {:?}", sat.struct_name, m.name, m.return_type, sat.contract_name, expected_return), None));
                         }
                     }
                 }

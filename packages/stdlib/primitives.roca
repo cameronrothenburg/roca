@@ -7,6 +7,20 @@ contract Loggable {
     to_log() -> String
 }
 
+/** Contract for types that can be serialized to a JSON string */
+contract Serializable {
+    /// Convert to a JSON string representation
+    toJSON() -> String
+}
+
+/** Contract for types that can be constructed from a JSON string */
+contract Deserializable<T> {
+    /// Construct from a JSON string — validates against struct constraints
+    parse(data: String) -> T, err {
+        err invalid = "data does not match expected shape"
+    }
+}
+
 /** Text — immutable sequence of characters */
 contract String {
     /// Remove whitespace from both ends
@@ -175,3 +189,4 @@ contract Map<V> {
     /// The number of entries
     size() -> Number
 }
+
