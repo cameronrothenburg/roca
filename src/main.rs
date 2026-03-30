@@ -121,6 +121,38 @@ fn main() {
                 .expect("failed to create tokio runtime")
                 .block_on(lsp::run());
         }
+        "gen-extern" => {
+            if args.len() < 3 {
+                eprintln!("usage: roca gen-extern <file.d.ts> [--out <path>]");
+                std::process::exit(1);
+            }
+            let dts_path = std::path::Path::new(&args[2]);
+
+            // Output path: --out path.roca, or derive from input filename
+            let out_path = if args.len() >= 5 && args[3] == "--out" {
+                std::path::PathBuf::from(&args[4])
+            } else {
+                let stem = dts_path.file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("generated")
+                    .trim_end_matches(".d");
+                dts_path.parent().unwrap_or(std::path::Path::new(".")).join(format!("{}.roca", stem))
+            };
+
+            match cli::gen_extern::generate(dts_path) {
+                Ok(content) => {
+                    fs::write(&out_path, &content).unwrap_or_else(|e| {
+                        eprintln!("error writing {}: {}", out_path.display(), e);
+                        std::process::exit(1);
+                    });
+                    println!("✓ {}", out_path.display());
+                }
+                Err(e) => {
+                    eprintln!("{}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
         "man" => {
             print_manual();
         }
@@ -162,7 +194,8 @@ fn print_help() {
     println!("  check [path]         Parse and check rules without emitting JS");
     println!("  build [path]         Compile .roca files to JS with proof tests");
     println!("  test [path]          Build + run proof tests, then clean output");
-    println!("  run [path]           Build + execute via bun");
+    println!("  run [path]           Build + execute via embedded V8");
+    println!("  gen-extern <.d.ts>   Generate extern contracts from TypeScript declarations");
     println!("  repl                 Interactive REPL");
     println!("  search <query>       Search stdlib and project for types/functions");
     println!("  patterns             Show coding patterns and JS integration examples");

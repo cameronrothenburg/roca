@@ -7,3 +7,4 @@ pub mod log;
 pub mod runtime;
 pub mod search;
 pub mod repl;
+pub mod gen_extern;
