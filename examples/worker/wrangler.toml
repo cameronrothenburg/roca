@@ -1,0 +1,7 @@
+name = "roca-worker"
+main = "server.js"
+compatibility_date = "2024-01-01"
+
+[[kv_namespaces]]
+binding = "USERS"
+id = "your-kv-namespace-id"

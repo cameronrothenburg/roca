@@ -1,0 +1,24 @@
+// types.roca — application types
+
+pub struct ApiResponse {
+    status: Number
+    body: String
+    ok(body: String) -> ApiResponse
+    created(body: String) -> ApiResponse
+    fail(status: Number, message: String) -> ApiResponse
+}{
+    fn ok(body: String) -> ApiResponse {
+        return ApiResponse { status: 200, body: body }
+        test { self("hello") is Ok }
+    }
+
+    fn created(body: String) -> ApiResponse {
+        return ApiResponse { status: 201, body: body }
+        test { self("done") is Ok }
+    }
+
+    fn fail(status: Number, message: String) -> ApiResponse {
+        return ApiResponse { status: status, body: message }
+        test { self(404, "not found") is Ok }
+    }
+}

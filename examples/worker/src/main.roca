@@ -1,0 +1,48 @@
+// main.roca — router
+
+import { Env } from "./runtime.roca"
+import { ApiResponse } from "./types.roca"
+import { get_user, create_user, delete_user, not_found, method_not_allowed } from "./handlers.roca"
+
+pub fn handle(env: Env, method: String, path: String, body: String | null) -> ApiResponse {
+    if path.startsWith("/users/") {
+        const id = path.slice(7)
+
+        if method == "GET" {
+            return get_user(env, id)
+        }
+
+        if method == "POST" {
+            if body == null {
+                return ApiResponse.fail(400, "request body required")
+            }
+            let b, cast_err = String(body)
+            return create_user(env, id, b)
+        }
+
+        if method == "DELETE" {
+            return delete_user(env, id)
+        }
+
+        return method_not_allowed()
+    }
+
+    return not_found()
+
+    crash {
+        path.startsWith -> halt
+        path.slice -> halt
+        get_user -> halt
+        create_user -> halt
+        delete_user -> halt
+        not_found -> halt
+        method_not_allowed -> halt
+        ApiResponse.fail -> halt
+        String -> halt
+    }
+
+    test {
+        self(Env { kv: __mock_KV, fetcher: __mock_Fetcher, logger: __mock_Logger }, "GET", "/users/1", null) is Ok
+        self(Env { kv: __mock_KV, fetcher: __mock_Fetcher, logger: __mock_Logger }, "GET", "/nope", null) is Ok
+    }
+}

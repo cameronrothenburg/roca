@@ -1,0 +1,15 @@
+{
+  "name": "blog-api",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "main.js",
+  "exports": {
+    ".": "./main.js",
+    "./runtime": "./runtime.js",
+    "./types": "./types.js",
+    "./handlers": "./handlers.js"
+  },
+  "files": [
+    "*.js"
+  ]
+}

@@ -1,0 +1,12 @@
+name = "listings-api"
+main = "server.js"
+compatibility_date = "2024-01-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "listings"
+database_id = "your-d1-database-id"
+
+[[r2_buckets]]
+binding = "IMAGES"
+bucket_name = "listing-images"

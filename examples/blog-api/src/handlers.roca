@@ -1,0 +1,93 @@
+// handlers.roca — blog post CRUD
+// Pure happy path — crash blocks handle all errors
+
+import { Env } from "./runtime.roca"
+import { Response } from "./types.roca"
+
+pub fn list_posts(env: Env) -> Response {
+    const data = env.db.query("SELECT id, title, body, created_at FROM posts ORDER BY created_at DESC")
+    env.logger.info("listed posts")
+    return Response.ok(data)
+
+    crash {
+        env.db.query -> log |> fallback(fn(e) -> Response.fail(500, e.message))
+        env.logger.info -> skip
+        Response.ok -> halt
+        Response.fail -> halt
+    }
+
+    test {
+        self(Env { db: __mock_D1, logger: __mock_Logger }) is Ok
+    }
+}
+
+pub fn get_post(env: Env, id: String) -> Response {
+    const data = env.db.query("SELECT id, title, body, created_at FROM posts WHERE id = " + id + " LIMIT 1")
+    if data == "[]" {
+        return Response.fail(404, "post not found")
+    }
+    env.logger.info("get post: " + id)
+    return Response.ok(data)
+
+    crash {
+        env.db.query -> log |> fallback(fn(e) -> Response.fail(500, e.message))
+        env.logger.info -> skip
+        Response.ok -> halt
+        Response.fail -> halt
+    }
+
+    test {
+        self(Env { db: __mock_D1, logger: __mock_Logger }, "1") is Ok
+    }
+}
+
+pub fn create_post(env: Env, body: String) -> Response {
+    if body == "" {
+        return Response.fail(400, "request body required")
+    }
+
+    env.db.run("INSERT INTO posts (title, body) VALUES ('" + body + "', '" + body + "')")
+    env.logger.info("created post")
+    return Response.created(body)
+
+    crash {
+        env.db.run -> log |> fallback(fn(e) -> Response.fail(500, e.message))
+        env.logger.info -> skip
+        Response.created -> halt
+        Response.fail -> halt
+    }
+
+    test {
+        self(Env { db: __mock_D1, logger: __mock_Logger }, "hello") is Ok
+        self(Env { db: __mock_D1, logger: __mock_Logger }, "") is Ok
+    }
+}
+
+pub fn delete_post(env: Env, id: String) -> Response {
+    env.db.run("DELETE FROM posts WHERE id = " + id)
+    env.logger.info("deleted post: " + id)
+    return Response.ok("deleted")
+
+    crash {
+        env.db.run -> log |> fallback(fn(e) -> Response.fail(500, e.message))
+        env.logger.info -> skip
+        Response.ok -> halt
+        Response.fail -> halt
+    }
+
+    test {
+        self(Env { db: __mock_D1, logger: __mock_Logger }, "1") is Ok
+    }
+}
+
+pub fn not_found() -> Response {
+    return Response.fail(404, "not found")
+    crash { Response.fail -> halt }
+    test { self() is Ok }
+}
+
+pub fn method_not_allowed() -> Response {
+    return Response.fail(405, "method not allowed")
+    crash { Response.fail -> halt }
+    test { self() is Ok }
+}

@@ -1,0 +1,37 @@
+// runtime.roca — extern contracts + adapter
+
+extern contract KV {
+    get(key: String) -> String | null
+    put(key: String, value: String) -> Ok, err {
+        err write_failed = "write failed"
+    }
+    mock {
+        get -> null
+        put -> Ok
+    }
+}
+
+extern contract Fetcher {
+    get(url: String) -> String, err {
+        err network = "network error"
+        err timeout = "request timed out"
+    }
+    mock {
+        get -> "mock user data"
+    }
+}
+
+extern contract Logger {
+    info(msg: String) -> Ok
+    error(msg: String) -> Ok
+    mock {
+        info -> Ok
+        error -> Ok
+    }
+}
+
+pub struct Env {
+    kv: KV
+    fetcher: Fetcher
+    logger: Logger
+}{}

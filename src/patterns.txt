@@ -1,0 +1,171 @@
+ROCA CODING PATTERNS
+====================
+
+1. HAPPY PATH — function bodies are pure success logic
+-----------------------------------------------------
+Function bodies contain ONLY what happens when everything works.
+Errors are handled separately in the crash block.
+
+  /// Validates and creates a user account
+  pub fn create_account(name: String, email: String) -> User, err {
+      err invalid_name = "name is required"
+      err invalid_email = "email must contain @"
+
+      if name == "" { return err.invalid_name }
+      if !email.includes("@") { return err.invalid_email }
+      return User { name: name, email: email }
+
+      test {
+          self("cam", "cam@test.com") is Ok
+          self("", "cam@test.com") is err.invalid_name
+          self("cam", "bad") is err.invalid_email
+      }
+  }
+
+2. EXTERN DEPENDENCIES — pass as explicit params
+-------------------------------------------------
+Declare JS shapes with extern contract. Pass as function params,
+not bundled in an env struct.
+
+  extern contract Database {
+      query(sql: String) -> String, err {
+          err query_failed = "database query failed"
+      }
+      mock { query -> "[]" }
+  }
+
+  /// Fetches all users from the database
+  pub fn get_users(db: Database) -> String, err {
+      err query_failed = "database query failed"
+      const data = wait db.query("SELECT * FROM users")
+      return data
+      crash {
+          db.query -> halt
+      }
+      test {
+          self(__mock_Database) is Ok
+      }
+  }
+
+3. CRASH BLOCKS — only for error-returning calls
+-------------------------------------------------
+Only calls to functions that declare -> Type, err need crash entries.
+Stdlib methods (trim, push, split) are safe and need no crash entry.
+
+  Strategies:
+    halt              Unwrap {value, err} and propagate to caller
+    fallback("x")     Use a default value on error
+    fallback(fn(e))   Closure receives error — access e.name and e.message
+    log |> halt       Log the error, then propagate
+    retry(3, 1000)    Retry 3 times with 1s delay
+    panic             Last resort — crashes the process
+
+  crash {
+      db.query -> log |> retry(3, 1000) |> halt
+      Email.validate -> fallback(fn(e) -> Response.fail(400, e.message))
+  }
+
+4. NO NULL — use errors or Optional<T>
+---------------------------------------
+  WRONG:  pub fn find(id: String) -> User | null
+  RIGHT:  pub fn find(id: String) -> User, err { err not_found = "user not found" }
+
+  For struct fields that may be absent:
+  WRONG:  bio: String | null
+  RIGHT:  bio: Optional<String>
+
+5. WIRING JS — the {value, err} protocol
+------------------------------------------
+Roca functions that return errors use {value, err} objects:
+
+  // Calling a Roca function from JS/TS:
+  import { create_account } from "my-roca-lib";
+
+  const { value: user, err } = create_account("cam", "cam@test.com");
+  if (err) {
+      console.error(err.name, err.message);
+  } else {
+      console.log(user.name);
+  }
+
+6. WIRING EXTERN CONTRACTS — JS adapters
+------------------------------------------
+Extern contract methods that declare errors must return {value, err}:
+
+  // JS adapter for a Database extern contract:
+  const db = {
+      query: async (sql) => {
+          try {
+              const rows = await pool.query(sql);
+              return { value: JSON.stringify(rows), err: null };
+          } catch(e) {
+              return { value: null, err: { name: "query_failed", message: e.message } };
+          }
+      }
+  };
+
+  const { value, err } = await get_users(db);
+
+Extern methods WITHOUT errors return plain values:
+
+  const logger = {
+      info: (msg) => console.log(msg)
+  };
+
+7. STRUCTS — contract block + impl block
+------------------------------------------
+  /// A validated email address
+  pub struct Email {
+      value: String
+      validate(raw: String) -> Email, err {
+          err missing = "email is required"
+          err invalid = "email format is not valid"
+      }
+  }{
+      pub fn validate(raw: String) -> Email, err {
+          if raw == "" { return err.missing }
+          if !raw.includes("@") { return err.invalid }
+          return Email { value: raw }
+          test {
+              self("a@b.com") is Ok
+              self("") is err.missing
+              self("bad") is err.invalid
+          }
+      }
+  }
+
+8. STDLIB MODULES — import with std::
+--------------------------------------
+  import { JSON } from std::json
+
+  pub fn parse_config(raw: String) -> String {
+      const data = JSON.parse(raw)
+      return data
+      crash {
+          JSON.parse -> fallback("{}")
+      }
+      test { self("invalid") == "{}" }
+  }
+
+  The JS runtime wrapper is inlined automatically — no separate file.
+
+9. DOC COMMENTS — required on all pub items
+--------------------------------------------
+  /// Single line doc
+  pub fn greet(name: String) -> String { ... }
+
+  /**
+   * Multi-line block doc.
+   * Explains the function in detail.
+   */
+  pub fn validate(raw: String) -> String, err { ... }
+
+10. FIELD CONSTRAINTS — must include a default
+-----------------------------------------------
+  pub struct User {
+      name: String { min: 1, max: 64, default: "unknown" }
+      age: Number { min: 0, max: 150, default: 0 }
+  }{}
+
+Run `roca search <query>` to find types and methods.
+Run `roca man` for the complete language reference.

@@ -1,0 +1,143 @@
+// handlers.roca — listing CRUD
+// Pure happy path — crash blocks handle all errors
+
+import { Env } from "./runtime.roca"
+import { Response } from "./types.roca"
+
+pub fn list_all(env: Env) -> Response {
+    const data = wait env.db.query("SELECT id, title, price, bedrooms, city FROM listings ORDER BY price DESC")
+    env.logger.info("listed all")
+    return Response.ok(data)
+
+    crash {
+        env.db.query -> log |> fallback(fn(e) -> Response.fail(500, e.message))
+        env.logger.info -> skip
+        Response.ok -> halt
+        Response.fail -> halt
+    }
+
+    test {
+        self(Env { db: __mock_D1, storage: __mock_Storage, logger: __mock_Logger }) is Ok
+    }
+}
+
+pub fn get_listing(env: Env, id: String) -> Response {
+    const data = wait env.db.query("SELECT * FROM listings WHERE id = " + id + " LIMIT 1")
+    if data == "[]" {
+        return Response.fail(404, "listing not found")
+    }
+    env.logger.info("get listing: " + id)
+    return Response.ok(data)
+
+    crash {
+        env.db.query -> log |> fallback(fn(e) -> Response.fail(500, e.message))
+        env.logger.info -> skip
+        Response.ok -> halt
+        Response.fail -> halt
+    }
+
+    test {
+        self(Env { db: __mock_D1, storage: __mock_Storage, logger: __mock_Logger }, "1") is Ok
+    }
+}
+
+pub fn search_by_city(env: Env, city: String) -> Response {
+    const data = wait env.db.query("SELECT id, title, price, bedrooms, city FROM listings WHERE city = '" + city + "' ORDER BY price ASC")
+    env.logger.info("search: " + city)
+    return Response.ok(data)
+
+    crash {
+        env.db.query -> log |> fallback(fn(e) -> Response.fail(500, e.message))
+        env.logger.info -> skip
+        Response.ok -> halt
+        Response.fail -> halt
+    }
+
+    test {
+        self(Env { db: __mock_D1, storage: __mock_Storage, logger: __mock_Logger }, "London") is Ok
+    }
+}
+
+pub fn create_listing(env: Env, body: String) -> Response {
+    if body == "" {
+        return Response.fail(400, "request body required")
+    }
+
+    wait env.db.run("INSERT INTO listings (title, price, bedrooms, city, description) VALUES (" + body + ")")
+    env.logger.info("created listing")
+    return Response.created(body)
+
+    crash {
+        env.db.run -> log |> fallback(fn(e) -> Response.fail(500, e.message))
+        env.logger.info -> skip
+        Response.created -> halt
+        Response.fail -> halt
+    }
+
+    test {
+        self(Env { db: __mock_D1, storage: __mock_Storage, logger: __mock_Logger }, "test") is Ok
+        self(Env { db: __mock_D1, storage: __mock_Storage, logger: __mock_Logger }, "") is Ok
+    }
+}
+
+pub fn upload_image(env: Env, listing_id: String, image_data: String) -> Response {
+    if image_data == "" {
+        return Response.fail(400, "image data required")
+    }
+
+    const key = "listings/" + listing_id + "/image"
+    wait env.storage.put(key, image_data)
+    env.logger.info("uploaded image for listing: " + listing_id)
+    return Response.ok(key)
+
+    crash {
+        env.storage.put -> log |> fallback(fn(e) -> Response.fail(500, e.message))
+        env.logger.info -> skip
+        Response.ok -> halt
+        Response.fail -> halt
+    }
+
+    test {
+        self(Env { db: __mock_D1, storage: __mock_Storage, logger: __mock_Logger }, "1", "data") is Ok
+        self(Env { db: __mock_D1, storage: __mock_Storage, logger: __mock_Logger }, "1", "") is Ok
+    }
+}
+
+pub fn get_image(env: Env, listing_id: String) -> Response {
+    const key = "listings/" + listing_id + "/image"
+    const data = wait env.storage.get(key)
+    return Response.ok(data)
+
+    crash {
+        env.storage.get -> log |> fallback(fn(e) -> Response.fail(404, "image not found"))
+        Response.ok -> halt
+        Response.fail -> halt
+    }
+
+    test {
+        self(Env { db: __mock_D1, storage: __mock_Storage, logger: __mock_Logger }, "1") is Ok
+    }
+}
+
+pub fn delete_listing(env: Env, id: String) -> Response {
+    wait env.db.run("DELETE FROM listings WHERE id = " + id)
+    env.logger.info("deleted listing: " + id)
+    return Response.ok("deleted")
+
+    crash {
+        env.db.run -> log |> fallback(fn(e) -> Response.fail(500, e.message))
+        env.logger.info -> skip
+        Response.ok -> halt
+        Response.fail -> halt
+    }
+
+    test {
+        self(Env { db: __mock_D1, storage: __mock_Storage, logger: __mock_Logger }, "1") is Ok
+    }
+}
+
+pub fn not_found() -> Response {
+    return Response.fail(404, "not found")
+    crash { Response.fail -> halt }
+    test { self() is Ok }
+}

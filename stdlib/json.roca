@@ -1,0 +1,16 @@
+/**
+ * JSON parsing and serialization.
+ * Import with: import { JSON } from std::json
+ */
+pub extern contract JSON {
+    /// Parse a JSON string into a value. Returns parse_failed on invalid input.
+    parse(text: String) -> String, err {
+        err parse_failed = "invalid JSON"
+    }
+    /// Convert a value to a JSON string
+    stringify(value: String) -> String
+    mock {
+        parse -> "{}"
+        stringify -> "{}"
+    }
+}

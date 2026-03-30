@@ -1,0 +1,177 @@
+// Roca Standard Library — Primitive Contracts
+// The compiler maps these to JS — AI can only call what's declared here.
+
+/** Contract for types that can be logged via log(), error(), warn() */
+contract Loggable {
+    /// Convert the value to a loggable string representation
+    to_log() -> String
+}
+
+/** Text — immutable sequence of characters */
+contract String {
+    /// Remove whitespace from both ends
+    trim() -> String
+    /// Remove whitespace from the start
+    trimStart() -> String
+    /// Remove whitespace from the end
+    trimEnd() -> String
+    /// Convert all characters to uppercase
+    toUpperCase() -> String
+    /// Convert all characters to lowercase
+    toLowerCase() -> String
+    /// Replace first occurrence of search with replacement
+    replace(search: String, replacement: String) -> String
+    /// Extract a section starting at the given index
+    slice(start: Number) -> String
+    /// Repeat the string count times
+    repeat(count: Number) -> String
+    /// Check if the string contains the search value
+    includes(search: String) -> Bool
+    /// Check if the string starts with the search value
+    startsWith(search: String) -> Bool
+    /// Check if the string ends with the search value
+    endsWith(search: String) -> Bool
+    /// Find the first index of the search value, or -1 if not found
+    indexOf(search: String) -> Number
+    /// Split the string by a separator into an array
+    split(separator: String) -> Array
+    /// Get the character at the given index
+    charAt(index: Number) -> String
+    /// Convert to string (identity for String)
+    toString() -> String
+    /// Convert to loggable string
+    to_log() -> String
+}
+
+String satisfies Loggable {}
+
+/** Numeric value — integer or floating point */
+contract Number {
+    /// Convert the number to a string
+    toString() -> String
+    /// Format with a fixed number of decimal places
+    toFixed(digits: Number) -> String
+    /// Convert to loggable string
+    to_log() -> String
+}
+
+Number satisfies Loggable {}
+
+/** Boolean value — true or false */
+contract Bool {
+    /// Convert the boolean to "true" or "false"
+    toString() -> String
+    /// Convert to loggable string
+    to_log() -> String
+}
+
+Bool satisfies Loggable {}
+
+/** Ordered collection of elements of type T */
+contract Array<T> {
+    /// The number of elements in the array
+    length: Number
+    /// Check if the array contains the item
+    includes(item: T) -> Bool
+    /// Find the first index of the item, or -1 if not found
+    indexOf(item: T) -> Number
+    /// Join all elements into a string with the separator between them
+    join(separator: String) -> String
+    /// Reverse the order of elements
+    reverse() -> Array<T>
+    /// Add an item to the end, returns the new length
+    push(item: T) -> Number
+    /// Remove and return the last item
+    pop() -> T
+    /// Merge two arrays into a new one
+    concat(other: Array<T>) -> Array<T>
+    /// Transform each element with a callback
+    map(callback: T) -> Array
+    /// Keep only elements that match the callback
+    filter(callback: T) -> Array<T>
+    /// Find the first element matching the callback, or null
+    find(callback: T) -> T | null
+    /// Extract a section starting at the given index
+    slice(start: Number) -> Array<T>
+    /// Execute a callback for each element
+    forEach(callback: T) -> Ok
+    /// Check if at least one element matches the callback
+    some(callback: T) -> Bool
+    /// Check if all elements match the callback
+    every(callback: T) -> Bool
+    /// Flatten one level of nested arrays
+    flat() -> Array
+    /// Reduce the array to a single value using a callback
+    reduce(callback: T) -> T
+}
+
+/** Raw binary data — immutable byte sequence */
+contract Bytes {
+    /// The number of bytes
+    byteLength() -> Number
+    /// Get the byte value at the given index
+    at(index: Number) -> Number
+    /// Extract a section starting at the given index
+    slice(start: Number) -> Bytes
+    /// Decode bytes to a UTF-8 string
+    toString() -> String
+    /// Convert to loggable string
+    to_log() -> String
+    /// Encode bytes as a hex string
+    toHex() -> String
+    /// Encode bytes as a base64 string
+    toBase64() -> String
+    /// Convert to an array of byte values
+    toArray() -> Array
+}
+
+Bytes satisfies Loggable {}
+
+/** Growable byte buffer for building binary data */
+contract Buffer {
+    /// Append raw bytes
+    write(data: Bytes) -> Buffer
+    /// Append a UTF-8 string
+    writeString(data: String) -> Buffer
+    /// Append a single byte value
+    writeByte(value: Number) -> Buffer
+    /// Get the contents as immutable Bytes
+    toBytes() -> Bytes
+    /// Decode contents to a UTF-8 string
+    toString() -> String
+    /// The current number of bytes in the buffer
+    byteLength() -> Number
+    /// Reset the buffer to empty
+    clear() -> Buffer
+}
+
+/**
+ * A value that may or may not be present.
+ * Use for struct fields that are optional — not for function returns (use err instead).
+ */
+contract Optional<T> {
+    /// Check if a value is present
+    isPresent() -> Bool
+    /// Get the value — fails at runtime if not present
+    unwrap() -> T
+    /// Get the value, or return the fallback if not present
+    unwrapOr(value: T) -> T
+}
+
+/** Key-value store with string keys */
+contract Map<V> {
+    /// Get the value for a key
+    get(key: String) -> V
+    /// Set a key-value pair, returns the updated map
+    set(key: String, value: V) -> Map<V>
+    /// Check if a key exists
+    has(key: String) -> Bool
+    /// Remove a key, returns true if it existed
+    delete(key: String) -> Bool
+    /// Get all keys as an array
+    keys() -> Array<String>
+    /// Get all values as an array
+    values() -> Array<V>
+    /// The number of entries
+    size() -> Number
+}

@@ -1,0 +1,40 @@
+// runtime.roca — extern contracts for D1 + R2 storage
+
+extern contract D1 {
+    query(sql: String) -> String, err {
+        err query_failed = "database query failed"
+    }
+    run(sql: String) -> Ok, err {
+        err exec_failed = "database exec failed"
+    }
+    mock {
+        query -> "[]"
+        run -> Ok
+    }
+}
+
+extern contract Storage {
+    put(key: String, data: String) -> Ok, err {
+        err upload_failed = "upload failed"
+    }
+    get(key: String) -> String, err {
+        err not_found = "object not found"
+    }
+    mock {
+        put -> Ok
+        get -> "mock-image-data"
+    }
+}
+
+extern contract Logger {
+    info(msg: String) -> Ok
+    mock {
+        info -> Ok
+    }
+}
+
+pub struct Env {
+    db: D1
+    storage: Storage
+    logger: Logger
+}{}

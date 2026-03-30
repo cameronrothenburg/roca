@@ -1,0 +1,8 @@
+[project]
+name = "roca-worker-lib"
+version = "0.1.0"
+
+[build]
+src = "src/"
+out = "out/"
+mode = "jslib"

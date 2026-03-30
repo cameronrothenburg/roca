@@ -1,0 +1,76 @@
+// handlers.roca — route handlers
+
+import { Env } from "./runtime.roca"
+import { ApiResponse } from "./types.roca"
+
+pub fn get_user(env: Env, id: String) -> ApiResponse {
+    let cached = env.kv.get("user:" + id)
+    if cached != null {
+        env.logger.info("cache hit: " + id)
+        return ApiResponse.ok(cached)
+    }
+
+    env.logger.info("cache miss: " + id)
+    let data, f_err = env.fetcher.get("https://api.example.com/users/" + id)
+    env.kv.put("user:" + id, data)
+    return ApiResponse.ok(data)
+
+    crash {
+        env.kv.get -> skip
+        env.logger.info -> skip
+        env.fetcher.get -> log |> retry(3, 1000) |> fallback(ApiResponse.fail(502, "upstream failed"))
+        env.kv.put -> log |> skip
+        ApiResponse.ok -> halt
+        ApiResponse.fail -> halt
+    }
+
+    test {
+        self(Env { kv: __mock_KV, fetcher: __mock_Fetcher, logger: __mock_Logger }, "123") is Ok
+    }
+}
+
+pub fn create_user(env: Env, id: String, body: String) -> ApiResponse {
+    env.kv.put("user:" + id, body)
+    env.logger.info("created: " + id)
+    return ApiResponse.created(body)
+
+    crash {
+        env.kv.put -> log |> fallback(ApiResponse.fail(500, "save failed"))
+        env.logger.info -> skip
+        ApiResponse.created -> halt
+        ApiResponse.fail -> halt
+    }
+
+    test {
+        self(Env { kv: __mock_KV, fetcher: __mock_Fetcher, logger: __mock_Logger }, "123", "data") is Ok
+    }
+}
+
+pub fn delete_user(env: Env, id: String) -> ApiResponse {
+    env.kv.put("user:" + id, "")
+    env.logger.info("deleted: " + id)
+    return ApiResponse.ok("")
+
+    crash {
+        env.kv.put -> log |> fallback(ApiResponse.fail(500, "delete failed"))
+        env.logger.info -> skip
+        ApiResponse.ok -> halt
+        ApiResponse.fail -> halt
+    }
+
+    test {
+        self(Env { kv: __mock_KV, fetcher: __mock_Fetcher, logger: __mock_Logger }, "123") is Ok
+    }
+}
+
+pub fn not_found() -> ApiResponse {
+    return ApiResponse.fail(404, "not found")
+    crash { ApiResponse.fail -> halt }
+    test { self() is Ok }
+}
+
+pub fn method_not_allowed() -> ApiResponse {
+    return ApiResponse.fail(405, "method not allowed")
+    crash { ApiResponse.fail -> halt }
+    test { self() is Ok }
+}

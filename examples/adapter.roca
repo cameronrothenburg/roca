@@ -1,0 +1,53 @@
+// Adapter pattern — dependency injection for JS runtime APIs
+// Function bodies are pure happy path. Crash blocks handle errors.
+
+// ─── Extern contracts: what JS provides ─────────────────
+
+extern contract HttpClient {
+    get(url: String) -> String, err {
+        err network = "network error"
+        err timeout = "request timed out"
+    }
+}
+
+extern contract Cache {
+    get(key: String) -> String | null
+    set(key: String, value: String) -> Ok
+}
+
+extern contract Logger {
+    info(msg: String) -> Ok
+    error(msg: String) -> Ok
+}
+
+// ─── Adapter: bundle dependencies ───────────────────────
+
+pub struct Services {
+    http: HttpClient
+    cache: Cache
+    logger: Logger
+}{}
+
+// ─── Application logic: pure happy path ─────────────────
+
+pub fn fetch_with_cache(svc: Services, url: String) -> String, err {
+    const cached = svc.cache.get(url)
+    if cached != null { return cached }
+
+    svc.logger.info("cache miss: " + url)
+    const result = svc.http.get(url)
+
+    svc.cache.set(url, result)
+    return result
+
+    crash {
+        svc.cache.get -> skip
+        svc.logger.info -> skip
+        svc.http.get -> log |> retry(3, 1000) |> halt
+        svc.cache.set -> log |> skip
+    }
+
+    test {
+        self(Services { http: null, cache: null, logger: null }, "/api") == "data"
+    }
+}

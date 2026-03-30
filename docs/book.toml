@@ -1,0 +1,12 @@
+[book]
+title = "The Roca Language"
+authors = ["Cameron Rothenburg"]
+language = "en"
+src = "src"
+
+[build]
+build-dir = "book"
+
+[output.html]
+additional-js = ["highlight-roca.js"]
+additional-css = ["roca-theme.css"]

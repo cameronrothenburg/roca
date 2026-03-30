@@ -1,0 +1,58 @@
+// types.roca — domain types with validation
+
+pub struct Listing {
+    title: String { min: 3, max: 200 }
+    price: Number { min: 0 }
+    bedrooms: Number { min: 0, max: 20 }
+    city: String { min: 1 }
+    description: String
+    validate(title: String, price: Number, bedrooms: Number, city: String, description: String) -> Listing, err {
+        err missing_title = "title is required"
+        err title_too_short = "title must be at least 3 characters"
+        err invalid_price = "price must be positive"
+        err invalid_bedrooms = "bedrooms must be 0-20"
+        err missing_city = "city is required"
+    }
+}{
+    fn validate(title: String, price: Number, bedrooms: Number, city: String, description: String) -> Listing, err {
+        if title == "" { return err.missing_title }
+        if title.length < 3 { return err.title_too_short }
+        if price < 0 { return err.invalid_price }
+        if bedrooms < 0 { return err.invalid_bedrooms }
+        if bedrooms > 20 { return err.invalid_bedrooms }
+        if city == "" { return err.missing_city }
+        return Listing { title: title, price: price, bedrooms: bedrooms, city: city, description: description }
+
+        crash { title.length -> halt }
+
+        test {
+            self("Nice flat", 250000, 2, "London", "A lovely flat") is Ok
+            self("", 100, 1, "London", "") is err.missing_title
+            self("AB", 100, 1, "London", "") is err.title_too_short
+            self("Nice", -1, 1, "London", "") is err.invalid_price
+            self("Nice", 100, -1, "London", "") is err.invalid_bedrooms
+            self("Nice", 100, 1, "", "") is err.missing_city
+        }
+    }
+}
+
+pub struct Response {
+    status: Number
+    body: String
+    ok(body: String) -> Response
+    created(body: String) -> Response
+    fail(status: Number, msg: String) -> Response
+}{
+    fn ok(body: String) -> Response {
+        return Response { status: 200, body: body }
+        test { self("hi") is Ok }
+    }
+    fn created(body: String) -> Response {
+        return Response { status: 201, body: body }
+        test { self("done") is Ok }
+    }
+    fn fail(status: Number, msg: String) -> Response {
+        return Response { status: status, body: msg }
+        test { self(404, "not found") is Ok }
+    }
+}

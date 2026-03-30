@@ -1,0 +1,17 @@
+{
+  "name": "listings-worker",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "roca build",
+    "dev": "roca build && wrangler dev",
+    "deploy": "roca build && wrangler deploy",
+    "migrate": "wrangler d1 execute listings --local --file=schema.sql"
+  },
+  "devDependencies": {
+    "wrangler": "^4"
+  },
+  "dependencies": {
+    "listings-api": "file:out"
+  }
+}

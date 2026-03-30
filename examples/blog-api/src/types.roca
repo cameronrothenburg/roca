@@ -1,0 +1,22 @@
+// types.roca — response type
+
+pub struct Response {
+    status: Number
+    body: String
+    ok(body: String) -> Response
+    created(body: String) -> Response
+    fail(status: Number, msg: String) -> Response
+}{
+    fn ok(body: String) -> Response {
+        return Response { status: 200, body: body }
+        test { self("hi") is Ok }
+    }
+    fn created(body: String) -> Response {
+        return Response { status: 201, body: body }
+        test { self("done") is Ok }
+    }
+    fn fail(status: Number, msg: String) -> Response {
+        return Response { status: status, body: msg }
+        test { self(404, "not found") is Ok }
+    }
+}

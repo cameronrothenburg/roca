@@ -1,0 +1,58 @@
+// main.roca — blog API router
+
+import { Env } from "./runtime.roca"
+import { Response } from "./types.roca"
+import { list_posts, get_post, create_post, delete_post, not_found, method_not_allowed } from "./handlers.roca"
+
+pub fn handle(env: Env, method: String, path: String, body: String | null) -> Response {
+    // GET /posts
+    if method == "GET" {
+        if path == "/posts" {
+            return list_posts(env)
+        }
+        if path.startsWith("/posts/") {
+            const id = path.slice(7)
+            return get_post(env, id)
+        }
+    }
+
+    // POST /posts
+    if method == "POST" {
+        if path == "/posts" {
+            if body == null {
+                return Response.fail(400, "request body required")
+            }
+            let b, cast_err = String(body)
+            return create_post(env, b)
+        }
+    }
+
+    // DELETE /posts/:id
+    if method == "DELETE" {
+        if path.startsWith("/posts/") {
+            const id = path.slice(7)
+            return delete_post(env, id)
+        }
+    }
+
+    return not_found()
+
+    crash {
+        list_posts -> halt
+        get_post -> halt
+        create_post -> halt
+        delete_post -> halt
+        not_found -> halt
+        method_not_allowed -> halt
+        path.startsWith -> halt
+        path.slice -> halt
+        Response.fail -> halt
+        String -> halt
+    }
+
+    test {
+        self(Env { db: __mock_D1, logger: __mock_Logger }, "GET", "/posts", null) is Ok
+        self(Env { db: __mock_D1, logger: __mock_Logger }, "GET", "/nope", null) is Ok
+        self(Env { db: __mock_D1, logger: __mock_Logger }, "POST", "/posts", null) is Ok
+    }
+}

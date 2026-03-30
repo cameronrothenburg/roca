@@ -1,0 +1,74 @@
+// main.roca — listings API router
+
+import { Env } from "./runtime.roca"
+import { Response } from "./types.roca"
+import { list_all, get_listing, search_by_city, create_listing, upload_image, get_image, delete_listing, not_found } from "./handlers.roca"
+
+pub fn handle(env: Env, method: String, path: String, body: String | null) -> Response {
+    if method == "GET" {
+        if path == "/listings" {
+            return list_all(env)
+        }
+        if path.startsWith("/listings/search?city=") {
+            const city = path.slice(21)
+            return search_by_city(env, city)
+        }
+        if path.endsWith("/image") {
+            const id = path.slice(10)
+            return get_image(env, id)
+        }
+        if path.startsWith("/listings/") {
+            const id = path.slice(10)
+            return get_listing(env, id)
+        }
+    }
+
+    if method == "POST" {
+        if path == "/listings" {
+            if body == null {
+                return Response.fail(400, "request body required")
+            }
+            let b, cast_err = String(body)
+            return create_listing(env, b)
+        }
+        if path.endsWith("/image") {
+            if body == null {
+                return Response.fail(400, "image data required")
+            }
+            const id = path.slice(10)
+            let img, cast_err = String(body)
+            return upload_image(env, id, img)
+        }
+    }
+
+    if method == "DELETE" {
+        if path.startsWith("/listings/") {
+            const id = path.slice(10)
+            return delete_listing(env, id)
+        }
+    }
+
+    return not_found()
+
+    crash {
+        list_all -> halt
+        get_listing -> halt
+        search_by_city -> halt
+        create_listing -> halt
+        upload_image -> halt
+        get_image -> halt
+        delete_listing -> halt
+        not_found -> halt
+        path.startsWith -> halt
+        path.endsWith -> halt
+        path.slice -> halt
+        Response.fail -> halt
+        String -> halt
+    }
+
+    test {
+        self(Env { db: __mock_D1, storage: __mock_Storage, logger: __mock_Logger }, "GET", "/listings", null) is Ok
+        self(Env { db: __mock_D1, storage: __mock_Storage, logger: __mock_Logger }, "GET", "/nope", null) is Ok
+        self(Env { db: __mock_D1, storage: __mock_Storage, logger: __mock_Logger }, "POST", "/listings", null) is Ok
+    }
+}
