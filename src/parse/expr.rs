@@ -412,21 +412,30 @@ impl Parser {
 }
 
 /// Check if a string contains interpolation expressions like {name} or {obj.field}.
-/// Empty braces {} and braces with only whitespace are NOT interpolation.
+/// Empty braces {} are NOT interpolation.
+/// Content with non-identifier characters (colons, commas, spaces) is NOT interpolation.
+/// Only {identifier} and {obj.field} patterns count as interpolation.
 fn has_interpolation(s: &str) -> bool {
     let mut chars = s.chars().peekable();
     while let Some(c) = chars.next() {
         if c == '{' {
             let mut content = String::new();
+            let mut found_close = false;
             while let Some(&c) = chars.peek() {
                 if c == '}' {
                     chars.next();
+                    found_close = true;
                     break;
                 }
                 content.push(c);
                 chars.next();
             }
-            if !content.trim().is_empty() {
+            if !found_close { continue; }
+            let trimmed = content.trim();
+            if trimmed.is_empty() { continue; }
+            // Only valid interpolation if content is an identifier path or method call
+            // Allows: {name}, {user.age}, {value.toString()}, {item.to_log()}
+            if trimmed.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '.' || c == '(' || c == ')') {
                 return true;
             }
         }
@@ -545,5 +554,64 @@ mod tests {
         let mut p = Parser::new(tokenize("->"));
         let result = p.parse_expr();
         assert!(result.is_err());
+    }
+
+    // ─── String interpolation edge cases ─────
+
+    #[test]
+    fn json_string_not_interpolated() {
+        // "{key: value}" should be a plain string, not interpolation
+        let mut p = Parser::new(tokenize(r#""{key: value}""#));
+        let expr = p.parse_expr().unwrap();
+        assert!(matches!(&expr, Expr::String(s) if s == "{key: value}"),
+            "JSON-like string should not be interpolated, got: {:?}", expr);
+    }
+
+    #[test]
+    fn json_object_string_not_interpolated() {
+        let mut p = Parser::new(tokenize(r#""{"name":"cam"}""#));
+        let expr = p.parse_expr().unwrap();
+        assert!(matches!(expr, Expr::String(_)),
+            "JSON object string should not be interpolated, got: {:?}", expr);
+    }
+
+    #[test]
+    fn empty_braces_not_interpolated() {
+        let mut p = Parser::new(tokenize(r#""{}""#));
+        let expr = p.parse_expr().unwrap();
+        assert!(matches!(&expr, Expr::String(s) if s == "{}"),
+            "empty braces should not be interpolated, got: {:?}", expr);
+    }
+
+    #[test]
+    fn valid_interpolation_works() {
+        let mut p = Parser::new(tokenize(r#""hello {name}""#));
+        let expr = p.parse_expr().unwrap();
+        assert!(matches!(expr, Expr::StringInterp(_)),
+            "valid interpolation should work, got: {:?}", expr);
+    }
+
+    #[test]
+    fn dotted_interpolation_works() {
+        let mut p = Parser::new(tokenize(r#""age is {user.age}""#));
+        let expr = p.parse_expr().unwrap();
+        assert!(matches!(expr, Expr::StringInterp(_)),
+            "dotted interpolation should work, got: {:?}", expr);
+    }
+
+    #[test]
+    fn braces_with_spaces_not_interpolated() {
+        let mut p = Parser::new(tokenize(r#""{ not valid }""#));
+        let expr = p.parse_expr().unwrap();
+        assert!(matches!(expr, Expr::String(_)),
+            "braces with spaces around content should not interpolate, got: {:?}", expr);
+    }
+
+    #[test]
+    fn css_string_not_interpolated() {
+        let mut p = Parser::new(tokenize(r#"".class { color: red; }""#));
+        let expr = p.parse_expr().unwrap();
+        assert!(matches!(expr, Expr::String(_)),
+            "CSS-like string should not be interpolated, got: {:?}", expr);
     }
 }
