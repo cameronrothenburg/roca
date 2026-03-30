@@ -2,11 +2,13 @@
 
 *Roca — Spanish for rock, stone, cliff. Firme como una roca — as solid as a rock.*
 
-A contractual language that compiles to JavaScript. Built for AI-generated code.
+A contractual language that compiles to JavaScript. A language for the AI era.
 
 ## The Problem
 
-Guaranteeing code is clean and error-free requires external tooling — linters, scanners, test frameworks, type checkers — all configured separately. When an issue is found in one place, nothing forces fixing it everywhere. AI makes this worse: it generates code fast, but has no feedback loop telling it to think about error handling, edge cases, or test coverage.
+Programming languages were designed for humans to be expressive. That expressiveness gives AI too much freedom — it can write code any way it wants, skip error handling, ignore edge cases, and return bare objects. Nothing in the language forces it to do better.
+
+Current tooling doesn't solve this. Linters, scanners, test frameworks, type checkers — all configured separately, all optional. When an issue is found in one place, nothing forces fixing it everywhere. AI generates code fast, but without a feedback loop it has no reason to think about error handling, edge cases, or test coverage.
 
 ## The Solution
 
