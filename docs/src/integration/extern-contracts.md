@@ -57,6 +57,22 @@ test {
 
 The compiler enforces **`invalid-mock-ref`** if `__mock_X` is used but contract `X` has no `mock` block.
 
+## Generating from TypeScript
+
+If you have TypeScript declaration files (`.d.ts`), generate extern contracts automatically:
+
+```bash
+roca gen-extern worker-configuration.d.ts
+```
+
+This parses the TypeScript interfaces and generates a `.roca` file with:
+- Type mapping (`string` → `String`, `Promise<T>` → async, `T | null` → `Optional<T>`)
+- Error inference from method names (`get` → `not_found`, `put` → `failed`)
+- Cross-references between interfaces resolved
+- Mock blocks with sensible defaults
+
+Works with Cloudflare `wrangler types` output and any `.d.ts` file.
+
 ## Wiring from JS
 
 See [JS Wiring](./js-wiring.md) for how to implement extern contracts on the JavaScript side.
