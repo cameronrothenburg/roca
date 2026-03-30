@@ -38,6 +38,9 @@ fn main() {
             }
             init::init_project(&args[2]);
         }
+        "repl" => {
+            cli::repl::run_repl();
+        }
         "skills" => {
             let with_claude = args.iter().any(|a| a == "--claude");
             init::generate_skills(with_claude);
@@ -160,6 +163,7 @@ fn print_help() {
     println!("  build [path]         Compile .roca files to JS with proof tests");
     println!("  test [path]          Build + run proof tests, then clean output");
     println!("  run [path]           Build + execute via bun");
+    println!("  repl                 Interactive REPL");
     println!("  search <query>       Search stdlib and project for types/functions");
     println!("  patterns             Show coding patterns and JS integration examples");
     println!("  lsp                  Start language server (stdio)");
