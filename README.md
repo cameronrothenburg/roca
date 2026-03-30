@@ -60,7 +60,7 @@ Full documentation in the [Roca Book](docs/src/SUMMARY.md):
 
 **Integration** — [Using in Projects](docs/src/integration/using-in-projects.md) | [Extern Contracts](docs/src/integration/extern-contracts.md) | [JS Wiring](docs/src/integration/js-wiring.md) | [TypeScript](docs/src/integration/typescript.md) | [Stdlib Modules](docs/src/integration/stdlib-modules.md)
 
-**Reference** — [Compiler Rules](docs/src/reference/compiler-rules.md) | [CLI](docs/src/reference/cli.md) | [Stdlib](docs/src/reference/stdlib.md)
+**Reference** — [Compiler Rules](docs/src/reference/compiler-rules.md) | [CLI](docs/src/reference/cli.md) | [Stdlib](docs/src/reference/stdlib.md) | [Telemetry](docs/src/reference/telemetry.md)
 
 **Project** — [Introduction](docs/src/introduction.md) | [Getting Started](docs/src/getting-started.md) | [Roadmap](ROADMAP.md)
 

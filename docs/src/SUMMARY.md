@@ -33,3 +33,4 @@
 - [Compiler Rules](./reference/compiler-rules.md)
 - [CLI](./reference/cli.md)
 - [Stdlib](./reference/stdlib.md)
+- [Telemetry](./reference/telemetry.md)
