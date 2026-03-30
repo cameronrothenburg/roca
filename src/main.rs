@@ -123,27 +123,29 @@ fn main() {
         }
         "gen-extern" => {
             if args.len() < 3 {
-                eprintln!("usage: roca gen-extern <file.d.ts> [--out <dir>]");
+                eprintln!("usage: roca gen-extern <file.d.ts> [--out <path>]");
                 std::process::exit(1);
             }
             let dts_path = std::path::Path::new(&args[2]);
-            let out_dir = if args.len() >= 5 && args[3] == "--out" {
+
+            // Output path: --out path.roca, or derive from input filename
+            let out_path = if args.len() >= 5 && args[3] == "--out" {
                 std::path::PathBuf::from(&args[4])
             } else {
-                dts_path.parent().unwrap_or(std::path::Path::new(".")).to_path_buf()
+                let stem = dts_path.file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("generated")
+                    .trim_end_matches(".d");
+                dts_path.parent().unwrap_or(std::path::Path::new(".")).join(format!("{}.roca", stem))
             };
 
             match cli::gen_extern::generate(dts_path) {
-                Ok(files) => {
-                    let _ = fs::create_dir_all(&out_dir);
-                    for (name, content) in &files {
-                        let path = out_dir.join(format!("{}.roca", name));
-                        fs::write(&path, content).unwrap_or_else(|e| {
-                            eprintln!("error writing {}: {}", path.display(), e);
-                        });
-                        println!("✓ {}", path.display());
-                    }
-                    println!("\n{} extern contract(s) generated", files.len());
+                Ok(content) => {
+                    fs::write(&out_path, &content).unwrap_or_else(|e| {
+                        eprintln!("error writing {}: {}", out_path.display(), e);
+                        std::process::exit(1);
+                    });
+                    println!("✓ {}", out_path.display());
                 }
                 Err(e) => {
                     eprintln!("{}", e);

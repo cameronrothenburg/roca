@@ -21,7 +21,7 @@ struct TsInterface {
     fields: Vec<(String, String)>, // (name, roca_type)
 }
 
-pub fn generate(dts_path: &Path) -> Result<Vec<(String, String)>, String> {
+pub fn generate(dts_path: &Path) -> Result<String, String> {
     let source = std::fs::read_to_string(dts_path)
         .map_err(|e| format!("error reading {}: {}", dts_path.display(), e))?;
 
@@ -35,21 +35,28 @@ pub fn generate(dts_path: &Path) -> Result<Vec<(String, String)>, String> {
     }
 
     let interfaces = extract_interfaces(&result.program);
-
-    // Build set of all known interface names for cross-referencing
     let known_types: HashSet<String> = interfaces.iter().map(|i| i.name.clone()).collect();
 
-    let mut output = Vec::new();
+    let file_stem = dts_path.file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("generated")
+        .trim_end_matches(".d");
+
+    let mut out = format!("/**\n * Generated from {} — edit as needed.\n */\n\n",
+        dts_path.file_name().and_then(|s| s.to_str()).unwrap_or("unknown"));
+
+    let mut count = 0;
     for iface in &interfaces {
         if iface.methods.is_empty() && iface.fields.is_empty() {
             continue;
         }
-        let filename = to_snake_case(&iface.name);
-        let roca = generate_contract(iface, &known_types);
-        output.push((filename, roca));
+        out.push_str(&generate_contract(iface, &known_types));
+        out.push('\n');
+        count += 1;
     }
 
-    Ok(output)
+    eprintln!("{} extern contract(s) from {}", count, file_stem);
+    Ok(out)
 }
 
 fn extract_interfaces(program: &Program) -> Vec<TsInterface> {
@@ -294,18 +301,6 @@ fn generate_contract(iface: &TsInterface, known: &HashSet<String>) -> String {
         collect_type_refs(&resolved, known, &mut imports);
     }
     imports.remove(&iface.name); // don't self-import
-
-    // Header
-    out.push_str(&format!("/**\n * Generated from {} — edit as needed.\n * Import with: import {{ {} }} from \"./{}.roca\"\n */\n", iface.name, iface.name, snake));
-
-    // Imports
-    for imp in &imports {
-        let imp_snake = to_snake_case(imp);
-        out.push_str(&format!("import {{ {} }} from \"./{}.roca\"\n", imp, imp_snake));
-    }
-    if !imports.is_empty() {
-        out.push('\n');
-    }
 
     out.push_str(&format!("pub extern contract {} {{\n", iface.name));
 
