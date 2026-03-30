@@ -38,6 +38,10 @@ fn main() {
             }
             init::init_project(&args[2]);
         }
+        "skills" => {
+            let with_claude = args.iter().any(|a| a == "--claude");
+            init::generate_skills(with_claude);
+        }
         "check" => {
             let path = resolve_path_arg(&args);
             if path.is_dir() {
@@ -151,6 +155,7 @@ fn print_help() {
     println!();
     println!("COMMANDS:");
     println!("  init <name>          Create a new Roca project");
+    println!("  skills [--claude]    Generate AI assistant skills");
     println!("  check [path]         Parse and check rules without emitting JS");
     println!("  build [path]         Compile .roca files to JS with proof tests");
     println!("  test [path]          Build + run proof tests, then clean output");
