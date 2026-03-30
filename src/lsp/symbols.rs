@@ -80,3 +80,68 @@ fn find_line_for(name: &str, source: &str, last_line: &mut u32) -> u32 {
     }
     0
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn function_symbol() {
+        let syms = document_symbols("pub fn greet(name: String) -> String { return name test {} }");
+        assert_eq!(syms.len(), 1);
+        assert_eq!(syms[0].name, "greet");
+        assert_eq!(syms[0].kind, SymbolKind::FUNCTION);
+        assert!(syms[0].detail.as_ref().unwrap().contains("pub fn"));
+    }
+
+    #[test]
+    fn struct_symbol() {
+        let syms = document_symbols("pub struct User { name: String email: String }{}");
+        assert_eq!(syms.len(), 1);
+        assert_eq!(syms[0].name, "User");
+        assert_eq!(syms[0].kind, SymbolKind::CLASS);
+        assert!(syms[0].detail.as_ref().unwrap().contains("name"));
+    }
+
+    #[test]
+    fn contract_symbol() {
+        let syms = document_symbols("contract Loggable { to_log() -> String }");
+        assert_eq!(syms.len(), 1);
+        assert_eq!(syms[0].name, "Loggable");
+        assert_eq!(syms[0].kind, SymbolKind::INTERFACE);
+    }
+
+    #[test]
+    fn import_stdlib_symbol() {
+        let syms = document_symbols("import { Http } from std::http");
+        assert_eq!(syms.len(), 1);
+        assert_eq!(syms[0].kind, SymbolKind::MODULE);
+        assert!(syms[0].detail.as_ref().unwrap().contains("std::http"));
+    }
+
+    #[test]
+    fn enum_symbol() {
+        let syms = document_symbols(r#"enum Color { Red = "red" Blue = "blue" }"#);
+        assert_eq!(syms.len(), 1);
+        assert_eq!(syms[0].name, "Color");
+        assert_eq!(syms[0].kind, SymbolKind::ENUM);
+        assert!(syms[0].detail.as_ref().unwrap().contains("Red"));
+    }
+
+    #[test]
+    fn satisfies_symbol() {
+        let syms = document_symbols("pub struct Email { value: String }{}\nEmail satisfies Loggable { fn to_log() -> String { return self.value test {} } }");
+        let sat = syms.iter().find(|s| s.kind == SymbolKind::METHOD).unwrap();
+        assert!(sat.name.contains("satisfies"));
+        assert!(sat.name.contains("Loggable"));
+    }
+
+    #[test]
+    fn multiple_symbols() {
+        let src = "import { Http } from std::http\npub fn fetch(url: String) -> String { return url test {} }";
+        let syms = document_symbols(src);
+        assert_eq!(syms.len(), 2);
+        assert_eq!(syms[0].kind, SymbolKind::MODULE);
+        assert_eq!(syms[1].kind, SymbolKind::FUNCTION);
+    }
+}

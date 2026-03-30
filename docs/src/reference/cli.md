@@ -8,7 +8,7 @@
 | `roca check [path]` | Parse + lint + type check |
 | `roca build [path]` | Check, build JS, run proof tests |
 | `roca test [path]` | Build + test, then clean output |
-| `roca run [path]` | Build + execute via bun |
+| `roca run [path]` | Build + execute via embedded V8 |
 | `roca lsp` | Start the language server |
 | `roca man` | Show the language manual |
 | `roca --version` | Print version |
