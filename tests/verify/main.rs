@@ -37,3 +37,4 @@ mod while_loop;
 mod integration;
 mod repl;
 mod encoding;
+mod time;
