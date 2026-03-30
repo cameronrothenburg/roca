@@ -321,11 +321,7 @@ fn check_method_call(type_name: &str, field: &str, args: &[Expr], ctx: &ExprCont
     let qn = &ctx.func.qualified_name;
 
     if type_name.ends_with('?') {
-        errors.push(RuleError {
-            code: errors::NULLABLE_ACCESS.into(),
-            message: format!("cannot call .{}() on nullable type '{}'", field, type_name.trim_end_matches('?')),
-            context: Some(qn.clone()),
-        });
+        errors.push(RuleError::new(errors::NULLABLE_ACCESS, format!("cannot call .{}() on nullable type '{}'", field, type_name.trim_end_matches('?')), Some(qn.clone())));
     }
 
     let lookup_type = type_name.trim_end_matches('?');
@@ -333,20 +329,12 @@ fn check_method_call(type_name: &str, field: &str, args: &[Expr], ctx: &ExprCont
         let available = registry.available_methods(lookup_type);
         let hint = if available.is_empty() { String::new() }
             else { format!("\n  available: {}", available.join(", ")) };
-        errors.push(RuleError {
-            code: errors::UNKNOWN_METHOD.into(),
-            message: format!("'{}' has no method '{}'{}",lookup_type, field, hint),
-            context: Some(qn.clone()),
-        });
+        errors.push(RuleError::new(errors::UNKNOWN_METHOD, format!("'{}' has no method '{}'{}",lookup_type, field, hint), Some(qn.clone())));
     } else if !registry.is_method_pub(lookup_type, field) {
         // Check if caller is inside the same struct — self calls are allowed
         let caller_struct = qn.split('.').next().unwrap_or("");
         if caller_struct != lookup_type {
-            errors.push(RuleError {
-                code: errors::PRIVATE_METHOD.into(),
-                message: format!("'{}.{}' is not pub — cannot call from outside '{}'", lookup_type, field, lookup_type),
-                context: Some(qn.clone()),
-            });
+            errors.push(RuleError::new(errors::PRIVATE_METHOD, format!("'{}.{}' is not pub — cannot call from outside '{}'", lookup_type, field, lookup_type), Some(qn.clone())));
         }
     }
 
@@ -358,11 +346,7 @@ fn check_method_call(type_name: &str, field: &str, args: &[Expr], ctx: &ExprCont
                         let expected = substitute_type(&type_ref_to_name(&param.type_ref), &subs);
                         if let Some(actual) = resolve_type(arg_expr, ctx.scope) {
                             if !registry.type_accepts(&expected, &actual) {
-                                errors.push(RuleError {
-                                    code: errors::GENERIC_MISMATCH.into(),
-                                    message: format!("{}.{}() expects {} but got {}", lookup_type, field, expected, actual),
-                                    context: Some(qn.clone()),
-                                });
+                                errors.push(RuleError::new(errors::GENERIC_MISMATCH, format!("{}.{}() expects {} but got {}", lookup_type, field, expected, actual), Some(qn.clone())));
                             }
                         }
                     }
@@ -371,11 +355,7 @@ fn check_method_call(type_name: &str, field: &str, args: &[Expr], ctx: &ExprCont
         }
 
         for (arg, constraint, full_type) in registry.check_generic_constraints(lookup_type) {
-            errors.push(RuleError {
-                code: errors::CONSTRAINT_VIOLATION.into(),
-                message: format!("'{}' does not satisfy constraint '{}' required by {}", arg, constraint, full_type),
-                context: Some(qn.clone()),
-            });
+            errors.push(RuleError::new(errors::CONSTRAINT_VIOLATION, format!("'{}' does not satisfy constraint '{}' required by {}", arg, constraint, full_type), Some(qn.clone())));
         }
     }
 }
@@ -388,23 +368,11 @@ fn check_binop(left: &Expr, op: &BinOp, right: &Expr, ctx: &ExprContext, errors:
 
     if let (Some(lt), Some(rt)) = (&left_type, &right_type) {
         if lt != rt {
-            errors.push(RuleError {
-                code: errors::TYPE_MISMATCH.into(),
-                message: format!("cannot compare {} with {}", lt, rt),
-                context: Some(ctx.func.qualified_name.clone()),
-            });
+            errors.push(RuleError::new(errors::TYPE_MISMATCH, format!("cannot compare {} with {}", lt, rt), Some(ctx.func.qualified_name.clone())));
         } else if !is_primitive(lt) {
-            errors.push(RuleError {
-                code: errors::STRUCT_COMPARISON.into(),
-                message: format!("cannot compare struct '{}' directly — compare fields instead", lt),
-                context: Some(ctx.func.qualified_name.clone()),
-            });
+            errors.push(RuleError::new(errors::STRUCT_COMPARISON, format!("cannot compare struct '{}' directly — compare fields instead", lt), Some(ctx.func.qualified_name.clone())));
         } else if is_ordering(op) && lt == "Bool" {
-            errors.push(RuleError {
-                code: errors::INVALID_ORDERING.into(),
-                message: "cannot order Bool — use == or != instead".into(),
-                context: Some(ctx.func.qualified_name.clone()),
-            });
+            errors.push(RuleError::new(errors::INVALID_ORDERING, "cannot order Bool — use == or != instead", Some(ctx.func.qualified_name.clone())));
         }
     }
 }
@@ -417,11 +385,7 @@ fn check_loggable(expr: &Expr, ctx: &ExprContext, fn_name: &str, errors: &mut Ve
     }
     if let Some(type_name) = resolve_type(expr, ctx.scope) {
         if !ctx.check.registry.has_method(&type_name, "to_log") {
-            errors.push(RuleError {
-                code: errors::NOT_LOGGABLE.into(),
-                message: format!("{}() requires Loggable — '{}' has no to_log() method", fn_name, type_name),
-                context: Some(ctx.func.qualified_name.clone()),
-            });
+            errors.push(RuleError::new(errors::NOT_LOGGABLE, format!("{}() requires Loggable — '{}' has no to_log() method", fn_name, type_name), Some(ctx.func.qualified_name.clone())));
         }
     }
 }

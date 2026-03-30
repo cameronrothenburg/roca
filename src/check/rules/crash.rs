@@ -229,11 +229,7 @@ impl Rule for CrashRule {
             Some(c) => c,
             None => {
                 for call in &err_calls {
-                    errors.push(RuleError {
-                        code: errors::MISSING_CRASH.into(),
-                        message: format!("'{}' returns errors but has no crash handler in '{}'", call, f.name),
-                        context: Some(ctx.func.qualified_name.clone()),
-                    });
+                    errors.push(RuleError::new(errors::MISSING_CRASH, format!("'{}' returns errors but has no crash handler in '{}'", call, f.name), Some(ctx.func.qualified_name.clone())));
                 }
                 return errors;
             }
@@ -242,11 +238,7 @@ impl Rule for CrashRule {
         let handled: Vec<&str> = crash.handlers.iter().map(|h| h.call.as_str()).collect();
         for call in &err_calls {
             if !handled.iter().any(|h| *h == call.as_str()) {
-                errors.push(RuleError {
-                    code: errors::UNHANDLED_CALL.into(),
-                    message: format!("'{}' returns errors but has no crash handler in '{}'", call, f.name),
-                    context: Some(ctx.func.qualified_name.clone()),
-                });
+                errors.push(RuleError::new(errors::UNHANDLED_CALL, format!("'{}' returns errors but has no crash handler in '{}'", call, f.name), Some(ctx.func.qualified_name.clone())));
             }
         }
 
@@ -262,11 +254,7 @@ impl Rule for CrashRule {
                     CrashHandlerKind::Detailed { .. } => true,
                 };
                 if has_unwrap {
-                    errors.push(RuleError {
-                        code: errors::CRASH_ON_SAFE.into(),
-                        message: format!("'{}' does not return errors — remove from crash block", handler.call),
-                        context: Some(ctx.func.qualified_name.clone()),
-                    });
+                    errors.push(RuleError::new(errors::CRASH_ON_SAFE, format!("'{}' does not return errors — remove from crash block", handler.call), Some(ctx.func.qualified_name.clone())));
                 }
             }
 
@@ -279,11 +267,7 @@ impl Rule for CrashRule {
                 }
             };
             if has_panic {
-                errors.push(RuleError {
-                    code: errors::PANIC_WARNING.into(),
-                    message: format!("'{}' uses panic — this will crash the process. Use halt or fallback unless this is truly unrecoverable", handler.call),
-                    context: Some(ctx.func.qualified_name.clone()),
-                });
+                errors.push(RuleError::new(errors::PANIC_WARNING, format!("'{}' uses panic — this will crash the process. Use halt or fallback unless this is truly unrecoverable", handler.call), Some(ctx.func.qualified_name.clone())));
             }
         }
 

@@ -44,11 +44,7 @@ fn is_safe_cast(expr: &Expr) -> bool {
 fn check_let_result(stmt: &Stmt, ctx: &str, errors: &mut Vec<RuleError>) {
     match stmt {
         Stmt::LetResult { value, .. } if !is_safe_cast(value) => {
-            errors.push(RuleError {
-                code: errors::ERR_IN_BODY.into(),
-                message: "use crash block to handle errors — not let val, err = call()".into(),
-                context: Some(ctx.to_string()),
-            });
+            errors.push(RuleError::new(errors::ERR_IN_BODY, "use crash block to handle errors — not let val, err = call()", Some(ctx.to_string())));
         }
         Stmt::If { then_body, else_body, .. } => {
             for s in then_body { check_let_result(s, ctx, errors); }
@@ -85,11 +81,7 @@ fn check_manual_err_use(stmt: &Stmt, err_vars: &[String], ctx: &str, errors: &mu
         Stmt::If { condition, then_body, else_body, .. } => {
             // Check if the condition directly references an err variable
             if let Some(var) = expr_is_err_check(condition, err_vars) {
-                errors.push(RuleError {
-                    code: errors::MANUAL_ERR_CHECK.into(),
-                    message: format!("'{}' should be handled in the crash block, not with if {}", var, var),
-                    context: Some(ctx.to_string()),
-                });
+                errors.push(RuleError::new(errors::MANUAL_ERR_CHECK, format!("'{}' should be handled in the crash block, not with if {}", var, var), Some(ctx.to_string())));
             }
             for s in then_body { check_manual_err_use(s, err_vars, ctx, errors); }
             if let Some(body) = else_body { for s in body { check_manual_err_use(s, err_vars, ctx, errors); } }

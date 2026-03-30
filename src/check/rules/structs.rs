@@ -88,47 +88,27 @@ impl Rule for StructsRule {
                     matches!(item, Item::Satisfies(sat) if sat.struct_name == s.name)
                 });
                 if !has_satisfies {
-                    errors.push(RuleError {
-                        code: errors::EMPTY_STRUCT.into(),
-                        message: format!("struct '{}' has no fields or methods — use a contract instead", s.name),
-                        context: None,
-                    });
+                    errors.push(RuleError::new(errors::EMPTY_STRUCT, format!("struct '{}' has no fields or methods — use a contract instead", s.name), None));
                     return errors;
                 }
             }
             for sig in &s.signatures {
                 if !s.methods.iter().any(|m| m.name == sig.name) {
-                    errors.push(RuleError {
-                        code: errors::MISSING_IMPL.into(),
-                        message: format!("struct '{}' declares '{}' in contract but has no implementation", s.name, sig.name),
-                        context: None,
-                    });
+                    errors.push(RuleError::new(errors::MISSING_IMPL, format!("struct '{}' declares '{}' in contract but has no implementation", s.name, sig.name), None));
                 }
             }
             for method in &s.methods {
                 match s.signatures.iter().find(|sig| sig.name == method.name) {
                     Some(sig) => {
                         if sig.params.len() != method.params.len() {
-                            errors.push(RuleError {
-                                code: errors::SIG_MISMATCH.into(),
-                                message: format!("'{}.{}' has {} params but contract declares {}", s.name, method.name, method.params.len(), sig.params.len()),
-                                context: None,
-                            });
+                            errors.push(RuleError::new(errors::SIG_MISMATCH, format!("'{}.{}' has {} params but contract declares {}", s.name, method.name, method.params.len(), sig.params.len()), None));
                         }
                         if sig.return_type != method.return_type {
-                            errors.push(RuleError {
-                                code: errors::SIG_MISMATCH.into(),
-                                message: format!("'{}.{}' returns {:?} but contract declares {:?}", s.name, method.name, method.return_type, sig.return_type),
-                                context: None,
-                            });
+                            errors.push(RuleError::new(errors::SIG_MISMATCH, format!("'{}.{}' returns {:?} but contract declares {:?}", s.name, method.name, method.return_type, sig.return_type), None));
                         }
                     }
                     None => {
-                        errors.push(RuleError {
-                            code: errors::UNDECLARED_METHOD.into(),
-                            message: format!("'{}.{}' is not declared in the struct's contract block", s.name, method.name),
-                            context: None,
-                        });
+                        errors.push(RuleError::new(errors::UNDECLARED_METHOD, format!("'{}.{}' is not declared in the struct's contract block", s.name, method.name), None));
                     }
                 }
             }

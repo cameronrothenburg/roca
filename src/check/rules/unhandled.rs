@@ -43,14 +43,7 @@ impl Rule for UnhandledErrorsRule {
             let halting_err_names = self.halting_error_names(handler, ctx);
             for err_name in halting_err_names {
                 if !own_errors.contains(&err_name) {
-                    errors.push(RuleError {
-                        code: errors::UNHANDLED_ERROR.into(),
-                        message: format!(
-                            "error '{}' propagates via halt in '{}' but is not declared",
-                            err_name, f.name,
-                        ),
-                        context: Some(ctx.func.qualified_name.clone()),
-                    });
+                    errors.push(RuleError::new(errors::UNHANDLED_ERROR, format!("error '{}' propagates via halt in '{}' but is not declared", err_name, f.name), Some(ctx.func.qualified_name.clone())));
                 }
             }
         }

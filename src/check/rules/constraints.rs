@@ -90,18 +90,10 @@ fn check_fields(fields: &[Field], parent: &str, errors: &mut Vec<RuleError>) {
         for constraint in &field.constraints {
             match (&field.type_ref, constraint) {
                 (TypeRef::Number, Constraint::Contains(_)) | (TypeRef::Number, Constraint::Pattern(_)) => {
-                    errors.push(RuleError {
-                        code: errors::INVALID_CONSTRAINT.into(),
-                        message: format!("cannot use contains/pattern on Number field '{}'", field.name),
-                        context: Some(ctx.clone()),
-                    });
+                    errors.push(RuleError::new(errors::INVALID_CONSTRAINT, format!("cannot use contains/pattern on Number field '{}'", field.name), Some(ctx.clone())));
                 }
                 (TypeRef::Bool, _) => {
-                    errors.push(RuleError {
-                        code: errors::INVALID_CONSTRAINT.into(),
-                        message: format!("Bool field '{}' cannot have constraints", field.name),
-                        context: Some(ctx.clone()),
-                    });
+                    errors.push(RuleError::new(errors::INVALID_CONSTRAINT, format!("Bool field '{}' cannot have constraints", field.name), Some(ctx.clone())));
                 }
                 _ => {}
             }
@@ -119,19 +111,11 @@ fn check_fields(fields: &[Field], parent: &str, errors: &mut Vec<RuleError>) {
         }
         if let (Some(min), Some(max)) = (min_val, max_val) {
             if min > max {
-                errors.push(RuleError {
-                    code: errors::INVALID_CONSTRAINT.into(),
-                    message: format!("min ({}) > max ({}) on field '{}'", min, max, field.name),
-                    context: Some(ctx.clone()),
-                });
+                errors.push(RuleError::new(errors::INVALID_CONSTRAINT, format!("min ({}) > max ({}) on field '{}'", min, max, field.name), Some(ctx.clone())));
             }
         }
         if has_validation && !has_default {
-            errors.push(RuleError {
-                code: errors::MISSING_DEFAULT.into(),
-                message: format!("field '{}' has constraints but no default — add default: \"value\"", field.name),
-                context: Some(ctx),
-            });
+            errors.push(RuleError::new(errors::MISSING_DEFAULT, format!("field '{}' has constraints but no default — add default: \"value\"", field.name), Some(ctx)));
         }
     }
 }

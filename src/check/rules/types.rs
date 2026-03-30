@@ -19,14 +19,7 @@ impl Rule for TypeCheckRule {
         if let Item::Struct(s) = ctx.item {
             for field in &s.fields {
                 if matches!(field.type_ref, TypeRef::Nullable(_)) {
-                    errors.push(RuleError {
-                        code: errors::NULLABLE_TYPE.into(),
-                        message: format!(
-                            "field '{}.{}' is nullable — use Optional<Type> for optional fields, or a default value",
-                            s.name, field.name
-                        ),
-                        context: None,
-                    });
+                    errors.push(RuleError::new(errors::NULLABLE_TYPE, format!("field '{}.{}' is nullable — use Optional<Type> for optional fields, or a default value", s.name, field.name), None));
                 }
             }
         }
@@ -37,25 +30,11 @@ impl Rule for TypeCheckRule {
         let mut errors = Vec::new();
         if let TypeRef::Nullable(inner) = &ctx.func.def.return_type {
             let type_name = type_ref_to_name(inner);
-            errors.push(RuleError {
-                code: errors::NULLABLE_RETURN.into(),
-                message: format!(
-                    "return {} | null is not happy path — use -> {}, err with an error for the not-found case",
-                    type_name, type_name
-                ),
-                context: Some(ctx.func.qualified_name.clone()),
-            });
+            errors.push(RuleError::new(errors::NULLABLE_RETURN, format!("return {} | null is not happy path — use -> {}, err with an error for the not-found case", type_name, type_name), Some(ctx.func.qualified_name.clone())));
         }
         for param in &ctx.func.def.params {
             if matches!(param.type_ref, TypeRef::Nullable(_)) {
-                errors.push(RuleError {
-                    code: errors::NULLABLE_TYPE.into(),
-                    message: format!(
-                        "parameter '{}' is nullable — require the value or use a default",
-                        param.name
-                    ),
-                    context: Some(ctx.func.qualified_name.clone()),
-                });
+                errors.push(RuleError::new(errors::NULLABLE_TYPE, format!("parameter '{}' is nullable — require the value or use a default", param.name), Some(ctx.func.qualified_name.clone())));
             }
         }
         errors
@@ -71,22 +50,14 @@ impl Rule for TypeCheckRule {
                 // return value from -> Ok function (Ok means void)
                 if *declared == TypeRef::Ok {
                     if !matches!(expr, Expr::Ident(n) if n == "Ok") {
-                        errors.push(RuleError {
-                            code: errors::RETURN_TYPE_MISMATCH.into(),
-                            message: "function returns Ok (void) — cannot return a value".into(),
-                            context: Some(ctx.func.qualified_name.clone()),
-                        });
+                        errors.push(RuleError::new(errors::RETURN_TYPE_MISMATCH, "function returns Ok (void) — cannot return a value", Some(ctx.func.qualified_name.clone())));
                     }
                     return errors;
                 }
 
                 // return null from non-nullable type
                 if matches!(expr, Expr::Null) && !matches!(declared, TypeRef::Nullable(_)) {
-                    errors.push(RuleError {
-                        code: errors::RETURN_NULL.into(),
-                        message: format!("cannot return null from function returning {} — use {} | null if nullable", type_ref_to_name(declared), type_ref_to_name(declared)),
-                        context: Some(ctx.func.qualified_name.clone()),
-                    });
+                    errors.push(RuleError::new(errors::RETURN_NULL, format!("cannot return null from function returning {} — use {} | null if nullable", type_ref_to_name(declared), type_ref_to_name(declared)), Some(ctx.func.qualified_name.clone())));
                     return errors;
                 }
 
@@ -94,22 +65,14 @@ impl Rule for TypeCheckRule {
                 if let Some(actual) = infer_type_with_registry(expr, ctx.scope, Some(ctx.check.registry)) {
                     let expected = type_ref_to_name(declared);
                     if !types_compatible(&expected, &actual) {
-                        errors.push(RuleError {
-                            code: errors::RETURN_TYPE_MISMATCH.into(),
-                            message: format!("function returns {} but got {}", expected, actual),
-                            context: Some(ctx.func.qualified_name.clone()),
-                        });
+                        errors.push(RuleError::new(errors::RETURN_TYPE_MISMATCH, format!("function returns {} but got {}", expected, actual), Some(ctx.func.qualified_name.clone())));
                     }
                 }
             }
             // return err.x from function not declared as , err
             Stmt::ReturnErr { name: err_name, .. } => {
                 if !ctx.func.def.returns_err {
-                    errors.push(RuleError {
-                        code: errors::RETURN_ERR_NOT_DECLARED.into(),
-                        message: format!("cannot return err.{} — function is not declared with ', err'", err_name),
-                        context: Some(ctx.func.qualified_name.clone()),
-                    });
+                    errors.push(RuleError::new(errors::RETURN_ERR_NOT_DECLARED, format!("cannot return err.{} — function is not declared with ', err'", err_name), Some(ctx.func.qualified_name.clone())));
                 }
             }
             // Let/Const with type annotation: check value type matches annotation
@@ -118,11 +81,7 @@ impl Rule for TypeCheckRule {
                 let expected = type_ref_to_name(ann);
                 if let Some(actual) = infer_type_with_registry(value, ctx.scope, Some(ctx.check.registry)) {
                     if !types_compatible(&expected, &actual) {
-                        errors.push(RuleError {
-                            code: errors::TYPE_ANNOTATION_MISMATCH.into(),
-                            message: format!("'{}' declared as {} but assigned {}", name, expected, actual),
-                            context: Some(ctx.func.qualified_name.clone()),
-                        });
+                        errors.push(RuleError::new(errors::TYPE_ANNOTATION_MISMATCH, format!("'{}' declared as {} but assigned {}", name, expected, actual), Some(ctx.func.qualified_name.clone())));
                     }
                 }
             }
@@ -144,11 +103,7 @@ impl Rule for TypeCheckRule {
                             let expected = type_ref_to_name(&decl_field.type_ref);
                             if let Some(actual) = resolve_type(value, ctx.scope) {
                                 if !types_compatible(&expected, &actual) {
-                                    errors.push(RuleError {
-                                        code: errors::FIELD_TYPE_MISMATCH.into(),
-                                        message: format!("{}.{} expects {} but got {}", name, field_name, expected, actual),
-                                        context: Some(ctx.func.qualified_name.clone()),
-                                    });
+                                    errors.push(RuleError::new(errors::FIELD_TYPE_MISMATCH, format!("{}.{} expects {} but got {}", name, field_name, expected, actual), Some(ctx.func.qualified_name.clone())));
                                 }
                             }
                         }
@@ -173,11 +128,7 @@ impl Rule for TypeCheckRule {
                                 } else { false }
                             });
                             if !has_own {
-                                errors.push(RuleError {
-                                    code: errors::UNKNOWN_FIELD.into(),
-                                    message: format!("'{}' has no field or method '{}'", parent, field),
-                                    context: Some(ctx.func.qualified_name.clone()),
-                                });
+                                errors.push(RuleError::new(errors::UNKNOWN_FIELD, format!("'{}' has no field or method '{}'", parent, field), Some(ctx.func.qualified_name.clone())));
                             }
                         }
                     }
@@ -227,11 +178,7 @@ fn check_call_args(call_name: &str, params: &[Param], args: &[Expr], ctx: &ExprC
             let expected = type_ref_to_name(&param.type_ref);
             if let Some(actual) = resolve_type(arg, ctx.scope) {
                 if !types_compatible(&expected, &actual) {
-                    errors.push(RuleError {
-                        code: errors::ARG_TYPE_MISMATCH.into(),
-                        message: format!("{}() param '{}' expects {} but got {}", call_name, param.name, expected, actual),
-                        context: Some(ctx.func.qualified_name.clone()),
-                    });
+                    errors.push(RuleError::new(errors::ARG_TYPE_MISMATCH, format!("{}() param '{}' expects {} but got {}", call_name, param.name, expected, actual), Some(ctx.func.qualified_name.clone())));
                 }
             }
         }

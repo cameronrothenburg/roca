@@ -169,11 +169,7 @@ impl Rule for TestsRule {
         let f = ctx.func.def;
 
         if f.test.is_none() {
-            errors.push(RuleError {
-                code: errors::MISSING_TEST.into(),
-                message: format!("function '{}' has no test block", f.name),
-                context: Some(ctx.func.qualified_name.clone()),
-            });
+            errors.push(RuleError::new(errors::MISSING_TEST, format!("function '{}' has no test block", f.name), Some(ctx.func.qualified_name.clone())));
             return errors;
         }
 
@@ -225,21 +221,13 @@ fn check_test_coverage(f: &FnDef, declared_errors: &[ErrDecl], qn: &str, errors:
 
     for err_name in &all_error_names {
         if !tested_errors.contains(err_name) {
-            errors.push(RuleError {
-                code: errors::UNTESTED_ERROR.into(),
-                message: format!("error '{}' is not tested", err_name),
-                context: Some(qn.to_string()),
-            });
+            errors.push(RuleError::new(errors::UNTESTED_ERROR, format!("error '{}' is not tested", err_name), Some(qn.to_string())));
         }
     }
 
     let has_success = test.cases.iter().any(|c| matches!(c, TestCase::Equals { .. } | TestCase::IsOk { .. }));
     if !has_success && !all_error_names.is_empty() {
-        errors.push(RuleError {
-            code: errors::NO_SUCCESS_TEST.into(),
-            message: "test block has error cases but no success case".into(),
-            context: Some(qn.to_string()),
-        });
+        errors.push(RuleError::new(errors::NO_SUCCESS_TEST, "test block has error cases but no success case", Some(qn.to_string())));
     }
 }
 
@@ -261,20 +249,13 @@ fn check_mock_refs(f: &FnDef, file: &SourceFile, qn: &str, errors: &mut Vec<Rule
     for item in &file.items {
         if let Item::Import(imp) = item {
             if let ImportSource::Path(path) = &imp.source {
-                let roca_path = std::path::Path::new(path);
-                for base in &[".", "src"] {
-                    let full_path = std::path::Path::new(base).join(roca_path);
-                    if let Ok(source) = std::fs::read_to_string(&full_path) {
-                        if let Ok(imported) = crate::parse::try_parse(&source) {
-                            for imp_item in &imported.items {
-                                match imp_item {
-                                    Item::Contract(c) if c.mock.is_some() => { valid_mocks.insert(c.name.clone()); }
-                                    Item::ExternContract(c) if c.mock.is_some() => { valid_mocks.insert(c.name.clone()); }
-                                    _ => {}
-                                }
-                            }
+                if let Some(imported) = crate::resolve::try_load_roca_file(path) {
+                    for imp_item in &imported.items {
+                        match imp_item {
+                            Item::Contract(c) if c.mock.is_some() => { valid_mocks.insert(c.name.clone()); }
+                            Item::ExternContract(c) if c.mock.is_some() => { valid_mocks.insert(c.name.clone()); }
+                            _ => {}
                         }
-                        break;
                     }
                 }
             }
@@ -299,11 +280,7 @@ fn check_mock_refs(f: &FnDef, file: &SourceFile, qn: &str, errors: &mut Vec<Rule
 
     for mock_ref in &mock_refs {
         if !valid_mocks.contains(mock_ref.as_str()) {
-            errors.push(RuleError {
-                code: errors::INVALID_MOCK_REF.into(),
-                message: format!("__mock_{} used but '{}' has no mock block — only contracts with mock {{}} can be mocked", mock_ref, mock_ref),
-                context: Some(qn.to_string()),
-            });
+            errors.push(RuleError::new(errors::INVALID_MOCK_REF, format!("__mock_{} used but '{}' has no mock block — only contracts with mock {{}} can be mocked", mock_ref, mock_ref), Some(qn.to_string())));
         }
     }
 }

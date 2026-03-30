@@ -11,6 +11,20 @@ pub struct ResolvedProject {
     pub registry: ContractRegistry,
 }
 
+/// Try to load and parse a .roca file by searching common base directories.
+pub fn try_load_roca_file(rel_path: &str) -> Option<SourceFile> {
+    let roca_path = Path::new(rel_path);
+    for base in &[".", "src"] {
+        let full_path = Path::new(base).join(roca_path);
+        if let Ok(source) = std::fs::read_to_string(&full_path) {
+            if let Ok(file) = crate::parse::try_parse(&source) {
+                return Some(file);
+            }
+        }
+    }
+    None
+}
+
 /// Resolve a file and all its imports recursively.
 /// Returns a combined registry that includes stdlib + all imported contracts/structs.
 pub fn resolve_file(path: &Path) -> ResolvedProject {

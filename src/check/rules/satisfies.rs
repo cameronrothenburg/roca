@@ -64,37 +64,21 @@ impl Rule for SatisfiesRule {
             let contract = match ctx.check.registry.contracts.get(&sat.contract_name) {
                 Some(c) => c,
                 None => {
-                    errors.push(RuleError {
-                        code: errors::UNKNOWN_CONTRACT.into(),
-                        message: format!("'{}' satisfies '{}' but contract '{}' does not exist", sat.struct_name, sat.contract_name, sat.contract_name),
-                        context: None,
-                    });
+                    errors.push(RuleError::new(errors::UNKNOWN_CONTRACT, format!("'{}' satisfies '{}' but contract '{}' does not exist", sat.struct_name, sat.contract_name, sat.contract_name), None));
                     return errors;
                 }
             };
             for sig in &contract.functions {
                 match sat.methods.iter().find(|m| m.name == sig.name) {
                     None => {
-                        errors.push(RuleError {
-                            code: errors::MISSING_SATISFIES.into(),
-                            message: format!("'{}' satisfies '{}' but does not implement '{}'", sat.struct_name, sat.contract_name, sig.name),
-                            context: None,
-                        });
+                        errors.push(RuleError::new(errors::MISSING_SATISFIES, format!("'{}' satisfies '{}' but does not implement '{}'", sat.struct_name, sat.contract_name, sig.name), None));
                     }
                     Some(m) => {
                         if sig.params.len() != m.params.len() {
-                            errors.push(RuleError {
-                                code: errors::SATISFIES_MISMATCH.into(),
-                                message: format!("'{}.{}' has {} params but '{}' requires {}", sat.struct_name, m.name, m.params.len(), sat.contract_name, sig.params.len()),
-                                context: None,
-                            });
+                            errors.push(RuleError::new(errors::SATISFIES_MISMATCH, format!("'{}.{}' has {} params but '{}' requires {}", sat.struct_name, m.name, m.params.len(), sat.contract_name, sig.params.len()), None));
                         }
                         if sig.return_type != m.return_type {
-                            errors.push(RuleError {
-                                code: errors::SATISFIES_MISMATCH.into(),
-                                message: format!("'{}.{}' returns {:?} but '{}' requires {:?}", sat.struct_name, m.name, m.return_type, sat.contract_name, sig.return_type),
-                                context: None,
-                            });
+                            errors.push(RuleError::new(errors::SATISFIES_MISMATCH, format!("'{}.{}' returns {:?} but '{}' requires {:?}", sat.struct_name, m.name, m.return_type, sat.contract_name, sig.return_type), None));
                         }
                     }
                 }

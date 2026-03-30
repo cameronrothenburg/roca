@@ -76,11 +76,7 @@ fn check_stmt_vars(stmt: &Stmt, consts: &mut HashMap<String, bool>, errors: &mut
         Stmt::Let { name, .. } | Stmt::LetResult { name, .. } => { consts.insert(name.clone(), false); }
         Stmt::Assign { name, .. } => {
             if let Some(true) = consts.get(name) {
-                errors.push(RuleError {
-                    code: errors::CONST_REASSIGN.into(),
-                    message: format!("cannot reassign const '{}'", name),
-                    context: None,
-                });
+                errors.push(RuleError::new(errors::CONST_REASSIGN, format!("cannot reassign const '{}'", name), None));
             }
         }
         Stmt::If { then_body, else_body, .. } => {

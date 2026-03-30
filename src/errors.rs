@@ -65,6 +65,12 @@ pub struct RuleError {
     pub context: Option<String>,
 }
 
+impl RuleError {
+    pub fn new(code: &'static str, message: impl Into<String>, context: Option<String>) -> Self {
+        Self { code: code.into(), message: message.into(), context }
+    }
+}
+
 impl std::fmt::Display for RuleError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "error[{}]: {}", self.code, self.message)?;

@@ -60,15 +60,8 @@ pub fn emit_tests(file: &roca::SourceFile, import_path: &str) -> Option<(String,
     for item in &file.items {
         if let roca::Item::Import(imp) = item {
             if let roca::ImportSource::Path(path) = &imp.source {
-                let roca_path = std::path::Path::new(path);
-                for base in &[".", "src"] {
-                    let full_path = std::path::Path::new(base).join(roca_path);
-                    if let Ok(source) = std::fs::read_to_string(&full_path) {
-                        if let Ok(parsed) = crate::parse::try_parse(&source) {
-                            imported_files.push((path.clone(), parsed));
-                        }
-                        break;
-                    }
+                if let Some(parsed) = crate::resolve::try_load_roca_file(path) {
+                    imported_files.push((path.clone(), parsed));
                 }
             }
         }

@@ -20,19 +20,11 @@ impl Rule for ContractsRule {
                 for func in &c.functions {
                     for err in &func.errors {
                         if !seen_errs.insert(&err.name) {
-                            errors.push(RuleError {
-                                code: errors::DUPLICATE_ERR.into(),
-                                message: format!("duplicate error name '{}' in contract '{}'", err.name, c.name),
-                                context: Some(format!("in {}.{}", c.name, func.name)),
-                            });
+                            errors.push(RuleError::new(errors::DUPLICATE_ERR, format!("duplicate error name '{}' in contract '{}'", err.name, c.name), Some(format!("in {}.{}", c.name, func.name))));
                         }
                     }
                     if func.returns_err && func.errors.is_empty() {
-                        errors.push(RuleError {
-                            code: errors::ERR_NO_ERRORS.into(),
-                            message: format!("function '{}' returns err but declares no error names", func.name),
-                            context: Some(format!("in contract '{}'", c.name)),
-                        });
+                        errors.push(RuleError::new(errors::ERR_NO_ERRORS, format!("function '{}' returns err but declares no error names", func.name), Some(format!("in contract '{}'", c.name))));
                     }
                 }
                 if let Some(mock) = &c.mock {
@@ -48,11 +40,7 @@ impl Rule for ContractsRule {
 fn check_mock_values(contract_name: &str, mock: &MockDef, errors: &mut Vec<RuleError>) {
     for entry in &mock.entries {
         if matches!(entry.value, Expr::Null) {
-            errors.push(RuleError {
-                code: errors::MOCK_NULL.into(),
-                message: format!("mock for '{}.{}' cannot return null — provide a valid mock value", contract_name, entry.method),
-                context: Some(format!("in {} mock block", contract_name)),
-            });
+            errors.push(RuleError::new(errors::MOCK_NULL, format!("mock for '{}.{}' cannot return null — provide a valid mock value", contract_name, entry.method), Some(format!("in {} mock block", contract_name))));
         }
     }
 }

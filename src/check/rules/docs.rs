@@ -16,40 +16,20 @@ impl Rule for DocsRule {
 
         match ctx.item {
             Item::Function(f) if f.is_pub && f.doc.is_none() => {
-                errs.push(RuleError {
-                    code: errors::MISSING_DOC.to_string(),
-                    message: format!("pub fn `{}` is missing a doc comment (///)", f.name),
-                    context: None,
-                });
+                errs.push(RuleError::new(errors::MISSING_DOC, format!("pub fn `{}` is missing a doc comment (///)", f.name), None));
             }
             Item::Struct(s) if s.is_pub && s.doc.is_none() => {
-                errs.push(RuleError {
-                    code: errors::MISSING_DOC.to_string(),
-                    message: format!("pub struct `{}` is missing a doc comment (///)", s.name),
-                    context: None,
-                });
+                errs.push(RuleError::new(errors::MISSING_DOC, format!("pub struct `{}` is missing a doc comment (///)", s.name), None));
             }
             Item::Contract(c) if c.is_pub && c.doc.is_none() => {
-                errs.push(RuleError {
-                    code: errors::MISSING_DOC.to_string(),
-                    message: format!("pub contract `{}` is missing a doc comment (///)", c.name),
-                    context: None,
-                });
+                errs.push(RuleError::new(errors::MISSING_DOC, format!("pub contract `{}` is missing a doc comment (///)", c.name), None));
             }
             Item::ExternContract(c) if c.is_pub && c.doc.is_none() => {
-                errs.push(RuleError {
-                    code: errors::MISSING_DOC.to_string(),
-                    message: format!("pub extern contract `{}` is missing a doc comment (///)", c.name),
-                    context: None,
-                });
+                errs.push(RuleError::new(errors::MISSING_DOC, format!("pub extern contract `{}` is missing a doc comment (///)", c.name), None));
             }
             Item::ExternFn(f) if f.doc.is_none() => {
                 // extern fn is always pub-facing
-                errs.push(RuleError {
-                    code: errors::MISSING_DOC.to_string(),
-                    message: format!("extern fn `{}` is missing a doc comment (///)", f.name),
-                    context: None,
-                });
+                errs.push(RuleError::new(errors::MISSING_DOC, format!("extern fn `{}` is missing a doc comment (///)", f.name), None));
             }
             _ => {}
         }
