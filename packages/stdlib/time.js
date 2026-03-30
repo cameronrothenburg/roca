@@ -6,11 +6,11 @@ const Time = (() => {
 			return _Date.now();
 		},
 		parse(input) {
-			const d = new _Date(input);
-			if (isNaN(d.getTime())) {
+			const ms = new _Date(input).getTime();
+			if (isNaN(ms)) {
 				return { value: null, err: { name: "parse_failed", message: "invalid date string" } };
 			}
-			return { value: d.getTime(), err: null };
+			return { value: ms, err: null };
 		},
 	};
 })();

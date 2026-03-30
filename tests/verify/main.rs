@@ -38,3 +38,4 @@ mod integration;
 mod repl;
 mod encoding;
 mod time;
+mod url;

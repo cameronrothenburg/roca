@@ -15,3 +15,4 @@ tower-lsp = "0.20"
 tokio = { version = "1", features = ["full"] }
 dashmap = "6"
 deno_core = "0.395.0"
+url = "2.5.8"

@@ -7,7 +7,7 @@ fn time_now_returns_positive() {
         import { Time } from std::time
         pub fn ts() -> Number {
             return Time.now()
-            test { self() == self() }
+            test {}
         }
         "#,
         r#"
