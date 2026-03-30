@@ -19,6 +19,8 @@ pub struct FnContext<'a> {
 pub struct CheckContext<'a> {
     pub file: &'a SourceFile,
     pub registry: &'a ContractRegistry,
+    /// Directory the source file lives in — used for resolving relative imports
+    pub source_dir: Option<std::path::PathBuf>,
 }
 
 /// Context at item level

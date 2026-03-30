@@ -118,9 +118,9 @@ pub fn infer_type_with_registry(expr: &Expr, scope: &Scope, registry: Option<&su
 
 // ─── Walker ─────────────────────────────────────────────
 
-pub fn walk(file: &SourceFile, registry: &ContractRegistry, rules: &[Box<dyn Rule>]) -> Vec<RuleError> {
+pub fn walk(file: &SourceFile, registry: &ContractRegistry, source_dir: Option<&std::path::Path>, rules: &[Box<dyn Rule>]) -> Vec<RuleError> {
     let mut errors = Vec::new();
-    let check = CheckContext { file, registry };
+    let check = CheckContext { file, registry, source_dir: source_dir.map(|p| p.to_path_buf()) };
 
     for item in &file.items {
         let item_ctx = ItemContext { check: &check, item };

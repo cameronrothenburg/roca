@@ -2,8 +2,70 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use crate::ast::{SourceFile, ImportSource};
+use crate::ast::{SourceFile, Item, ImportSource, Param, ErrDecl, collect_returned_error_names};
 use crate::check::registry::ContractRegistry;
+
+/// Summary of a resolved function's signature -- used by checker rules to avoid
+/// duplicating the "iterate imports, load file, find function" pattern.
+#[derive(Debug, Clone)]
+pub struct ResolvedFn {
+    pub params: Vec<Param>,
+    pub returns_err: bool,
+    pub errors: Vec<ErrDecl>,
+}
+
+/// Search `file`'s imports for a function named `name`, loading .roca files
+/// relative to `source_dir`. Returns the function's signature if found.
+pub fn find_imported_fn(
+    name: &str,
+    file: &SourceFile,
+    source_dir: Option<&Path>,
+) -> Option<ResolvedFn> {
+    for item in &file.items {
+        let imp = match item {
+            Item::Import(imp) => imp,
+            _ => continue,
+        };
+        if !imp.names.iter().any(|n| n == name) {
+            continue;
+        }
+        let path = match &imp.source {
+            ImportSource::Path(p) => p,
+            _ => continue,
+        };
+        let imported = try_load_roca_file_from(path, source_dir)?;
+        for imp_item in &imported.items {
+            match imp_item {
+                Item::Function(f) if f.name == name => {
+                    // FnDef.errors is always empty for parsed functions —
+                    // error names are extracted from ReturnErr statements in the body.
+                    let errors = if f.errors.is_empty() {
+                        collect_returned_error_names(&f.body)
+                            .into_iter()
+                            .map(|name| ErrDecl { name, message: String::new() })
+                            .collect()
+                    } else {
+                        f.errors.clone()
+                    };
+                    return Some(ResolvedFn {
+                        params: f.params.clone(),
+                        returns_err: f.returns_err,
+                        errors,
+                    });
+                }
+                Item::ExternFn(f) if f.name == name => {
+                    return Some(ResolvedFn {
+                        params: f.params.clone(),
+                        returns_err: f.returns_err,
+                        errors: f.errors.clone(),
+                    });
+                }
+                _ => {}
+            }
+        }
+    }
+    None
+}
 
 /// Resolved project — all files parsed, combined registry built
 pub struct ResolvedProject {
@@ -13,9 +75,19 @@ pub struct ResolvedProject {
 
 /// Try to load and parse a .roca file by searching common base directories.
 pub fn try_load_roca_file(rel_path: &str) -> Option<SourceFile> {
+    try_load_roca_file_from(rel_path, None)
+}
+
+/// Try to load and parse a .roca file, optionally searching from a specific directory.
+pub fn try_load_roca_file_from(rel_path: &str, from_dir: Option<&Path>) -> Option<SourceFile> {
     let roca_path = Path::new(rel_path);
-    for base in &[".", "src"] {
-        let full_path = Path::new(base).join(roca_path);
+    let mut bases: Vec<PathBuf> = vec![PathBuf::from("."), PathBuf::from("src")];
+    if let Some(dir) = from_dir {
+        bases.insert(0, dir.to_path_buf());
+        bases.insert(1, dir.join("src"));
+    }
+    for base in &bases {
+        let full_path = base.join(roca_path);
         if let Ok(source) = std::fs::read_to_string(&full_path) {
             if let Ok(file) = crate::parse::try_parse(&source) {
                 return Some(file);

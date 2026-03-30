@@ -24,12 +24,6 @@ pub fn handle(kv: KV, fetcher: Fetcher, logger: Logger, method: String, path: St
 
     return not_found()
 
-    crash {
-        get_user -> halt
-        create_user -> halt
-        delete_user -> halt
-    }
-
     test {
         self(__mock_KV, __mock_Fetcher, __mock_Logger, "GET", "/users/1", "") is Ok
         self(__mock_KV, __mock_Fetcher, __mock_Logger, "GET", "/nope", "") is Ok

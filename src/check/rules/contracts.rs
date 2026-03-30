@@ -55,7 +55,7 @@ mod tests {
         let file = crate::parse::parse(src);
         let reg = ContractRegistry::build(&file);
         let rule = ContractsRule;
-        let ctx = CheckContext { file: &file, registry: &reg };
+        let ctx = CheckContext { file: &file, registry: &reg, source_dir: None };
         file.items.iter().flat_map(|item| {
             rule.check_item(&ItemContext { check: &ctx, item })
         }).collect()

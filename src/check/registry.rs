@@ -236,7 +236,7 @@ impl ContractRegistry {
     /// e.g. "Email.validate" → check Email struct's validate method
     /// e.g. "intl.dateTime" → resolve intl from params to DateFormatting, check dateTime
     /// Returns None if unknown (can't resolve), Some(true/false) if known.
-    pub fn call_returns_err_with_scope(&self, call_name: &str, file: &SourceFile, scope: &std::collections::HashMap<String, String>) -> Option<bool> {
+    pub fn call_returns_err_with_scope(&self, call_name: &str, file: &SourceFile, scope: &std::collections::HashMap<String, String>, source_dir: Option<&std::path::Path>) -> Option<bool> {
         if let Some(dot) = call_name.find('.') {
             let var_name = &call_name[..dot];
             let method_name = &call_name[dot + 1..];
@@ -262,7 +262,7 @@ impl ContractRegistry {
                 return Some(returns_err);
             }
         } else {
-            // Top-level function name
+            // Top-level function name — check current file
             for item in &file.items {
                 if let Item::Function(f) = item {
                     if f.name == call_name {
@@ -274,6 +274,10 @@ impl ContractRegistry {
                         return Some(f.returns_err);
                     }
                 }
+            }
+            // Check imported functions
+            if let Some(resolved) = crate::resolve::find_imported_fn(call_name, file, source_dir) {
+                return Some(resolved.returns_err);
             }
         }
         None
