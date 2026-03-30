@@ -7,6 +7,7 @@ use std::sync::LazyLock;
 
 const BOOTSTRAP: &str = include_str!("../../packages/runtime/bootstrap.js");
 const POLYFILLS: &str = include_str!("../../packages/runtime/polyfills.js");
+const URL_BRIDGE: &str = include_str!("../../packages/runtime/url-bridge.js");
 const ROCA_TEST_JS: &str = include_str!("../../packages/stdlib/roca-test.js");
 
 const PROCESS_EXIT_SENTINEL: &str = "__PROCESS_EXIT__";
@@ -34,18 +35,17 @@ fn op_capture_log(#[string] msg: &str) {
 #[string]
 fn op_url_parse(#[string] raw: &str) -> String {
     match url::Url::parse(raw) {
-        Ok(u) => format!(
-            r#"{{"href":"{}","origin":"{}","protocol":"{}","hostname":"{}","host":"{}","port":"{}","pathname":"{}","search":"{}","hash":"{}"}}"#,
-            u.as_str(),
-            u.origin().ascii_serialization(),
-            u.scheme().to_string() + ":",
-            u.host_str().unwrap_or(""),
-            u.host_str().unwrap_or("").to_string() + &u.port().map(|p| format!(":{}", p)).unwrap_or_default(),
-            u.port().map(|p| p.to_string()).unwrap_or_default(),
-            u.path(),
-            u.query().map(|q| format!("?{}", q)).unwrap_or_default(),
-            u.fragment().map(|f| format!("#{}", f)).unwrap_or_default(),
-        ),
+        Ok(u) => serde_json::json!({
+            "href": u.as_str(),
+            "origin": u.origin().ascii_serialization(),
+            "protocol": format!("{}:", u.scheme()),
+            "hostname": u.host_str().unwrap_or(""),
+            "host": format!("{}{}", u.host_str().unwrap_or(""), u.port().map(|p| format!(":{}", p)).unwrap_or_default()),
+            "port": u.port().map(|p| p.to_string()).unwrap_or_default(),
+            "pathname": u.path(),
+            "search": u.query().map(|q| format!("?{}", q)).unwrap_or_default(),
+            "hash": u.fragment().map(|f| format!("#{}", f)).unwrap_or_default(),
+        }).to_string(),
         Err(_) => String::new(),
     }
 }
@@ -54,48 +54,6 @@ extension!(
     roca_runtime,
     ops = [op_capture_log, op_url_parse],
 );
-
-// ─── Runtime setup ─────────────────────────────────────────
-
-/// JS wrapper that exposes URL via our Rust op
-const URL_BRIDGE: &str = r#"
-if (typeof URLSearchParams === 'undefined') {
-    globalThis.URLSearchParams = class URLSearchParams {
-        constructor(init) {
-            this._params = [];
-            if (typeof init === 'string') {
-                const s = init.startsWith('?') ? init.slice(1) : init;
-                if (s) s.split('&').forEach(p => {
-                    const [k, ...v] = p.split('=');
-                    this._params.push([decodeURIComponent(k), decodeURIComponent(v.join('='))]);
-                });
-            }
-        }
-        get(name) { const e = this._params.find(p => p[0] === name); return e ? e[1] : null; }
-        has(name) { return this._params.some(p => p[0] === name); }
-        get size() { return this._params.length; }
-        toString() { return this._params.map(([k,v]) => encodeURIComponent(k) + '=' + encodeURIComponent(v)).join('&'); }
-    };
-}
-globalThis.URL = class URL {
-    constructor(raw) {
-        const json = Deno.core.ops.op_url_parse(raw);
-        if (!json) throw new TypeError("Invalid URL: " + raw);
-        const p = JSON.parse(json);
-        this.href = p.href;
-        this.origin = p.origin;
-        this.protocol = p.protocol;
-        this.hostname = p.hostname;
-        this.host = p.host;
-        this.port = p.port;
-        this.pathname = p.pathname;
-        this.search = p.search;
-        this.hash = p.hash;
-        this.searchParams = new URLSearchParams(this.search);
-    }
-    toString() { return this.href; }
-};
-"#;
 
 fn create_runtime() -> JsRuntime {
     JsRuntime::new(RuntimeOptions {
@@ -119,6 +77,7 @@ fn bootstrap(runtime: &mut JsRuntime, capture: bool) -> Result<(), String> {
         .map_err(|e| format!("polyfill error: {}", e))?;
     runtime.execute_script("<url-bridge>", URL_BRIDGE.to_string())
         .map_err(|e| format!("url bridge error: {}", e))?;
+
     Ok(())
 }
 
