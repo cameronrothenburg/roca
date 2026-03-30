@@ -4,6 +4,12 @@ on:
   pull_request:
     branches: [master]
     types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - 'src/**'
+      - 'packages/**'
+      - 'examples/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
 
 jobs:
   test:
