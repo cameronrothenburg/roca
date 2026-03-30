@@ -14,7 +14,7 @@ Roca is a narrow corridor. The compiler forces the AI (or human) to think about 
 
 This changes how you review code. The implementation has simple happy path logic and even simpler error handling — the compiler guarantees every error is handled and every path is tested. Bugs can still exist, but the surface area of unhandled, unsafe code shrinks dramatically. Review becomes: *is the contract verbose enough?* Does it cover the right error cases? Are the types precise?
 
-- **Every function has proof tests.** No JS emitted until tests pass.
+- **Built-in unit testing.** Every function has inline proof tests — no JS emitted until they pass. Fuzz testing catches edge cases the developer missed. E2E testing is still your job — Roca guarantees the units are solid, you verify the feature works.
 - **Every error is handled.** Crash blocks declare what happens when calls fail.
 - **Function bodies are pure happy path.** No error variables, no if-err checks.
 - **No null.** Use `-> Type, err` for failure cases, `Optional<T>` for absent fields.
