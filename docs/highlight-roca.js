@@ -30,7 +30,12 @@
 
     document.querySelectorAll("pre code.language-roca").forEach(function(block) {
       block.classList.remove("hljs");
-      hljs.highlightElement(block);
+      // hljs v10 uses highlightBlock, v11+ uses highlightElement
+      if (hljs.highlightElement) {
+        hljs.highlightElement(block);
+      } else {
+        hljs.highlightBlock(block);
+      }
     });
   }
 
