@@ -6,6 +6,12 @@ A contractual language that compiles to JavaScript. A language for the AI era.
 
 Our goal is simple: when you hear code was written in Roca, you trust it.
 
+```bash
+curl -sL https://raw.githubusercontent.com/cameronrothenburg/roca/master/install.sh | sh
+roca init my-app && cd my-app
+roca build
+```
+
 ## The Problem
 
 Programming languages were designed for humans to be expressive. That expressiveness gives AI too much freedom — it can write code any way it wants, skip error handling, ignore edge cases, and return bare objects. Nothing in the language forces it to do better.
@@ -43,16 +49,6 @@ pub fn validate(raw: String) -> Email, err {
 ```
 
 The compiler checks the logic, runs the tests, and only then emits JavaScript. If something is wrong, no output.
-
-## Quick Start
-
-No external dependencies — proof tests and `roca run` use an embedded JS engine.
-
-```bash
-cargo install --path .
-roca init my-app && cd my-app
-roca build
-```
 
 ## Documentation
 
