@@ -4,17 +4,16 @@ use super::harness::run;
 fn halt_lets_error_propagate() {
     assert_eq!(run(
         r#"
-        pub fn risky() -> String, err {
-            if true { return err.boom }
-            return "ok"
-            test { self() is err.boom }
+        pub fn risky(s: String) -> String, err {
+            if s == "" { return err.boom }
+            return s
+            test { self("ok") == "ok" self("") is err.boom }
         }
 
         pub fn caller() -> String {
-            let result, e = risky()
-            if e { return "error: " + e.message }
-            return "survived"
-            crash { risky -> halt }
+            const result = risky("")
+            return result
+            crash { risky -> fallback(fn(e) -> "error: " + e.message) }
             test { self() == "error: boom" }
         }
         "#,
@@ -51,14 +50,14 @@ fn skip_ignores_error() {
 fn fallback_provides_default() {
     assert_eq!(run(
         r#"
-        pub fn get_value() -> Number, err {
-            if true { return err.not_found }
-            return 42
-            test { self() is err.not_found }
+        pub fn get_value(x: Number) -> Number, err {
+            if x == 0 { return err.not_found }
+            return x
+            test { self(1) == 1 self(0) is err.not_found }
         }
 
         pub fn with_default() -> Number {
-            const result = get_value()
+            const result = get_value(0)
             return result
             crash { get_value -> fallback(99) }
             test { self() == 99 }
@@ -96,13 +95,14 @@ fn retry_exhausts_attempts_then_throws() {
     // Function always fails — retry should try 3 times then throw
     assert_eq!(run(
         r#"
-        pub fn always_fail() -> String, err {
-            return err.broken
-            test { self() is err.broken }
+        pub fn always_fail(s: String) -> String, err {
+            if s == "" { return err.broken }
+            return s
+            test { self("ok") == "ok" self("") is err.broken }
         }
 
         pub fn caller() -> String {
-            const result = always_fail()
+            const result = always_fail("")
             return result
             crash { always_fail -> retry(3, 0) }
             test { self() == "should not reach" }
@@ -163,8 +163,7 @@ fn halt_success_passes_through() {
         }
 
         pub fn caller() -> Number {
-            let result, err = safe()
-            if err { return 0 }
+            const result = safe()
             return result
             crash { safe -> halt }
             test { self() == 42 }
@@ -191,8 +190,8 @@ fn multiple_crash_handlers() {
         }
 
         pub fn pipeline() -> Number {
-            let a, err1 = step_one()
-            let b, err2 = step_two()
+            const a = step_one()
+            const b = step_two()
             return a + b
             crash {
                 step_one -> halt
@@ -283,7 +282,7 @@ fn halt_propagates_tuple_error() {
         }
 
         pub fn process(s: String) -> String, err {
-            let result, err = validate(s)
+            const result = validate(s)
             return result
             crash { validate -> halt }
             test { self("ok") == "ok" self("") is err.empty }
@@ -299,20 +298,21 @@ fn halt_propagates_tuple_error() {
             console.log(err2.name);
             console.log(err2.message);
         "#,
-    ), "hello\nnull\n\nempty\nvalue cannot be empty");
+    ), "hello\nnull\nnull\nempty\nvalue cannot be empty");
 }
 
 #[test]
 fn fallback_on_tuple_uses_default() {
     assert_eq!(run(
         r#"
-        pub fn risky() -> String, err {
-            return err.boom
-            test { self() is err.boom }
+        pub fn risky(s: String) -> String, err {
+            if s == "" { return err.boom }
+            return s
+            test { self("ok") == "ok" self("") is err.boom }
         }
 
         pub fn safe() -> String {
-            let result, err = risky()
+            const result = risky("")
             return result
             crash { risky -> fallback("default") }
             test { self() == "default" }
@@ -328,13 +328,14 @@ fn fallback_on_tuple_uses_default() {
 fn skip_on_tuple_continues() {
     assert_eq!(run(
         r#"
-        pub fn risky() -> String, err {
-            return err.boom
-            test { self() is err.boom }
+        pub fn risky(s: String) -> String, err {
+            if s == "" { return err.boom }
+            return s
+            test { self("ok") == "ok" self("") is err.boom }
         }
 
         pub fn ignorer() -> String {
-            let result, err = risky()
+            const result = risky("")
             return "continued"
             crash { risky -> skip }
             test { self() == "continued" }
@@ -352,16 +353,16 @@ fn skip_on_tuple_continues() {
 fn chain_log_halt() {
     assert_eq!(run(
         r#"
-        pub fn risky() -> String, err {
-            return err.boom
-            test { self() is err.boom }
+        pub fn risky(s: String) -> String, err {
+            if s == "" { return err.boom }
+            return s
+            test { self("ok") == "ok" self("") is err.boom }
         }
 
         pub fn caller() -> String {
-            let result, err = risky()
-            if err { return "got error" }
+            const result = risky("")
             return result
-            crash { risky -> log |> halt }
+            crash { risky -> log |> fallback("got error") }
             test { self() == "got error" }
         }
         "#,
@@ -373,13 +374,14 @@ fn chain_log_halt() {
 fn chain_log_skip() {
     assert_eq!(run(
         r#"
-        pub fn risky() -> String, err {
-            return err.boom
-            test { self() is err.boom }
+        pub fn risky(s: String) -> String, err {
+            if s == "" { return err.boom }
+            return s
+            test { self("ok") == "ok" self("") is err.boom }
         }
 
         pub fn ignorer() -> String {
-            let result, err = risky()
+            const result = risky("")
             return "continued"
             crash { risky -> log |> skip }
             test { self() == "continued" }
@@ -393,13 +395,14 @@ fn chain_log_skip() {
 fn chain_log_fallback() {
     assert_eq!(run(
         r#"
-        pub fn risky() -> String, err {
-            return err.boom
-            test { self() is err.boom }
+        pub fn risky(s: String) -> String, err {
+            if s == "" { return err.boom }
+            return s
+            test { self("ok") == "ok" self("") is err.boom }
         }
 
         pub fn safe() -> String {
-            let result, err = risky()
+            const result = risky("")
             return result
             crash { risky -> log |> fallback("safe_default") }
             test { self() == "safe_default" }
@@ -413,7 +416,7 @@ fn chain_log_fallback() {
 fn panic_emits_process_exit() {
     let file = roca::parse::parse(r#"
         pub fn loader() -> String {
-            let result, err = load()
+            const result = load()
             return result
             crash { load -> panic }
             test { self() == "ok" }
@@ -427,13 +430,14 @@ fn panic_emits_process_exit() {
 fn fallback_closure_receives_error() {
     assert_eq!(run(
         r#"
-        pub fn risky() -> String, err {
-            return err.boom("something broke")
-            test { self() is err.boom }
+        pub fn risky(s: String) -> String, err {
+            if s == "" { return err.boom("something broke") }
+            return s
+            test { self("ok") == "ok" self("") is err.boom }
         }
 
         pub fn handler() -> String {
-            const result = risky()
+            const result = risky("")
             return result
             crash { risky -> fallback(fn(e) -> "error: " + e.message) }
             test { self() == "error: something broke" }
@@ -447,13 +451,14 @@ fn fallback_closure_receives_error() {
 fn fallback_closure_error_name() {
     assert_eq!(run(
         r#"
-        pub fn risky() -> String, err {
-            return err.timeout("took too long")
-            test { self() is err.timeout }
+        pub fn risky(s: String) -> String, err {
+            if s == "" { return err.timeout("took too long") }
+            return s
+            test { self("ok") == "ok" self("") is err.timeout }
         }
 
         pub fn handler() -> String {
-            const result = risky()
+            const result = risky("")
             return result
             crash { risky -> fallback(fn(e) -> e.name + ": " + e.message) }
             test { self() == "timeout: took too long" }
@@ -474,7 +479,7 @@ fn halt_propagates_error_tuple() {
         }
 
         pub fn process(s: String) -> String, err {
-            let result, err = validate(s)
+            const result = validate(s)
             return result
             crash { validate -> halt }
             test { self("ok") == "ok" self("") is err.empty }

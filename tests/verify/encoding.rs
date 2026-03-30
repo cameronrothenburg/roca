@@ -10,7 +10,7 @@ fn btoa_encodes_to_base64() {
         pub fn to_b64(s: String) -> String {
             const result = Encoding.btoa(s)
             return result
-            crash { Encoding.btoa -> halt }
+            crash { Encoding.btoa -> fallback("") }
             test { self("hello") == "aGVsbG8=" }
         }
         "#,
@@ -28,7 +28,7 @@ fn atob_decodes_from_base64() {
         pub fn from_b64(s: String) -> String {
             const result = Encoding.atob(s)
             return result
-            crash { Encoding.atob -> halt }
+            crash { Encoding.atob -> fallback("") }
             test { self("aGVsbG8=") == "hello" }
         }
         "#,
@@ -48,8 +48,8 @@ fn btoa_atob_roundtrip() {
             const decoded = Encoding.atob(encoded)
             return decoded
             crash {
-                Encoding.btoa -> halt
-                Encoding.atob -> halt
+                Encoding.btoa -> fallback("")
+                Encoding.atob -> fallback("")
             }
             test { self("test data") == "test data" }
         }

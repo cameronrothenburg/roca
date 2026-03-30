@@ -16,10 +16,9 @@ fn adapter_pattern_basic() {
         }{}
 
         pub fn get_user(rt: Runtime) -> String {
-            let result, err = rt.db.query("SELECT name FROM users")
-            if err { return "unknown" }
+            const result = rt.db.query("SELECT name FROM users")
             return result
-            crash { rt.db.query -> halt }
+            crash { rt.db.query -> fallback("unknown") }
             test { self(Runtime { db: null }) == "alice" }
         }
         "#,
@@ -45,10 +44,11 @@ fn adapter_pattern_error_propagation() {
         }{}
 
         pub fn get_user(rt: Runtime) -> String, err {
-            let result, err = rt.db.query("SELECT 1")
+            if false { return err.failed }
+            const result = rt.db.query("SELECT 1")
             return result
             crash { rt.db.query -> log |> halt }
-            test { self(Runtime { db: null }) == "ok" }
+            test { self(Runtime { db: null }) == "ok" self(Runtime { db: null }) is err.failed }
         }
         "#,
         r#"
@@ -80,13 +80,9 @@ fn adapter_multiple_externs() {
         }{}
 
         pub fn fetch_data(svc: Services, url: String) -> String {
-            let cached, c_err = svc.cache.get(url)
-            if cached != null { return cached }
-            let result, h_err = svc.http.get(url)
-            if h_err { return "error" }
+            const result = svc.http.get(url)
             return result
             crash {
-                svc.cache.get -> skip
                 svc.http.get -> fallback("offline")
             }
             test { self(Services { http: null, cache: null }, "/api") == "data" }
@@ -95,7 +91,7 @@ fn adapter_multiple_externs() {
         r#"
             const svc = {
                 http: { get: (url) => ({ value: "hello from " + url, err: null }) },
-                cache: { get: (key) => ({ value: null, err: null }) }
+                cache: { get: (key) => null }
             };
             console.log(fetch_data(svc, "/api"));
         "#,

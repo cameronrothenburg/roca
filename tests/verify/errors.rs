@@ -10,10 +10,9 @@ fn err_variable_message_access() {
             test { self("ok") == "ok" self("") is err.empty }
         }
         pub fn caller(s: String) -> String {
-            let result, err = check(s)
-            if err { return "error: " + err.message }
+            const result = check(s)
             return result
-            crash { check -> halt }
+            crash { check -> fallback(fn(e) -> "error: " + e.message) }
             test { self("ok") == "ok" }
         }"#,
         r#"console.log(caller("ok")); console.log(caller(""));"#,

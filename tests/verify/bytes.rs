@@ -5,17 +5,18 @@ use super::harness::run;
 #[test]
 fn bytes_from_string() {
     assert_eq!(run(
-        r#"pub fn encode(s: String) -> Number {
-            const encoder = TextEncoder()
-            const bytes = encoder.encode(s)
+        r#"
+        import { Encoding } from std::encoding
+        pub fn encode(s: String) -> Number {
+            const bytes = Encoding.encode(s)
             return bytes.byteLength
             crash {
-                TextEncoder -> skip
-                encoder.encode -> skip
+                Encoding.encode -> skip
                 bytes.byteLength -> skip
             }
             test { self("hello") == 5 }
-        }"#,
+        }
+        "#,
         r#"console.log(encode("hello"));"#,
     ), "5");
 }
@@ -23,21 +24,22 @@ fn bytes_from_string() {
 #[test]
 fn bytes_to_string() {
     assert_eq!(run(
-        r#"pub fn decode() -> String {
-            const encoder = TextEncoder()
-            const bytes = encoder.encode("hello")
-            const decoder = TextDecoder()
-            const result = decoder.decode(bytes)
+        r#"
+        import { Encoding } from std::encoding
+        pub fn decode(s: String) -> String {
+            const bytes = Encoding.encode(s)
+            const result = Encoding.decode(bytes)
             return result
             crash {
-                TextEncoder -> skip
-                encoder.encode -> skip
-                TextDecoder -> skip
-                decoder.decode -> skip
+                Encoding.encode -> skip
+                Encoding.decode -> fallback("")
             }
-            test { self() == "hello" }
-        }"#,
-        "console.log(decode());",
+            test { self("hello") == "hello" }
+        }
+        "#,
+        r#"
+            console.log(decode("hello"));
+        "#,
     ), "hello");
 }
 

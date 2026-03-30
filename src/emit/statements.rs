@@ -52,7 +52,44 @@ pub(crate) fn build_stmt<'a>(
         }
         roca::Stmt::LetResult { name, err_name, value } => {
             if let Some((cast_type, input)) = extract_cast_input(value) {
-                return emit_safe_cast(ast, name, err_name, &cast_type, input);
+                let mut result = emit_safe_cast(ast, name, err_name, &cast_type, input);
+                // Apply crash strategy to safe cast (e.g., fallback on error)
+                let handler = find_crash_handler(value, crash);
+                let terminal = handler.and_then(|h| match &h.strategy {
+                    roca::CrashHandlerKind::Simple(chain) => chain.last(),
+                    _ => None,
+                });
+                if let Some(terminal) = terminal {
+                    match terminal {
+                        roca::CrashStep::Fallback(fallback_expr) => {
+                            let err_check = ident(ast, err_name);
+                            let fb_val = if matches!(fallback_expr, roca::Expr::Closure { .. }) {
+                                let closure = build_expr(ast, fallback_expr);
+                                let args = args1(ast, ident(ast, err_name));
+                                ast.expression_call(SPAN, closure, NONE, args, false)
+                            } else {
+                                build_expr(ast, fallback_expr)
+                            };
+                            let assign = assign_expr(ast, name, fb_val);
+                            let mut then = ast.vec();
+                            then.push(expr_stmt(ast, assign));
+                            let consequent = block(ast, then);
+                            result.push(if_stmt(ast, err_check, consequent, None));
+                        }
+                        roca::CrashStep::Halt if returns_err => {
+                            let err_check = ident(ast, err_name);
+                            let zero = zero_value(ast, return_type);
+                            let propagate_err = ident(ast, err_name);
+                            let ret = make_result(ast, zero, propagate_err);
+                            let mut then = ast.vec();
+                            then.push(ast.statement_return(SPAN, Some(ret)));
+                            let consequent = block(ast, then);
+                            result.push(if_stmt(ast, err_check, consequent, None));
+                        }
+                        _ => {} // skip, etc. — no action needed
+                    }
+                }
+                return result;
             }
 
             let n = ast.str(name);

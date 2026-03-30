@@ -108,7 +108,7 @@ fn multiple_mock_methods() {
                 err timeout = "timed out"
             }
             post(url: String, body: String) -> String, err {
-                err timeout = "timed out"
+                err network = "network error"
             }
             mock {
                 get -> "get_response"

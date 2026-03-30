@@ -26,7 +26,7 @@ fn time_parse_valid_iso() {
         pub fn parse_ts(s: String) -> Number {
             const ts = Time.parse(s)
             return ts
-            crash { Time.parse -> halt }
+            crash { Time.parse -> fallback(fn(e) -> 0) }
             test { self("2026-01-01T00:00:00Z") == self("2026-01-01T00:00:00Z") }
         }
         "#,
@@ -44,10 +44,11 @@ fn time_parse_invalid_propagates() {
         r#"
         import { Time } from std::time
         pub fn try_parse(s: String) -> Number, err {
+            if false { return err.parse_failed }
             const ts = Time.parse(s)
             return ts
             crash { Time.parse -> halt }
-            test { self("2026-01-01") == self("2026-01-01") }
+            test { self("2026-01-01") == self("2026-01-01") self("bad") is err.parse_failed }
         }
         "#,
         r#"

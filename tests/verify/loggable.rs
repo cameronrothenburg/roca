@@ -193,7 +193,7 @@ fn secret_with_to_log_redacts() {
             value: String
             create(v: String) -> Secret
         }{
-            fn create(v: String) -> Secret {
+            pub fn create(v: String) -> Secret {
                 return Secret { value: v }
                 test {}
             }
@@ -232,7 +232,7 @@ fn email_with_to_log_shows_value() {
             value: String
             create(v: String) -> Email
         }{
-            fn create(v: String) -> Email {
+            pub fn create(v: String) -> Email {
                 return Email { value: v }
                 test {}
             }
@@ -271,7 +271,7 @@ fn credit_card_logs_last_four() {
             number: String
             create(n: String) -> CreditCard
         }{
-            fn create(n: String) -> CreditCard {
+            pub fn create(n: String) -> CreditCard {
                 return CreditCard { number: n }
                 test {}
             }

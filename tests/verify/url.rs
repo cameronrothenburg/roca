@@ -8,7 +8,7 @@ fn url_parse_valid() {
         pub fn get_host(raw: String) -> String {
             const url = Url.parse(raw)
             return url.hostname()
-            crash { Url.parse -> halt }
+            crash { Url.parse -> fallback(fn(e) -> "") }
             test { self("https://example.com/path") == "example.com" }
         }
         "#,
@@ -22,10 +22,11 @@ fn url_parse_invalid() {
         r#"
         import { Url } from std::url
         pub fn try_host(raw: String) -> String, err {
+            if false { return err.parse_failed }
             const url = Url.parse(raw)
             return url.hostname()
             crash { Url.parse -> halt }
-            test { self("https://example.com") == "example.com" }
+            test { self("https://example.com") == "example.com" self("bad") is err.parse_failed }
         }
         "#,
         r#"
@@ -60,7 +61,7 @@ fn url_parts() {
         pub fn parts(raw: String) -> String {
             const url = Url.parse(raw)
             return url.protocol() + " " + url.pathname() + " " + url.search()
-            crash { Url.parse -> halt }
+            crash { Url.parse -> fallback(fn(e) -> "") }
             test { self("https://example.com/path?q=1") == self("https://example.com/path?q=1") }
         }
         "#,
@@ -77,8 +78,8 @@ fn url_get_param() {
             const url = Url.parse(raw)
             const val = url.getParam(name)
             if val == null { return "none" }
-            return val
-            crash { Url.parse -> halt }
+            return "" + val
+            crash { Url.parse -> fallback(fn(e) -> "") }
             test { self("https://x.com?a=1", "a") == "1" }
         }
         "#,

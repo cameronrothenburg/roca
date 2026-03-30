@@ -40,10 +40,12 @@ fn static_method() {
         }{
             fn validate(raw: String) -> Email, err {
                 if raw == "" { return err.missing }
+                if raw == "x" { return err.invalid }
                 return Email { value: raw }
                 test {
                     self("a@b.com") is Ok
                     self("") is err.missing
+                    self("x") is err.invalid
                 }
             }
         }"#,

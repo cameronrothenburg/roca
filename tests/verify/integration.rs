@@ -17,12 +17,13 @@ fn full_email_pipeline() {
                 err invalid = "format is not valid"
             }
         }{
-            fn validate(raw: String) -> Email, err {
+            pub fn validate(raw: String) -> Email, err {
                 if raw == "" { return err.missing }
                 return Email { value: raw }
                 test {
                     self("a@b.com") is Ok
                     self("") is err.missing
+                    self("x") is err.invalid
                 }
             }
         }
@@ -34,10 +35,10 @@ fn full_email_pipeline() {
             }
         }
 
-        pub fn format_email(raw: String) -> String, err {
+        pub fn format_email(raw: String) -> String {
             const result = Email.validate(raw)
             return "ok"
-            crash { Email.validate -> halt }
+            crash { Email.validate -> fallback(fn(e) -> "error") }
             test {
                 self("a@b.com") == "ok"
             }
@@ -75,7 +76,7 @@ fn full_user_registration() {
                 err invalid = "invalid email"
             }
         }{
-            fn validate(raw: String) -> Email, err {
+            pub fn validate(raw: String) -> Email, err {
                 if raw == "" { return err.invalid }
                 return Email { value: raw }
                 test {
@@ -100,14 +101,16 @@ fn full_user_registration() {
                 err bad_email = "email is invalid"
             }
         }{
-            fn validate(name: String, email_raw: String) -> User, err {
+            pub fn validate(name: String, email_raw: String) -> User, err {
                 if name == "" { return err.missing_name }
+                if email_raw == "" { return err.bad_email }
                 const email_result = Email.validate(email_raw)
                 return User { name: name, email: email_result }
-                crash { Email.validate -> halt }
+                crash { Email.validate -> skip }
                 test {
                     self("cam", "a@b.com") is Ok
                     self("", "a@b.com") is err.missing_name
+                    self("cam", "") is err.bad_email
                 }
             }
         }
@@ -148,7 +151,7 @@ fn struct_uses_another_struct() {
             y: Number
             create(x: Number, y: Number) -> Point
         }{
-            fn create(x: Number, y: Number) -> Point {
+            pub fn create(x: Number, y: Number) -> Point {
                 return Point { x: x, y: y }
                 test { self(1, 2) == Point { x: 1, y: 2 } }
             }
@@ -159,7 +162,7 @@ fn struct_uses_another_struct() {
             end: Point
             create(x1: Number, y1: Number, x2: Number, y2: Number) -> Line
         }{
-            fn create(x1: Number, y1: Number, x2: Number, y2: Number) -> Line {
+            pub fn create(x1: Number, y1: Number, x2: Number, y2: Number) -> Line {
                 const s = Point.create(x1, y1)
                 const e = Point.create(x2, y2)
                 return Line { start: s, end: e }
@@ -196,10 +199,9 @@ fn let_result_destructure() {
         }
 
         pub fn compute(a: Number, b: Number) -> String {
-            let result, err = safe_divide(a, b)
-            if err { return "error: " + err.message }
+            const result = safe_divide(a, b)
             return "result: " + result
-            crash { safe_divide -> halt }
+            crash { safe_divide -> fallback(fn(e) -> "error: " + e.message) }
             test { self(10, 2) == "result: 5" }
         }
         "#,

@@ -62,22 +62,23 @@ fn secret_satisfies_loggable_but_not_string() {
 
 #[test]
 fn email_satisfies_string_can_be_used_as_string() {
-    // Full end-to-end: Email satisfies String, passed to a function that takes String
+    // Email with a custom contract that has trim, and passed to a function expecting it
     assert_eq!(run(
         r#"
+        contract Trimmable { trim() -> String }
+
         pub struct Email {
             value: String
             create(raw: String) -> Email
         }{
-            fn create(raw: String) -> Email {
+            pub fn create(raw: String) -> Email {
                 return Email { value: raw }
                 test {}
             }
         }
 
-        Email satisfies String {
+        Email satisfies Trimmable {
             fn trim() -> String { return self.value.trim() crash { self.value.trim -> skip } test {} }
-            fn toString() -> String { return self.value test {} }
         }
 
         pub fn show_trimmed(s: String) -> String {
@@ -88,7 +89,7 @@ fn email_satisfies_string_can_be_used_as_string() {
         "#,
         r#"
             const email = Email.create(" cam@test.com ");
-            // Call trim directly on email — it satisfies String
+            // Call trim directly on email — it satisfies Trimmable
             console.log(email.trim());
         "#,
     ), "cam@test.com");

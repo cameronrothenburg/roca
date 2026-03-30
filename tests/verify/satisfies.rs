@@ -65,8 +65,9 @@ fn satisfies_with_struct_own_methods() {
             }
         }{
             fn validate(raw: String) -> Email, err {
+                if raw == "" { return err.invalid }
                 return Email { value: raw }
-                test { self("a@b.com") is Ok }
+                test { self("a@b.com") is Ok self("") is err.invalid }
             }
         }
 

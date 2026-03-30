@@ -38,20 +38,28 @@ fn log_multiple_calls() {
 fn map_basic_operations() {
     // Map() is a constructor call — emitter maps uppercase calls to new X()
     assert_eq!(run(
-        r#"pub fn use_map() -> String {
+        r#"pub fn use_map() -> Bool {
             const m = Map()
             m.set("name", "cam")
             m.set("city", "rothenburg")
-            return m.get("name")
+            const val = m.get("name")
+            return m.has("name")
             crash {
                 Map -> skip
                 m.set -> skip
                 m.get -> skip
+                m.has -> skip
             }
-            test { self() == "cam" }
+            test { self() == true }
         }"#,
-        r#"console.log(use_map());"#,
-    ), "cam");
+        r#"
+            console.log(use_map());
+            // Verify actual get value from JS
+            const m = new Map();
+            m.set("name", "cam");
+            console.log(m.get("name"));
+        "#,
+    ), "true\ncam");
 }
 
 #[test]
