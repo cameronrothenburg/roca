@@ -4,17 +4,24 @@ use oxc_ast::NONE;
 use oxc_ast::AstBuilder;
 use oxc_span::SPAN;
 
+use super::ast_helpers::{
+    ident, string_lit, number_lit, null_lit,
+    static_field, assign_expr,
+    const_decl, let_decl,
+    expr_stmt, block, try_catch, if_stmt,
+    console_call, args1, args2,
+};
 use super::expressions::build_expr;
 use super::crash::wrap_with_strategy;
 use super::helpers::{make_result, make_error, null};
 
 fn zero_value<'a>(ast: &AstBuilder<'a>, t: &roca::TypeRef) -> Expression<'a> {
     match t {
-        roca::TypeRef::String => ast.expression_string_literal(SPAN, ast.str(""), None),
-        roca::TypeRef::Number => ast.expression_numeric_literal(SPAN, 0.0, None, NumberBase::Decimal),
+        roca::TypeRef::String => string_lit(ast, ""),
+        roca::TypeRef::Number => number_lit(ast, 0.0),
         roca::TypeRef::Bool => ast.expression_boolean_literal(SPAN, false),
-        roca::TypeRef::Nullable(_) => ast.expression_null_literal(SPAN),
-        _ => ast.expression_null_literal(SPAN),
+        roca::TypeRef::Nullable(_) => null_lit(ast),
+        _ => null_lit(ast),
     }
 }
 
@@ -71,54 +78,41 @@ pub(crate) fn build_stmt<'a>(
             if let Some(terminal) = terminal {
                     match terminal {
                         roca::CrashStep::Halt if returns_err => {
-                            let err_check = ast.expression_identifier(SPAN, ast.str(err_name));
+                            let err_check = ident(ast, err_name);
                             let zero = zero_value(ast, return_type);
-                            let propagate_err = ast.expression_identifier(SPAN, ast.str(err_name));
+                            let propagate_err = ident(ast, err_name);
                             let ret = make_result(ast, zero, propagate_err);
                             let mut then = ast.vec();
                             then.push(ast.statement_return(SPAN, Some(ret)));
-                            let consequent = Statement::BlockStatement(ast.alloc(ast.block_statement(SPAN, then)));
-                            result.push(ast.statement_if(SPAN, err_check, consequent, None));
+                            let consequent = block(ast, then);
+                            result.push(if_stmt(ast, err_check, consequent, None));
                         }
                         roca::CrashStep::Fallback(fallback_expr) => {
-                            let err_check = ast.expression_identifier(SPAN, ast.str(err_name));
+                            let err_check = ident(ast, err_name);
                             let fb_val = if matches!(fallback_expr, roca::Expr::Closure { .. }) {
                                 let closure = build_expr(ast, fallback_expr);
-                                let mut args = ast.vec();
-                                args.push(Argument::from(ast.expression_identifier(SPAN, ast.str(err_name))));
+                                let args = args1(ast, ident(ast, err_name));
                                 ast.expression_call(SPAN, closure, NONE, args, false)
                             } else {
                                 build_expr(ast, fallback_expr)
                             };
-                            let target = SimpleAssignmentTarget::AssignmentTargetIdentifier(
-                                ast.alloc(ast.identifier_reference(SPAN, ast.str(name)))
-                            );
-                            let assign = ast.expression_assignment(
-                                SPAN, AssignmentOperator::Assign, AssignmentTarget::from(target), fb_val,
-                            );
+                            let assign = assign_expr(ast, name, fb_val);
                             let mut then = ast.vec();
-                            then.push(ast.statement_expression(SPAN, assign));
-                            let consequent = Statement::BlockStatement(ast.alloc(ast.block_statement(SPAN, then)));
-                            result.push(ast.statement_if(SPAN, err_check, consequent, None));
+                            then.push(expr_stmt(ast, assign));
+                            let consequent = block(ast, then);
+                            result.push(if_stmt(ast, err_check, consequent, None));
                         }
                         roca::CrashStep::Panic => {
-                            let err_check = ast.expression_identifier(SPAN, ast.str(err_name));
+                            let err_check = ident(ast, err_name);
                             let mut panic_stmts = ast.vec();
-                            let mut log_args = ast.vec();
-                            log_args.push(Argument::from(ast.expression_string_literal(SPAN, ast.str("PANIC:"), None)));
-                            log_args.push(Argument::from(ast.expression_identifier(SPAN, ast.str(err_name))));
-                            let console_err = ast.expression_call(SPAN,
-                                Expression::from(ast.member_expression_static(SPAN, ast.expression_identifier(SPAN, "console"), ast.identifier_name(SPAN, "error"), false)),
-                                NONE, log_args, false);
-                            panic_stmts.push(ast.statement_expression(SPAN, console_err));
-                            let mut exit_args = ast.vec();
-                            exit_args.push(Argument::from(ast.expression_numeric_literal(SPAN, 1.0, None, NumberBase::Decimal)));
+                            let console_err = console_call(ast, "error", args2(ast, string_lit(ast, "PANIC:"), ident(ast, err_name)));
+                            panic_stmts.push(expr_stmt(ast, console_err));
                             let exit_call = ast.expression_call(SPAN,
-                                Expression::from(ast.member_expression_static(SPAN, ast.expression_identifier(SPAN, "process"), ast.identifier_name(SPAN, "exit"), false)),
-                                NONE, exit_args, false);
-                            panic_stmts.push(ast.statement_expression(SPAN, exit_call));
-                            let consequent = Statement::BlockStatement(ast.alloc(ast.block_statement(SPAN, panic_stmts)));
-                            result.push(ast.statement_if(SPAN, err_check, consequent, None));
+                                static_field(ast, "process", "exit"),
+                                NONE, args1(ast, number_lit(ast, 1.0)), false);
+                            panic_stmts.push(expr_stmt(ast, exit_call));
+                            let consequent = block(ast, panic_stmts);
+                            result.push(if_stmt(ast, err_check, consequent, None));
                         }
                         roca::CrashStep::Skip => {}
                         _ => {}
@@ -139,7 +133,7 @@ pub(crate) fn build_stmt<'a>(
                     let call_expr = build_expr(ast, expr);
                     let tmp_name = "_ret";
                     let mut stmts = wrap_with_strategy(ast, call_expr, tmp_name, &handler.strategy, expr);
-                    let ret_val = ast.expression_identifier(SPAN, tmp_name);
+                    let ret_val = ident(ast, tmp_name);
                     if returns_err {
                         stmts.push(ast.statement_return(SPAN, Some(make_result(ast, ret_val, null(ast)))));
                     } else {
@@ -169,7 +163,7 @@ pub(crate) fn build_stmt<'a>(
             } else {
                 let default_msg = lookup_error_message(err_name, errors_decl)
                     .unwrap_or_else(|| err_name.clone());
-                ast.expression_string_literal(SPAN, ast.str(&default_msg), None)
+                string_lit(ast, &default_msg)
             };
             let err = make_error(ast, err_name, msg_expr);
             let zero = zero_value(ast, return_type);
@@ -177,14 +171,9 @@ pub(crate) fn build_stmt<'a>(
             vec![ast.statement_return(SPAN, Some(ret))]
         }
         roca::Stmt::Assign { name, value } => {
-            let n = ast.str(name);
-            let id_ref = ast.identifier_reference(SPAN, n);
-            let target = SimpleAssignmentTarget::AssignmentTargetIdentifier(ast.alloc(id_ref));
             let val = build_expr(ast, value);
-            let assign = ast.expression_assignment(
-                SPAN, AssignmentOperator::Assign, AssignmentTarget::from(target), val,
-            );
-            vec![ast.statement_expression(SPAN, assign)]
+            let assign = assign_expr(ast, name, val);
+            vec![expr_stmt(ast, assign)]
         }
         roca::Stmt::FieldAssign { target: obj, field, value } => {
             let obj_expr = build_expr(ast, obj);
@@ -195,7 +184,7 @@ pub(crate) fn build_stmt<'a>(
             let assign = ast.expression_assignment(
                 SPAN, AssignmentOperator::Assign, AssignmentTarget::from(target), val,
             );
-            vec![ast.statement_expression(SPAN, assign)]
+            vec![expr_stmt(ast, assign)]
         }
         roca::Stmt::Expr(expr) => {
             if let Some(handler) = find_crash_handler(expr, crash) {
@@ -207,7 +196,7 @@ pub(crate) fn build_stmt<'a>(
                 }
             }
             let val = build_expr(ast, expr);
-            vec![ast.statement_expression(SPAN, val)]
+            vec![expr_stmt(ast, val)]
         }
         roca::Stmt::If { condition, then_body, else_body } => {
             let test = build_expr(ast, condition);
@@ -217,7 +206,7 @@ pub(crate) fn build_stmt<'a>(
                     then_stmts.push(emitted);
                 }
             }
-            let consequent = Statement::BlockStatement(ast.alloc(ast.block_statement(SPAN, then_stmts)));
+            let consequent = block(ast, then_stmts);
 
             let alternate = else_body.as_ref().map(|body| {
                 let mut stmts = ast.vec();
@@ -226,10 +215,10 @@ pub(crate) fn build_stmt<'a>(
                         stmts.push(emitted);
                     }
                 }
-                Statement::BlockStatement(ast.alloc(ast.block_statement(SPAN, stmts)))
+                block(ast, stmts)
             });
 
-            vec![ast.statement_if(SPAN, test, consequent, alternate)]
+            vec![if_stmt(ast, test, consequent, alternate)]
         }
         roca::Stmt::For { binding, iter, body } => {
             let b = ast.str(binding);
@@ -244,7 +233,7 @@ pub(crate) fn build_stmt<'a>(
                     stmts.push(emitted);
                 }
             }
-            let body_stmt = Statement::BlockStatement(ast.alloc(ast.block_statement(SPAN, stmts)));
+            let body_stmt = block(ast, stmts);
             vec![ast.statement_for_of(SPAN, false, left, right, body_stmt)]
         }
         roca::Stmt::While { condition, body } => {
@@ -255,7 +244,7 @@ pub(crate) fn build_stmt<'a>(
                     stmts.push(emitted);
                 }
             }
-            let body_stmt = Statement::BlockStatement(ast.alloc(ast.block_statement(SPAN, stmts)));
+            let body_stmt = block(ast, stmts);
             vec![ast.statement_while(SPAN, test, body_stmt)]
         }
         roca::Stmt::Break => {
@@ -320,93 +309,58 @@ fn emit_safe_cast<'a>(
     let mut stmts = Vec::new();
 
     // let value; let err;
-    let n = ast.str(name);
-    let pattern = ast.binding_pattern_binding_identifier(SPAN, n);
-    let decl = ast.variable_declarator(SPAN, VariableDeclarationKind::Let, pattern, NONE, None, false);
-    stmts.push(Statement::from(Declaration::VariableDeclaration(ast.alloc(
-        ast.variable_declaration(SPAN, VariableDeclarationKind::Let, ast.vec1(decl), false),
-    ))));
-
-    let en = ast.str(err_name);
-    let e_pattern = ast.binding_pattern_binding_identifier(SPAN, en);
-    let e_decl = ast.variable_declarator(SPAN, VariableDeclarationKind::Let, e_pattern, NONE, None, false);
-    stmts.push(Statement::from(Declaration::VariableDeclaration(ast.alloc(
-        ast.variable_declaration(SPAN, VariableDeclarationKind::Let, ast.vec1(e_decl), false),
-    ))));
+    stmts.push(let_decl(ast, name));
+    stmts.push(let_decl(ast, err_name));
 
     let mut try_stmts = ast.vec();
 
     // const _input = <input expr>; — build once, reference twice
     let input_val = build_expr(ast, input_expr);
-    let inp_pattern = ast.binding_pattern_binding_identifier(SPAN, "_input");
-    let inp_decl = ast.variable_declarator(SPAN, VariableDeclarationKind::Const, inp_pattern, NONE, Some(input_val), false);
-    try_stmts.push(Statement::from(Declaration::VariableDeclaration(ast.alloc(
-        ast.variable_declaration(SPAN, VariableDeclarationKind::Const, ast.vec1(inp_decl), false),
-    ))));
+    try_stmts.push(const_decl(ast, "_input", input_val));
 
     // const _raw = Type(_input)
     let js_type = if cast_type == "Bool" { "Boolean" } else { cast_type };
     let type_name = ast.str(js_type);
-    let mut cast_args = ast.vec();
-    cast_args.push(Argument::from(ast.expression_identifier(SPAN, "_input")));
-    let cast_call = ast.expression_call(SPAN, ast.expression_identifier(SPAN, type_name), NONE, cast_args, false);
-    let raw_pattern = ast.binding_pattern_binding_identifier(SPAN, "_raw");
-    let raw_decl = ast.variable_declarator(SPAN, VariableDeclarationKind::Const, raw_pattern, NONE, Some(cast_call), false);
-    try_stmts.push(Statement::from(Declaration::VariableDeclaration(ast.alloc(
-        ast.variable_declaration(SPAN, VariableDeclarationKind::Const, ast.vec1(raw_decl), false),
-    ))));
+    let cast_call = ast.expression_call(SPAN, ast.expression_identifier(SPAN, type_name), NONE, args1(ast, ident(ast, "_input")), false);
+    try_stmts.push(const_decl(ast, "_raw", cast_call));
 
     // null check: _input === null || _input === undefined
-    let null_check = ast.expression_binary(SPAN, ast.expression_identifier(SPAN, "_input"), BinaryOperator::StrictEquality, ast.expression_null_literal(SPAN));
-    let undef_check = ast.expression_binary(SPAN, ast.expression_identifier(SPAN, "_input"), BinaryOperator::StrictEquality, ast.expression_identifier(SPAN, "undefined"));
+    let null_check = ast.expression_binary(SPAN, ident(ast, "_input"), BinaryOperator::StrictEquality, null_lit(ast));
+    let undef_check = ast.expression_binary(SPAN, ident(ast, "_input"), BinaryOperator::StrictEquality, ident(ast, "undefined"));
     let mut condition = ast.expression_logical(SPAN, null_check, LogicalOperator::Or, undef_check);
 
     // Type-specific check
     if cast_type == "Number" {
         // Also check isNaN
-        let mut nan_args = ast.vec();
-        nan_args.push(Argument::from(ast.expression_identifier(SPAN, "_raw")));
         let nan_check = ast.expression_call(
             SPAN,
-            Expression::from(ast.member_expression_static(
-                SPAN, ast.expression_identifier(SPAN, "Number"), ast.identifier_name(SPAN, "isNaN"), false,
-            )),
-            NONE, nan_args, false,
+            static_field(ast, "Number", "isNaN"),
+            NONE, args1(ast, ident(ast, "_raw")), false,
         );
         condition = ast.expression_logical(SPAN, condition, LogicalOperator::Or, nan_check);
     }
 
     // if (condition) { err = new Error("invalid_cast"); } else { value = _raw; }
-    let err_assign_target = SimpleAssignmentTarget::AssignmentTargetIdentifier(ast.alloc(ast.identifier_reference(SPAN, ast.str(err_name))));
     let error_msg = ast.str(&format!("invalid_{}", cast_type.to_lowercase()));
-    let mut err_args = ast.vec();
-    err_args.push(Argument::from(ast.expression_string_literal(SPAN, error_msg, None)));
-    let new_error = ast.expression_new(SPAN, ast.expression_identifier(SPAN, "Error"), NONE, err_args);
-    let err_assign = ast.expression_assignment(SPAN, AssignmentOperator::Assign, AssignmentTarget::from(err_assign_target), new_error);
+    let new_error = ast.expression_new(SPAN, ident(ast, "Error"), NONE, args1(ast, ast.expression_string_literal(SPAN, error_msg, None)));
+    let err_assign = assign_expr(ast, err_name, new_error);
     let mut then_stmts = ast.vec();
-    then_stmts.push(ast.statement_expression(SPAN, err_assign));
-    let then_block = Statement::BlockStatement(ast.alloc(ast.block_statement(SPAN, then_stmts)));
+    then_stmts.push(expr_stmt(ast, err_assign));
+    let then_block = block(ast, then_stmts);
 
-    let val_assign_target = SimpleAssignmentTarget::AssignmentTargetIdentifier(ast.alloc(ast.identifier_reference(SPAN, ast.str(name))));
-    let val_assign = ast.expression_assignment(SPAN, AssignmentOperator::Assign, AssignmentTarget::from(val_assign_target), ast.expression_identifier(SPAN, "_raw"));
+    let val_assign = assign_expr(ast, name, ident(ast, "_raw"));
     let mut else_stmts = ast.vec();
-    else_stmts.push(ast.statement_expression(SPAN, val_assign));
-    let else_block = Statement::BlockStatement(ast.alloc(ast.block_statement(SPAN, else_stmts)));
+    else_stmts.push(expr_stmt(ast, val_assign));
+    let else_block = block(ast, else_stmts);
 
-    try_stmts.push(ast.statement_if(SPAN, condition, then_block, Some(else_block)));
-
-    let try_block = ast.block_statement(SPAN, try_stmts);
+    try_stmts.push(if_stmt(ast, condition, then_block, Some(else_block)));
 
     // catch(_e) { err = _e; }
-    let catch_err_target = SimpleAssignmentTarget::AssignmentTargetIdentifier(ast.alloc(ast.identifier_reference(SPAN, ast.str(err_name))));
-    let catch_assign = ast.expression_assignment(SPAN, AssignmentOperator::Assign, AssignmentTarget::from(catch_err_target), ast.expression_identifier(SPAN, "_e"));
+    let catch_assign = assign_expr(ast, err_name, ident(ast, "_e"));
     let mut catch_stmts = ast.vec();
-    catch_stmts.push(ast.statement_expression(SPAN, catch_assign));
-    let catch_body = ast.block_statement(SPAN, catch_stmts);
-    let catch_pattern = ast.binding_pattern_binding_identifier(SPAN, "_e");
-    let catch_clause = ast.catch_clause(SPAN, Some(ast.catch_parameter(SPAN, catch_pattern, NONE)), catch_body);
+    catch_stmts.push(expr_stmt(ast, catch_assign));
 
-    stmts.push(ast.statement_try(SPAN, ast.alloc(try_block), Some(ast.alloc(catch_clause)), NONE));
+    stmts.push(try_catch(ast, try_stmts, "_e", catch_stmts));
     stmts
 }
 
@@ -420,21 +374,13 @@ fn emit_wait<'a>(
 
     // Declare result variables
     for name in names {
-        let n = ast.str(name);
-        let pattern = ast.binding_pattern_binding_identifier(SPAN, n);
-        let declarator = ast.variable_declarator(SPAN, VariableDeclarationKind::Let, pattern, NONE, None, false);
-        let decl = ast.variable_declaration(SPAN, VariableDeclarationKind::Let, ast.vec1(declarator), false);
-        stmts.push(Statement::from(Declaration::VariableDeclaration(ast.alloc(decl))));
+        stmts.push(let_decl(ast, name));
     }
     // Declare failed variable
-    let fn_str = ast.str(failed_name);
-    let f_pattern = ast.binding_pattern_binding_identifier(SPAN, fn_str);
-    let f_declarator = ast.variable_declarator(SPAN, VariableDeclarationKind::Let, f_pattern, NONE, None, false);
-    let f_decl = ast.variable_declaration(SPAN, VariableDeclarationKind::Let, ast.vec1(f_declarator), false);
-    stmts.push(Statement::from(Declaration::VariableDeclaration(ast.alloc(f_decl))));
+    stmts.push(let_decl(ast, failed_name));
 
     // Build the await expression
-    let await_expr = match kind {
+    let await_expression = match kind {
         roca::WaitKind::Single(expr) => {
             // await call()
             ast.expression_await(SPAN, build_expr(ast, expr))
@@ -446,12 +392,8 @@ fn emit_wait<'a>(
                 items.push(ArrayExpressionElement::from(build_expr(ast, e)));
             }
             let arr = ast.expression_array(SPAN, items);
-            let promise_all = Expression::from(ast.member_expression_static(
-                SPAN, ast.expression_identifier(SPAN, "Promise"), ast.identifier_name(SPAN, "all"), false,
-            ));
-            let mut args = ast.vec();
-            args.push(Argument::from(arr));
-            let call = ast.expression_call(SPAN, promise_all, NONE, args, false);
+            let promise_all = static_field(ast, "Promise", "all");
+            let call = ast.expression_call(SPAN, promise_all, NONE, args1(ast, arr), false);
             ast.expression_await(SPAN, call)
         }
         roca::WaitKind::First(exprs) => {
@@ -461,12 +403,8 @@ fn emit_wait<'a>(
                 items.push(ArrayExpressionElement::from(build_expr(ast, e)));
             }
             let arr = ast.expression_array(SPAN, items);
-            let promise_race = Expression::from(ast.member_expression_static(
-                SPAN, ast.expression_identifier(SPAN, "Promise"), ast.identifier_name(SPAN, "race"), false,
-            ));
-            let mut args = ast.vec();
-            args.push(Argument::from(arr));
-            let call = ast.expression_call(SPAN, promise_race, NONE, args, false);
+            let promise_race = static_field(ast, "Promise", "race");
+            let call = ast.expression_call(SPAN, promise_race, NONE, args1(ast, arr), false);
             ast.expression_await(SPAN, call)
         }
     };
@@ -476,45 +414,28 @@ fn emit_wait<'a>(
 
     if names.len() == 1 {
         // Single result: name = await ...
-        let n = ast.str(&names[0]);
-        let target = SimpleAssignmentTarget::AssignmentTargetIdentifier(ast.alloc(ast.identifier_reference(SPAN, n)));
-        let assign = ast.expression_assignment(SPAN, AssignmentOperator::Assign, AssignmentTarget::from(target), await_expr);
-        try_stmts.push(ast.statement_expression(SPAN, assign));
+        let assign = assign_expr(ast, &names[0], await_expression);
+        try_stmts.push(expr_stmt(ast, assign));
     } else {
         // Multiple results (wait all): const _wait_result = await ...; a = _wait_result[0]; b = _wait_result[1];
-        let temp_pattern = ast.binding_pattern_binding_identifier(SPAN, "_wait_result");
-        let temp_decl = ast.variable_declarator(SPAN, VariableDeclarationKind::Const, temp_pattern, NONE, Some(await_expr), false);
-        let temp = ast.variable_declaration(SPAN, VariableDeclarationKind::Const, ast.vec1(temp_decl), false);
-        try_stmts.push(Statement::from(Declaration::VariableDeclaration(ast.alloc(temp))));
+        try_stmts.push(const_decl(ast, "_wait_result", await_expression));
 
         for (idx, name) in names.iter().enumerate() {
-            let n = ast.str(name);
-            let target = SimpleAssignmentTarget::AssignmentTargetIdentifier(ast.alloc(ast.identifier_reference(SPAN, n)));
-            let index = ast.expression_numeric_literal(SPAN, idx as f64, None, NumberBase::Decimal);
+            let index = number_lit(ast, idx as f64);
             let access = Expression::from(ast.member_expression_computed(
-                SPAN, ast.expression_identifier(SPAN, "_wait_result"), index, false,
+                SPAN, ident(ast, "_wait_result"), index, false,
             ));
-            let assign = ast.expression_assignment(SPAN, AssignmentOperator::Assign, AssignmentTarget::from(target), access);
-            try_stmts.push(ast.statement_expression(SPAN, assign));
+            let assign = assign_expr(ast, name, access);
+            try_stmts.push(expr_stmt(ast, assign));
         }
     }
 
-    let try_block = ast.block_statement(SPAN, try_stmts);
-
     // catch(e) { failed = e; }
-    let fn2 = ast.str(failed_name);
-    let fail_target = SimpleAssignmentTarget::AssignmentTargetIdentifier(ast.alloc(ast.identifier_reference(SPAN, fn2)));
-    let fail_assign = ast.expression_assignment(
-        SPAN, AssignmentOperator::Assign, AssignmentTarget::from(fail_target),
-        ast.expression_identifier(SPAN, "_e"),
-    );
+    let fail_assign = assign_expr(ast, failed_name, ident(ast, "_e"));
     let mut catch_stmts = ast.vec();
-    catch_stmts.push(ast.statement_expression(SPAN, fail_assign));
-    let catch_body = ast.block_statement(SPAN, catch_stmts);
-    let err_pattern = ast.binding_pattern_binding_identifier(SPAN, "_e");
-    let catch_clause = ast.catch_clause(SPAN, Some(ast.catch_parameter(SPAN, err_pattern, NONE)), catch_body);
+    catch_stmts.push(expr_stmt(ast, fail_assign));
 
-    stmts.push(ast.statement_try(SPAN, ast.alloc(try_block), Some(ast.alloc(catch_clause)), NONE));
+    stmts.push(try_catch(ast, try_stmts, "_e", catch_stmts));
     stmts
 }
 

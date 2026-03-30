@@ -1,13 +1,14 @@
 use crate::ast as roca;
 use oxc_ast::ast::*;
-use oxc_ast::ast::NumberBase;
-use oxc_ast::NONE;
 use oxc_ast::AstBuilder;
-use oxc_span::SPAN;
+
+use super::ast_helpers::{
+    string_lit, number_lit, prop, object_expr, const_decl,
+};
 
 /// Emit a contract as:
-/// - Enum contract → const object
-/// - Interface contract → exported const with errors
+/// - Enum contract -> const object
+/// - Interface contract -> exported const with errors
 pub(crate) fn build_contract_stmts<'a>(ast: &AstBuilder<'a>, c: &roca::ContractDef) -> Vec<Statement<'a>> {
     let mut stmts = Vec::new();
 
@@ -18,32 +19,15 @@ pub(crate) fn build_contract_stmts<'a>(ast: &AstBuilder<'a>, c: &roca::ContractD
             match val {
                 roca::ContractValue::Number(n) => {
                     let key_str = format!("{}", *n as i64);
-                    let k = ast.str(&key_str);
-                    let prop_key = PropertyKey::StaticIdentifier(ast.alloc(ast.identifier_name(SPAN, k)));
-                    let value = ast.expression_numeric_literal(SPAN, *n, None, NumberBase::Decimal);
-                    let prop = ast.object_property_kind_object_property(
-                        SPAN, PropertyKind::Init, prop_key, value, false, false, false,
-                    );
-                    props.push(prop);
+                    props.push(prop(ast, &key_str, number_lit(ast, *n)));
                 }
                 roca::ContractValue::String(s) => {
-                    let k = ast.str(s);
-                    let prop_key = PropertyKey::StaticIdentifier(ast.alloc(ast.identifier_name(SPAN, k)));
-                    let v = ast.str(s);
-                    let value = ast.expression_string_literal(SPAN, v, None);
-                    let prop = ast.object_property_kind_object_property(
-                        SPAN, PropertyKind::Init, prop_key, value, false, false, false,
-                    );
-                    props.push(prop);
+                    props.push(prop(ast, s, string_lit(ast, s)));
                 }
             }
         }
-        let obj = ast.expression_object(SPAN, props);
-        let n = ast.str(&c.name);
-        let pattern = ast.binding_pattern_binding_identifier(SPAN, n);
-        let declarator = ast.variable_declarator(SPAN, VariableDeclarationKind::Const, pattern, NONE, Some(obj), false);
-        let decl = ast.variable_declaration(SPAN, VariableDeclarationKind::Const, ast.vec1(declarator), false);
-        stmts.push(Statement::from(Declaration::VariableDeclaration(ast.alloc(decl))));
+        let obj = object_expr(ast, props);
+        stmts.push(const_decl(ast, &c.name, obj));
     }
 
     // Errors const: const HttpClientErrors = { timeout: "request timed out", ... };
@@ -52,19 +36,10 @@ pub(crate) fn build_contract_stmts<'a>(ast: &AstBuilder<'a>, c: &roca::ContractD
         let err_name = format!("{}Errors", c.name);
         let mut props = ast.vec();
         for err in &all_errors {
-            let k = ast.str(&err.name);
-            let prop_key = PropertyKey::StaticIdentifier(ast.alloc(ast.identifier_name(SPAN, k)));
-            let v = ast.str(&err.message);
-            let value = ast.expression_string_literal(SPAN, v, None);
-            let prop = ast.object_property(SPAN, PropertyKind::Init, prop_key, value, false, false, false);
-            props.push(ObjectPropertyKind::ObjectProperty(ast.alloc(prop)));
+            props.push(prop(ast, &err.name, string_lit(ast, &err.message)));
         }
-        let obj = ast.expression_object(SPAN, props);
-        let n = ast.str(&err_name);
-        let pattern = ast.binding_pattern_binding_identifier(SPAN, n);
-        let declarator = ast.variable_declarator(SPAN, VariableDeclarationKind::Const, pattern, NONE, Some(obj), false);
-        let decl = ast.variable_declaration(SPAN, VariableDeclarationKind::Const, ast.vec1(declarator), false);
-        stmts.push(Statement::from(Declaration::VariableDeclaration(ast.alloc(decl))));
+        let obj = object_expr(ast, props);
+        stmts.push(const_decl(ast, &err_name, obj));
     }
 
     stmts

@@ -1,3 +1,4 @@
+pub(crate) mod ast_helpers;
 mod helpers;
 mod expressions;
 mod statements;
@@ -31,7 +32,6 @@ fn stdlib_runtime(module: &str) -> Option<String> {
 }
 use oxc_allocator::Allocator;
 use oxc_ast::ast::*;
-use oxc_ast::NONE;
 use oxc_ast::AstBuilder;
 use oxc_codegen::Codegen;
 use oxc_span::{SPAN, SourceType};
@@ -155,30 +155,18 @@ pub fn emit_dts(file: &ast::SourceFile) -> String {
 
 /// Emit enum as: const Name = { key: "value", ... };
 fn build_enum<'a>(ast: &AstBuilder<'a>, e: &ast::EnumDef) -> Statement<'a> {
+    use ast_helpers::{string_lit, number_lit, prop, object_expr, const_decl};
+
     let mut props = ast.vec();
     for v in &e.variants {
-        let k = ast.str(&v.name);
-        let key = PropertyKey::StaticIdentifier(ast.alloc(ast.identifier_name(SPAN, k)));
         let value = match &v.value {
-            ast::EnumValue::String(s) => {
-                let s = ast.str(s);
-                ast.expression_string_literal(SPAN, s, None)
-            }
-            ast::EnumValue::Number(n) => {
-                ast.expression_numeric_literal(SPAN, *n, None, NumberBase::Decimal)
-            }
+            ast::EnumValue::String(s) => string_lit(ast, s),
+            ast::EnumValue::Number(n) => number_lit(ast, *n),
         };
-        let prop = ast.object_property_kind_object_property(
-            SPAN, PropertyKind::Init, key, value, false, false, false,
-        );
-        props.push(prop);
+        props.push(prop(ast, &v.name, value));
     }
-    let obj = ast.expression_object(SPAN, props);
-    let n = ast.str(&e.name);
-    let pattern = ast.binding_pattern_binding_identifier(SPAN, n);
-    let declarator = ast.variable_declarator(SPAN, VariableDeclarationKind::Const, pattern, NONE, Some(obj), false);
-    let decl = ast.variable_declaration(SPAN, VariableDeclarationKind::Const, ast.vec1(declarator), false);
-    Statement::from(Declaration::VariableDeclaration(ast.alloc(decl)))
+    let obj = object_expr(ast, props);
+    const_decl(ast, &e.name, obj)
 }
 
 fn wrap_export<'a>(ast: &AstBuilder<'a>, stmt: Statement<'a>) -> Statement<'a> {

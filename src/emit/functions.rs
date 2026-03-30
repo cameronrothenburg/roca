@@ -4,6 +4,7 @@ use oxc_ast::NONE;
 use oxc_ast::AstBuilder;
 use oxc_span::SPAN;
 
+use super::ast_helpers::{param, formal_params, function_body};
 use super::statements::build_stmt;
 
 pub(crate) fn build_function<'a>(ast: &AstBuilder<'a>, f: &roca::FnDef) -> Function<'a> {
@@ -12,11 +13,9 @@ pub(crate) fn build_function<'a>(ast: &AstBuilder<'a>, f: &roca::FnDef) -> Funct
 
     let mut params_list = ast.vec();
     for p in &f.params {
-        let pn = ast.str(&p.name);
-        let pattern = ast.binding_pattern_binding_identifier(SPAN, pn);
-        params_list.push(ast.plain_formal_parameter(SPAN, pattern));
+        params_list.push(param(ast, &p.name));
     }
-    let formal_params = ast.formal_parameters(SPAN, FormalParameterKind::FormalParameter, params_list, NONE);
+    let params = formal_params(ast, params_list);
 
     let mut stmts = ast.vec();
     for s in &f.body {
@@ -24,7 +23,7 @@ pub(crate) fn build_function<'a>(ast: &AstBuilder<'a>, f: &roca::FnDef) -> Funct
             stmts.push(emitted);
         }
     }
-    let body = ast.function_body(SPAN, ast.vec(), stmts);
+    let body = function_body(ast, stmts);
 
     let is_async = body_has_wait(&f.body);
 
@@ -35,7 +34,7 @@ pub(crate) fn build_function<'a>(ast: &AstBuilder<'a>, f: &roca::FnDef) -> Funct
         false,    // generator
         is_async, // async — auto-detected from wait statements
         false,    // declare
-        NONE, NONE, formal_params, NONE, Some(body),
+        NONE, NONE, params, NONE, Some(body),
     )
 }
 

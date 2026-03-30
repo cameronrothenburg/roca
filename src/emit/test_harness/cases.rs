@@ -4,6 +4,14 @@ use oxc_ast::NONE;
 use oxc_ast::AstBuilder;
 use oxc_span::SPAN;
 
+use crate::emit::ast_helpers::{
+    ident, string_lit, null_lit,
+    field_access, static_field,
+    const_decl, expr_stmt, block, if_stmt, try_catch,
+    binary, update_inc, console_call,
+    arg, args1,
+};
+
 pub(crate) enum CallKind<'a> {
     Function(&'a str),
     Method(&'a str, &'a str),
@@ -45,39 +53,25 @@ pub(crate) fn emit_test_cases<'a>(
                     emit_assert_null(ast, &label, field_access(ast, call, "err"), body);
                 } else {
                     // Non-err function: wrap in try/catch, pass if no throw
-                    let pass_target = SimpleAssignmentTarget::AssignmentTargetIdentifier(ast.alloc(ast.identifier_reference(SPAN, "_passed")));
-                    let pass_inc = ast.expression_update(SPAN, UpdateOperator::Increment, false, pass_target);
                     let mut try_stmts = ast.vec();
-                    try_stmts.push(ast.statement_expression(SPAN, call));
-                    try_stmts.push(ast.statement_expression(SPAN, pass_inc));
-                    let try_block = ast.block_statement(SPAN, try_stmts);
+                    try_stmts.push(expr_stmt(ast, call));
+                    try_stmts.push(expr_stmt(ast, update_inc(ast, "_passed")));
 
-                    let fail_target = SimpleAssignmentTarget::AssignmentTargetIdentifier(ast.alloc(ast.identifier_reference(SPAN, "_failed")));
-                    let fail_inc = ast.expression_update(SPAN, UpdateOperator::Increment, false, fail_target);
-                    let fail_msg = ast.str(&format!("FAIL: {}", label));
-                    let mut log_args = ast.vec();
-                    log_args.push(Argument::from(ast.expression_string_literal(SPAN, fail_msg, None)));
-                    let log_call = ast.expression_call(SPAN,
-                        Expression::from(ast.member_expression_static(SPAN, ast.expression_identifier(SPAN, "console"), ast.identifier_name(SPAN, "log"), false)),
-                        NONE, log_args, false);
+                    let fail_msg = format!("FAIL: {}", label);
+                    let log_call = console_call(ast, "log", args1(ast, string_lit(ast, &fail_msg)));
                     let mut catch_stmts = ast.vec();
-                    catch_stmts.push(ast.statement_expression(SPAN, fail_inc));
-                    catch_stmts.push(ast.statement_expression(SPAN, log_call));
-                    let catch_body = ast.block_statement(SPAN, catch_stmts);
-                    let err_pattern = ast.binding_pattern_binding_identifier(SPAN, "_e");
-                    let catch_clause = ast.catch_clause(SPAN, Some(ast.catch_parameter(SPAN, err_pattern, NONE)), catch_body);
+                    catch_stmts.push(expr_stmt(ast, update_inc(ast, "_failed")));
+                    catch_stmts.push(expr_stmt(ast, log_call));
 
-                    body.push(ast.statement_try(SPAN, ast.alloc(try_block), Some(ast.alloc(catch_clause)), NONE));
+                    body.push(try_catch(ast, try_stmts, "_e", catch_stmts));
                 }
                 count += 1;
             }
             roca::TestCase::IsErr { args, err_name } => {
                 let call = build_call(ast, args);
                 let err = field_access(ast, call, "err");
-                let name_access = Expression::from(ast.member_expression_static(
-                    SPAN, err, ast.identifier_name(SPAN, "name"), false,
-                ));
-                emit_assert_eq(ast, &label, name_access, ast.expression_string_literal(SPAN, ast.str(err_name), None), body);
+                let name_access = field_access(ast, err, "name");
+                emit_assert_eq(ast, &label, name_access, string_lit(ast, err_name), body);
                 count += 1;
             }
             _ => {}
@@ -89,7 +83,7 @@ pub(crate) fn emit_test_cases<'a>(
 fn build_fn_call<'a>(ast: &AstBuilder<'a>, name: &str, args: &[roca::Expr]) -> Expression<'a> {
     let mut oxc_args = ast.vec();
     for a in args {
-        oxc_args.push(Argument::from(crate::emit::expressions::build_expr(ast, a)));
+        oxc_args.push(arg(crate::emit::expressions::build_expr(ast, a)));
     }
     let n = ast.str(name);
     ast.expression_call(SPAN, ast.expression_identifier(SPAN, n), NONE, oxc_args, false)
@@ -98,20 +92,10 @@ fn build_fn_call<'a>(ast: &AstBuilder<'a>, name: &str, args: &[roca::Expr]) -> E
 fn build_method_call<'a>(ast: &AstBuilder<'a>, struct_name: &str, method_name: &str, args: &[roca::Expr]) -> Expression<'a> {
     let mut oxc_args = ast.vec();
     for a in args {
-        oxc_args.push(Argument::from(crate::emit::expressions::build_expr(ast, a)));
+        oxc_args.push(arg(crate::emit::expressions::build_expr(ast, a)));
     }
-    let s = ast.str(struct_name);
-    let m = ast.str(method_name);
-    let callee = Expression::from(ast.member_expression_static(
-        SPAN, ast.expression_identifier(SPAN, s), ast.identifier_name(SPAN, m), false,
-    ));
+    let callee = static_field(ast, struct_name, ast.str(method_name));
     ast.expression_call(SPAN, callee, NONE, oxc_args, false)
-}
-
-fn field_access<'a>(ast: &AstBuilder<'a>, expr: Expression<'a>, field: &'a str) -> Expression<'a> {
-    Expression::from(ast.member_expression_static(
-        SPAN, expr, ast.identifier_name(SPAN, field), false,
-    ))
 }
 
 fn emit_assert_eq<'a>(
@@ -125,42 +109,27 @@ fn emit_assert_eq<'a>(
     let mut block_stmts = ast.vec();
 
     // Store actual in temp so we can log it on failure
-    let tmp_pattern = ast.binding_pattern_binding_identifier(SPAN, "_actual");
-    let tmp_decl = ast.variable_declarator(SPAN, VariableDeclarationKind::Const, tmp_pattern, NONE, Some(actual), false);
-    let tmp_stmt = ast.variable_declaration(SPAN, VariableDeclarationKind::Const, ast.vec1(tmp_decl), false);
-    block_stmts.push(Statement::from(Declaration::VariableDeclaration(ast.alloc(tmp_stmt))));
+    block_stmts.push(const_decl(ast, "_actual", actual));
 
-    let test = ast.expression_binary(
-        SPAN, ast.expression_identifier(SPAN, "_actual"), BinaryOperator::StrictEquality, expected,
-    );
+    let test = binary(ast, ident(ast, "_actual"), BinaryOperator::StrictEquality, expected);
 
-    let pass_target = SimpleAssignmentTarget::AssignmentTargetIdentifier(ast.alloc(ast.identifier_reference(SPAN, "_passed")));
-    let pass_inc = ast.expression_update(SPAN, UpdateOperator::Increment, false, pass_target);
     let mut then_stmts = ast.vec();
-    then_stmts.push(ast.statement_expression(SPAN, pass_inc));
-    let consequent = Statement::BlockStatement(ast.alloc(ast.block_statement(SPAN, then_stmts)));
+    then_stmts.push(expr_stmt(ast, update_inc(ast, "_passed")));
+    let consequent = block(ast, then_stmts);
 
-    let fail_target = SimpleAssignmentTarget::AssignmentTargetIdentifier(ast.alloc(ast.identifier_reference(SPAN, "_failed")));
-    let fail_inc = ast.expression_update(SPAN, UpdateOperator::Increment, false, fail_target);
-    let fail_msg = ast.str(&format!("FAIL: {}", label));
+    let fail_msg = format!("FAIL: {}", label);
     let mut fail_args = ast.vec();
-    fail_args.push(Argument::from(ast.expression_string_literal(SPAN, fail_msg, None)));
-    fail_args.push(Argument::from(ast.expression_string_literal(SPAN, ast.str("got:"), None)));
-    fail_args.push(Argument::from(ast.expression_identifier(SPAN, "_actual")));
-    let log_call = ast.expression_call(
-        SPAN,
-        Expression::from(ast.member_expression_static(
-            SPAN, ast.expression_identifier(SPAN, "console"), ast.identifier_name(SPAN, "log"), false,
-        )),
-        NONE, fail_args, false,
-    );
+    fail_args.push(arg(string_lit(ast, &fail_msg)));
+    fail_args.push(arg(string_lit(ast, "got:")));
+    fail_args.push(arg(ident(ast, "_actual")));
+    let log_call = console_call(ast, "log", fail_args);
     let mut else_stmts = ast.vec();
-    else_stmts.push(ast.statement_expression(SPAN, fail_inc));
-    else_stmts.push(ast.statement_expression(SPAN, log_call));
-    let alternate = Statement::BlockStatement(ast.alloc(ast.block_statement(SPAN, else_stmts)));
+    else_stmts.push(expr_stmt(ast, update_inc(ast, "_failed")));
+    else_stmts.push(expr_stmt(ast, log_call));
+    let alternate = block(ast, else_stmts);
 
-    block_stmts.push(ast.statement_if(SPAN, test, consequent, Some(alternate)));
-    body.push(Statement::BlockStatement(ast.alloc(ast.block_statement(SPAN, block_stmts))));
+    block_stmts.push(if_stmt(ast, test, consequent, Some(alternate)));
+    body.push(block(ast, block_stmts));
 }
 
 fn emit_assert_null<'a>(
@@ -169,5 +138,5 @@ fn emit_assert_null<'a>(
     actual: Expression<'a>,
     body: &mut oxc_allocator::Vec<'a, Statement<'a>>,
 ) {
-    emit_assert_eq(ast, label, actual, ast.expression_null_literal(SPAN), body);
+    emit_assert_eq(ast, label, actual, null_lit(ast), body);
 }

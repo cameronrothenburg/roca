@@ -1,10 +1,15 @@
 use crate::ast as roca;
 use oxc_ast::ast::*;
-use oxc_ast::ast::NumberBase;
 use oxc_ast::NONE;
 use oxc_ast::AstBuilder;
 use oxc_span::SPAN;
 
+use super::ast_helpers::{
+    ident, string_lit, number_lit, bool_lit, null_lit,
+    static_field, unary_not, binary,
+    prop, object_expr, param,
+    function_body, expr_stmt, arg,
+};
 use super::helpers::{make_error_simple, make_result, null};
 
 /// Check if any match arm references err.X
@@ -42,49 +47,35 @@ fn build_match_arm_value<'a>(ast: &AstBuilder<'a>, expr: &roca::Expr, mixed: boo
 
 pub(crate) fn build_expr<'a>(ast: &AstBuilder<'a>, expr: &roca::Expr) -> Expression<'a> {
     match expr {
-        roca::Expr::String(s) => {
-            let s = ast.str(s);
-            ast.expression_string_literal(SPAN, s, None)
-        }
-        roca::Expr::Number(n) => {
-            ast.expression_numeric_literal(SPAN, *n, None, NumberBase::Decimal)
-        }
-        roca::Expr::Bool(b) => {
-            ast.expression_boolean_literal(SPAN, *b)
-        }
+        roca::Expr::String(s) => string_lit(ast, s),
+        roca::Expr::Number(n) => number_lit(ast, *n),
+        roca::Expr::Bool(b) => bool_lit(ast, *b),
         roca::Expr::Ident(name) => {
             if name == "Ok" {
-                ast.expression_null_literal(SPAN)
+                null_lit(ast)
             } else {
-                let n = ast.str(name);
-                ast.expression_identifier(SPAN, n)
+                ident(ast, name)
             }
         }
         roca::Expr::Not(inner) => {
             let expr = build_expr(ast, inner);
-            ast.expression_unary(SPAN, UnaryOperator::LogicalNot, expr)
+            unary_not(ast, expr)
         }
         roca::Expr::Closure { params, body } => {
             let mut param_list = ast.vec();
             for p in params {
-                let pn = ast.str(p);
-                let pattern = ast.binding_pattern_binding_identifier(SPAN, pn);
-                param_list.push(ast.plain_formal_parameter(SPAN, pattern));
+                param_list.push(param(ast, p));
             }
             let formal_params = ast.formal_parameters(SPAN, FormalParameterKind::ArrowFormalParameters, param_list, NONE);
             let body_expr = build_expr(ast, body);
-            let body_stmt = ast.statement_expression(SPAN, body_expr);
+            let body_stmt = expr_stmt(ast, body_expr);
             let mut stmts = ast.vec();
             stmts.push(body_stmt);
-            let fn_body = ast.function_body(SPAN, ast.vec(), stmts);
+            let fn_body = function_body(ast, stmts);
             ast.expression_arrow_function(SPAN, true, false, NONE, formal_params, NONE, fn_body)
         }
-        roca::Expr::Null => {
-            ast.expression_null_literal(SPAN)
-        }
-        roca::Expr::SelfRef => {
-            ast.expression_this(SPAN)
-        }
+        roca::Expr::Null => null_lit(ast),
+        roca::Expr::SelfRef => ast.expression_this(SPAN),
         roca::Expr::BinOp { left, op, right } => {
             let l = build_expr(ast, left);
             let r = build_expr(ast, right);
@@ -105,7 +96,7 @@ pub(crate) fn build_expr<'a>(ast: &AstBuilder<'a>, expr: &roca::Expr) -> Express
                         roca::BinOp::Gte => BinaryOperator::GreaterEqualThan,
                         _ => unreachable!(),
                     };
-                    ast.expression_binary(SPAN, l, js_op, r)
+                    binary(ast, l, js_op, r)
                 }
             }
         }
@@ -119,13 +110,10 @@ pub(crate) fn build_expr<'a>(ast: &AstBuilder<'a>, expr: &roca::Expr) -> Express
                     _ => None,
                 };
                 if let Some(method) = console_method {
-                    let callee = Expression::from(ast.member_expression_static(
-                        SPAN, ast.expression_identifier(SPAN, "console"),
-                        ast.identifier_name(SPAN, method), false,
-                    ));
+                    let callee = static_field(ast, "console", method);
                     let mut oxc_args = ast.vec();
                     for a in args {
-                        oxc_args.push(Argument::from(build_expr(ast, a)));
+                        oxc_args.push(arg(build_expr(ast, a)));
                     }
                     return ast.expression_call(SPAN, callee, NONE, oxc_args, false);
                 }
@@ -133,20 +121,18 @@ pub(crate) fn build_expr<'a>(ast: &AstBuilder<'a>, expr: &roca::Expr) -> Express
             // Uppercase calls: primitives = type conversion (no new), structs = constructor (new)
             if let roca::Expr::Ident(name) = target.as_ref() {
                 if name.chars().next().map_or(false, |c| c.is_uppercase()) {
-                    let n = ast.str(name);
-                    let callee = ast.expression_identifier(SPAN, n);
+                    let callee = ident(ast, name);
                     let mut oxc_args = ast.vec();
                     for a in args {
-                        oxc_args.push(Argument::from(build_expr(ast, a)));
+                        oxc_args.push(arg(build_expr(ast, a)));
                     }
                     // Primitive conversions: String(x), Number(x), Bool(x) — no new
                     if matches!(name.as_str(), "String" | "Number") {
                         return ast.expression_call(SPAN, callee, NONE, oxc_args, false);
                     }
-                    // Bool → Boolean in JS
+                    // Bool -> Boolean in JS
                     if name == "Bool" {
-                        let js_name = ast.str("Boolean");
-                        let js_callee = ast.expression_identifier(SPAN, js_name);
+                        let js_callee = ident(ast, "Boolean");
                         return ast.expression_call(SPAN, js_callee, NONE, oxc_args, false);
                     }
                     return ast.expression_new(SPAN, callee, NONE, oxc_args);
@@ -155,7 +141,7 @@ pub(crate) fn build_expr<'a>(ast: &AstBuilder<'a>, expr: &roca::Expr) -> Express
             let callee = build_expr(ast, target);
             let mut oxc_args = ast.vec();
             for a in args {
-                oxc_args.push(Argument::from(build_expr(ast, a)));
+                oxc_args.push(arg(build_expr(ast, a)));
             }
             ast.expression_call(SPAN, callee, NONE, oxc_args, false)
         }
@@ -165,24 +151,17 @@ pub(crate) fn build_expr<'a>(ast: &AstBuilder<'a>, expr: &roca::Expr) -> Express
             Expression::from(ast.member_expression_static(SPAN, obj, ast.identifier_name(SPAN, f), false))
         }
         roca::Expr::StructLit { name, fields } => {
-            let mut props = ast.vec();
+            let mut props_list = ast.vec();
             for (key, val) in fields {
-                let k = ast.str(key);
                 let value = build_expr(ast, val);
-                let prop = ast.object_property_kind_object_property(
-                    SPAN, PropertyKind::Init,
-                    PropertyKey::StaticIdentifier(ast.alloc(ast.identifier_name(SPAN, k))),
-                    value, false, false, false,
-                );
-                props.push(prop);
+                props_list.push(prop(ast, key, value));
             }
-            let obj = ast.expression_object(SPAN, props);
+            let obj = object_expr(ast, props_list);
             // new Name({ fields })
-            let n = ast.str(name);
-            let callee = ast.expression_identifier(SPAN, n);
-            let mut args = ast.vec();
-            args.push(Argument::from(obj));
-            ast.expression_new(SPAN, callee, NONE, args)
+            let callee = ident(ast, name);
+            let mut call_args = ast.vec();
+            call_args.push(arg(obj));
+            ast.expression_new(SPAN, callee, NONE, call_args)
         }
         roca::Expr::Array(elements) => {
             let mut items = ast.vec();
@@ -230,7 +209,6 @@ pub(crate) fn build_expr<'a>(ast: &AstBuilder<'a>, expr: &roca::Expr) -> Express
         }
         roca::Expr::Match { value, arms } => {
             // Emit as nested ternaries: val === p1 ? r1 : val === p2 ? r2 : default
-            // Build from the end (default first, then wrap)
             let mixed = match_has_err_arms(arms);
             let mut result: Option<Expression<'a>> = None;
 
@@ -244,14 +222,14 @@ pub(crate) fn build_expr<'a>(ast: &AstBuilder<'a>, expr: &roca::Expr) -> Express
                     Some(pattern) => {
                         let val = build_expr(ast, value);
                         let pat = build_expr(ast, pattern);
-                        let test = ast.expression_binary(SPAN, val, BinaryOperator::StrictEquality, pat);
-                        let alternate = result.unwrap_or_else(|| ast.expression_identifier(SPAN, "undefined"));
+                        let test = binary(ast, val, BinaryOperator::StrictEquality, pat);
+                        let alternate = result.unwrap_or_else(|| ident(ast, "undefined"));
                         result = Some(ast.expression_conditional(SPAN, test, arm_value, alternate));
                     }
                 }
             }
 
-            result.unwrap_or_else(|| ast.expression_identifier(SPAN, "undefined"))
+            result.unwrap_or_else(|| ident(ast, "undefined"))
         }
         roca::Expr::Await(inner) => {
             let expr = build_expr(ast, inner);

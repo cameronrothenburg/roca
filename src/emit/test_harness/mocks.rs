@@ -1,9 +1,12 @@
 use crate::ast as roca;
 use oxc_ast::ast::*;
-use oxc_ast::NONE;
 use oxc_ast::AstBuilder;
 use oxc_span::SPAN;
 
+use crate::emit::ast_helpers::{
+    null_lit, prop, prop_key, object_expr, const_decl,
+    return_stmt, formal_params, function_body, function_expr,
+};
 use super::values::{emit_expr_js, mock_value_for_type};
 
 /// Emit a mock object for a contract with a mock block.
@@ -29,43 +32,32 @@ pub(crate) fn emit_mock_object<'a>(
 
         let return_val = if method_returns_err {
             // Extern mocks with errors: wrap in { value, err: null } — crash wrappers expect result objects
-            let null_expr = ast.expression_null_literal(SPAN);
-            let mut props = ast.vec();
-            let val_key = PropertyKey::StaticIdentifier(ast.alloc(ast.identifier_name(SPAN, "value")));
-            props.push(ast.object_property_kind_object_property(SPAN, PropertyKind::Init, val_key, value, false, false, false));
-            let err_key = PropertyKey::StaticIdentifier(ast.alloc(ast.identifier_name(SPAN, "err")));
-            props.push(ast.object_property_kind_object_property(SPAN, PropertyKind::Init, err_key, null_expr, false, false, false));
-            ast.expression_object(SPAN, props)
+            let mut result_props = ast.vec();
+            result_props.push(prop(ast, "value", value));
+            result_props.push(prop(ast, "err", null_lit(ast)));
+            object_expr(ast, result_props)
         } else {
             value
         };
 
         let mut stmts = ast.vec();
-        stmts.push(ast.statement_return(SPAN, Some(return_val)));
-        let fn_body = ast.function_body(SPAN, ast.vec(), stmts);
-        let formal_params = ast.formal_parameters(SPAN, FormalParameterKind::FormalParameter, ast.vec(), NONE);
-        let func = ast.function(
-            SPAN, FunctionType::FunctionExpression, None, false, false, false,
-            NONE, NONE, formal_params, NONE, Some(fn_body),
-        );
+        stmts.push(return_stmt(ast, return_val));
+        let fn_body = function_body(ast, stmts);
+        let fn_params = formal_params(ast, ast.vec());
+        let func_expr = function_expr(ast, fn_params, fn_body, false);
 
-        let method_name = ast.str(&entry.method);
-        let key = PropertyKey::StaticIdentifier(ast.alloc(ast.identifier_name(SPAN, method_name)));
+        let key = prop_key(ast, &entry.method);
         let method = ast.object_property_kind_object_property(
             SPAN, PropertyKind::Init, key,
-            Expression::FunctionExpression(ast.alloc(func)),
+            func_expr,
             false, false, false,
         );
         props.push(method);
     }
 
-    let obj = ast.expression_object(SPAN, props);
+    let obj = object_expr(ast, props);
     let var_name = format!("__mock_{}", contract_name);
-    let n = ast.str(&var_name);
-    let pattern = ast.binding_pattern_binding_identifier(SPAN, n);
-    let declarator = ast.variable_declarator(SPAN, VariableDeclarationKind::Const, pattern, NONE, Some(obj), false);
-    let decl = ast.variable_declaration(SPAN, VariableDeclarationKind::Const, ast.vec1(declarator), false);
-    body.push(Statement::from(Declaration::VariableDeclaration(ast.alloc(decl))));
+    body.push(const_decl(ast, &var_name, obj));
 }
 
 /// Generate JS code that patches struct/extern fn mocks for test isolation.

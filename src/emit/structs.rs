@@ -4,6 +4,7 @@ use oxc_ast::NONE;
 use oxc_ast::AstBuilder;
 use oxc_span::SPAN;
 
+use super::ast_helpers::{param, formal_params, function_body, prop_key};
 use super::statements::build_stmt;
 
 /// Build a struct as a class declaration, including satisfies methods
@@ -46,11 +47,9 @@ fn build_constructor<'a>(
     fields: &[roca::Field],
     elements: &mut oxc_allocator::Vec<'a, ClassElement<'a>>,
 ) {
-    let param_name = ast.str("init");
-    let pattern = ast.binding_pattern_binding_identifier(SPAN, param_name);
     let mut ctor_params = ast.vec();
-    ctor_params.push(ast.plain_formal_parameter(SPAN, pattern));
-    let ctor_formal = ast.formal_parameters(SPAN, FormalParameterKind::FormalParameter, ctor_params, NONE);
+    ctor_params.push(param(ast, "init"));
+    let ctor_formal = formal_params(ast, ctor_params);
 
     let mut stmts = ast.vec();
     for field in fields {
@@ -70,12 +69,12 @@ fn build_constructor<'a>(
         stmts.push(ast.statement_expression(SPAN, assign));
     }
 
-    let body = ast.function_body(SPAN, ast.vec(), stmts);
+    let body = function_body(ast, stmts);
     let func = ast.function(
         SPAN, FunctionType::FunctionExpression, None, false, false, false,
         NONE, NONE, ctor_formal, NONE, Some(body),
     );
-    let ctor_key = PropertyKey::StaticIdentifier(ast.alloc(ast.identifier_name(SPAN, "constructor")));
+    let ctor_key = prop_key(ast, "constructor");
     let ctor = ast.class_element_method_definition(
         SPAN, MethodDefinitionType::MethodDefinition, ast.vec(),
         ctor_key, func, MethodDefinitionKind::Constructor,
@@ -93,11 +92,9 @@ fn build_class_method<'a>(
 ) {
     let mut params_list = ast.vec();
     for p in &method.params {
-        let pn = ast.str(&p.name);
-        let pattern = ast.binding_pattern_binding_identifier(SPAN, pn);
-        params_list.push(ast.plain_formal_parameter(SPAN, pattern));
+        params_list.push(param(ast, &p.name));
     }
-    let formal_params = ast.formal_parameters(SPAN, FormalParameterKind::FormalParameter, params_list, NONE);
+    let method_params = formal_params(ast, params_list);
 
     let mut stmts = ast.vec();
     for s in &method.body {
@@ -105,7 +102,7 @@ fn build_class_method<'a>(
             stmts.push(emitted);
         }
     }
-    let body = ast.function_body(SPAN, ast.vec(), stmts);
+    let body = function_body(ast, stmts);
 
     let uses_self = body_uses_self(&method.body);
     let is_static = !force_instance && !uses_self && !method.params.iter().any(|p| p.name == "self");
@@ -113,11 +110,10 @@ fn build_class_method<'a>(
 
     let func = ast.function(
         SPAN, FunctionType::FunctionExpression, None, false, is_async, false,
-        NONE, NONE, formal_params, NONE, Some(body),
+        NONE, NONE, method_params, NONE, Some(body),
     );
 
-    let method_name = ast.str(&method.name);
-    let key = PropertyKey::StaticIdentifier(ast.alloc(ast.identifier_name(SPAN, method_name)));
+    let key = prop_key(ast, &method.name);
     let method_def = ast.class_element_method_definition(
         SPAN, MethodDefinitionType::MethodDefinition, ast.vec(),
         key, func, MethodDefinitionKind::Method,
