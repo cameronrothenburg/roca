@@ -1,5 +1,6 @@
 //! Generate Roca extern contracts from TypeScript .d.ts declaration files.
 
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use oxc_allocator::Allocator;
 use oxc_parser::Parser;
@@ -17,6 +18,7 @@ struct TsMethod {
 struct TsInterface {
     name: String,
     methods: Vec<TsMethod>,
+    fields: Vec<(String, String)>, // (name, roca_type)
 }
 
 pub fn generate(dts_path: &Path) -> Result<Vec<(String, String)>, String> {
@@ -34,13 +36,16 @@ pub fn generate(dts_path: &Path) -> Result<Vec<(String, String)>, String> {
 
     let interfaces = extract_interfaces(&result.program);
 
+    // Build set of all known interface names for cross-referencing
+    let known_types: HashSet<String> = interfaces.iter().map(|i| i.name.clone()).collect();
+
     let mut output = Vec::new();
     for iface in &interfaces {
-        if iface.methods.is_empty() {
+        if iface.methods.is_empty() && iface.fields.is_empty() {
             continue;
         }
         let filename = to_snake_case(&iface.name);
-        let roca = generate_contract(iface);
+        let roca = generate_contract(iface, &known_types);
         output.push((filename, roca));
     }
 
@@ -49,42 +54,55 @@ pub fn generate(dts_path: &Path) -> Result<Vec<(String, String)>, String> {
 
 fn extract_interfaces(program: &Program) -> Vec<TsInterface> {
     let mut interfaces = Vec::new();
-    let mut seen_methods: std::collections::HashMap<String, std::collections::HashSet<String>> = std::collections::HashMap::new();
+    let mut seen_methods: HashMap<String, HashSet<String>> = HashMap::new();
 
     for stmt in &program.body {
         if let Statement::TSInterfaceDeclaration(decl) = stmt {
             let iface_name = decl.id.name.to_string();
             let method_set = seen_methods.entry(iface_name.clone()).or_default();
             let mut methods = Vec::new();
+            let mut fields = Vec::new();
 
             for sig in &decl.body.body {
-                if let TSSignature::TSMethodSignature(method) = sig {
-                    if let Some(method_name) = method.key.name() {
-                        let name_str = method_name.to_string();
-                        // Skip overloaded methods — take only the first signature
-                        if method_set.contains(&name_str) {
-                            continue;
+                match sig {
+                    TSSignature::TSMethodSignature(method) => {
+                        if let Some(method_name) = method.key.name() {
+                            let name_str = method_name.to_string();
+                            if method_set.contains(&name_str) {
+                                continue;
+                            }
+                            method_set.insert(name_str.clone());
+
+                            let params = extract_params(method);
+                            let (return_type, is_async, is_nullable) = match &method.return_type {
+                                Some(ann) => extract_return_type(&ann.type_annotation),
+                                None => ("Ok".to_string(), false, false),
+                            };
+
+                            methods.push(TsMethod {
+                                name: name_str,
+                                params,
+                                return_type,
+                                is_async,
+                                is_nullable,
+                            });
                         }
-                        method_set.insert(name_str.clone());
-
-                        let params = extract_params(method);
-                        let (return_type, is_async, is_nullable) = match &method.return_type {
-                            Some(ann) => extract_return_type(&ann.type_annotation),
-                            None => ("Ok".to_string(), false, false),
-                        };
-
-                        methods.push(TsMethod {
-                            name: name_str,
-                            params,
-                            return_type,
-                            is_async,
-                            is_nullable,
-                        });
                     }
+                    TSSignature::TSPropertySignature(prop) => {
+                        if let Some(prop_name) = prop.key.name() {
+                            if let Some(ann) = &prop.type_annotation {
+                                let roca_type = ts_type_to_roca(&ann.type_annotation);
+                                if roca_type != "__skip__" {
+                                    fields.push((prop_name.to_string(), roca_type));
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
                 }
             }
 
-            interfaces.push(TsInterface { name: iface_name, methods });
+            interfaces.push(TsInterface { name: iface_name, methods, fields });
         }
     }
 
@@ -164,6 +182,11 @@ fn ts_type_to_roca(ts_type: &TSType) -> String {
             let name = type_ref_name(ref_type);
             map_named_type(&name)
         }
+        TSType::TSArrayType(arr) => {
+            let inner = ts_type_to_roca(&arr.element_type);
+            if inner == "__skip__" { return "__skip__".to_string(); }
+            format!("Array<{}>", inner)
+        }
         TSType::TSUnionType(union) => {
             let non_null: Vec<&TSType> = union.types.iter()
                 .filter(|t| !matches!(t, TSType::TSNullKeyword(_) | TSType::TSUndefinedKeyword(_)))
@@ -189,16 +212,43 @@ fn map_named_type(name: &str) -> String {
     match name {
         "string" => "String".to_string(),
         "number" => "Number".to_string(),
-        "boolean" => "Bool".to_string(),
+        "boolean" | "bool" => "Bool".to_string(),
         "void" => "Ok".to_string(),
-        "ArrayBuffer" | "Uint8Array" | "BufferSource" => "Bytes".to_string(),
-        "Response" | "Request" | "object" | "Object" => "String".to_string(),
+        "ArrayBuffer" | "Uint8Array" | "BufferSource" | "ArrayBufferView" => "Bytes".to_string(),
         "ReadableStream" | "WritableStream" => "Bytes".to_string(),
-        // Generic type params that extend string/number
-        "Key" | "T" | "U" | "V" => "String".to_string(),
-        "ExpectedValue" => "String".to_string(),
-        "Metadata" => "String".to_string(),
+        "Response" | "Request" | "object" | "Object" | "any" | "unknown" => "String".to_string(),
+        // Generic type params — resolve to base types
+        "Key" | "T" | "U" | "V" | "ExpectedValue" | "Metadata" | "Body" => "String".to_string(),
+        "Iterable" | "Iterator" => "Array<String>".to_string(),
+        "Map" => "Map<String>".to_string(),
         other => other.to_string(),
+    }
+}
+
+/// Resolve a type name: if it's a known interface, keep it; otherwise map to a primitive
+fn resolve_type(name: &str, known: &HashSet<String>) -> String {
+    let mapped = map_named_type(name);
+    // If map_named_type returned it unchanged, check if it's a known interface
+    if mapped == name {
+        if known.contains(name) {
+            return name.to_string();
+        }
+        // Unknown type — fall back to String
+        return "String".to_string();
+    }
+    mapped
+}
+
+/// Resolve all type references in a method's return type and params
+fn resolve_method_types(method: &TsMethod, known: &HashSet<String>) -> TsMethod {
+    TsMethod {
+        name: method.name.clone(),
+        params: method.params.iter()
+            .map(|(n, t)| (n.clone(), resolve_type(t, known)))
+            .collect(),
+        return_type: resolve_type(&method.return_type, known),
+        is_async: method.is_async,
+        is_nullable: method.is_nullable,
     }
 }
 
@@ -219,53 +269,107 @@ fn mock_value(roca_type: &str, is_nullable: bool) -> String {
         "Bool" => "true".to_string(),
         "Ok" => "Ok".to_string(),
         "Bytes" => "Bytes".to_string(),
-        _ => "\"mock\"".to_string(),
+        t if t.starts_with("Array") => "\"mock\"".to_string(),
+        t if t.starts_with("Map") => "\"mock\"".to_string(),
+        // Known contract — use contract name as mock (self-referencing)
+        other => format!("{}", other),
     }
 }
 
-fn generate_contract(iface: &TsInterface) -> String {
+fn generate_contract(iface: &TsInterface, known: &HashSet<String>) -> String {
     let mut out = String::new();
     let snake = to_snake_case(&iface.name);
+
+    // Collect imports needed
+    let mut imports: HashSet<String> = HashSet::new();
+    for method in &iface.methods {
+        let resolved = resolve_method_types(method, known);
+        collect_type_refs(&resolved.return_type, known, &mut imports);
+        for (_, t) in &resolved.params {
+            collect_type_refs(t, known, &mut imports);
+        }
+    }
+    for (_, t) in &iface.fields {
+        let resolved = resolve_type(t, known);
+        collect_type_refs(&resolved, known, &mut imports);
+    }
+    imports.remove(&iface.name); // don't self-import
+
+    // Header
     out.push_str(&format!("/**\n * Generated from {} — edit as needed.\n * Import with: import {{ {} }} from \"./{}.roca\"\n */\n", iface.name, iface.name, snake));
+
+    // Imports
+    for imp in &imports {
+        let imp_snake = to_snake_case(imp);
+        out.push_str(&format!("import {{ {} }} from \"./{}.roca\"\n", imp, imp_snake));
+    }
+    if !imports.is_empty() {
+        out.push('\n');
+    }
+
     out.push_str(&format!("pub extern contract {} {{\n", iface.name));
 
+    // Fields
+    for (name, ty) in &iface.fields {
+        let resolved = resolve_type(ty, known);
+        out.push_str(&format!("    {}: {}\n", name, resolved));
+    }
+
+    // Methods
     for method in &iface.methods {
-        let params: Vec<String> = method.params.iter()
+        let resolved = resolve_method_types(method, known);
+        let params: Vec<String> = resolved.params.iter()
             .map(|(name, ty)| format!("{}: {}", name, ty))
             .collect();
 
-        let return_type = if method.is_nullable {
-            format!("Optional<{}>", method.return_type)
+        let return_type = if resolved.is_nullable {
+            format!("Optional<{}>", resolved.return_type)
         } else {
-            method.return_type.clone()
+            resolved.return_type.clone()
         };
 
-        let needs_err = method.is_async || method.is_nullable;
+        let needs_err = resolved.is_async || resolved.is_nullable;
 
-        out.push_str(&format!("    /// {}\n", method.name));
+        out.push_str(&format!("    /// {}\n", resolved.name));
 
         if needs_err {
-            out.push_str(&format!("    {}({}) -> {}, err {{\n", method.name, params.join(", "), return_type));
-            if method.is_async {
+            out.push_str(&format!("    {}({}) -> {}, err {{\n", resolved.name, params.join(", "), return_type));
+            if resolved.is_async {
                 out.push_str(&format!("        err {} = \"{} failed\"\n",
-                    infer_error_name(&method.name), method.name));
+                    infer_error_name(&resolved.name), resolved.name));
             }
-            if method.is_nullable && infer_error_name(&method.name) != "not_found" {
+            if resolved.is_nullable && infer_error_name(&resolved.name) != "not_found" {
                 out.push_str("        err not_found = \"not found\"\n");
             }
             out.push_str("    }\n");
         } else {
-            out.push_str(&format!("    {}({}) -> {}\n", method.name, params.join(", "), return_type));
+            out.push_str(&format!("    {}({}) -> {}\n", resolved.name, params.join(", "), return_type));
         }
     }
 
+    // Mock block
     out.push_str("    mock {\n");
     for method in &iface.methods {
-        let val = mock_value(&method.return_type, method.is_nullable);
-        out.push_str(&format!("        {} -> {}\n", method.name, val));
+        let resolved = resolve_method_types(method, known);
+        let val = mock_value(&resolved.return_type, resolved.is_nullable);
+        out.push_str(&format!("        {} -> {}\n", resolved.name, val));
     }
     out.push_str("    }\n}\n");
     out
+}
+
+/// Collect type names that reference known interfaces (for imports)
+fn collect_type_refs(ty: &str, known: &HashSet<String>, imports: &mut HashSet<String>) {
+    // Strip Optional< > wrapper
+    let inner = ty.strip_prefix("Optional<").and_then(|s| s.strip_suffix('>')).unwrap_or(ty);
+    // Strip Array< > wrapper
+    let inner = inner.strip_prefix("Array<").and_then(|s| s.strip_suffix('>')).unwrap_or(inner);
+    // Strip Map< > wrapper
+    let inner = inner.strip_prefix("Map<").and_then(|s| s.strip_suffix('>')).unwrap_or(inner);
+
+    if known.contains(inner) {
+        imports.insert(inner.to_string());
+    }
 }
 
 fn to_snake_case(name: &str) -> String {
