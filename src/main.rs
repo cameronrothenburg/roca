@@ -121,6 +121,36 @@ fn main() {
                 .expect("failed to create tokio runtime")
                 .block_on(lsp::run());
         }
+        "gen-extern" => {
+            if args.len() < 3 {
+                eprintln!("usage: roca gen-extern <file.d.ts> [--out <dir>]");
+                std::process::exit(1);
+            }
+            let dts_path = std::path::Path::new(&args[2]);
+            let out_dir = if args.len() >= 5 && args[3] == "--out" {
+                std::path::PathBuf::from(&args[4])
+            } else {
+                dts_path.parent().unwrap_or(std::path::Path::new(".")).to_path_buf()
+            };
+
+            match cli::gen_extern::generate(dts_path) {
+                Ok(files) => {
+                    let _ = fs::create_dir_all(&out_dir);
+                    for (name, content) in &files {
+                        let path = out_dir.join(format!("{}.roca", name));
+                        fs::write(&path, content).unwrap_or_else(|e| {
+                            eprintln!("error writing {}: {}", path.display(), e);
+                        });
+                        println!("✓ {}", path.display());
+                    }
+                    println!("\n{} extern contract(s) generated", files.len());
+                }
+                Err(e) => {
+                    eprintln!("{}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
         "man" => {
             print_manual();
         }
