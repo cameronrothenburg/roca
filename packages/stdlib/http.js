@@ -28,24 +28,18 @@ const Http = (() => {
 		};
 	}
 
+	async function request(url, opts) {
+		try {
+			const resp = await _fetch(url, opts);
+			return { value: wrapResponse(resp), err: null };
+		} catch (e) {
+			const name = e.name === "AbortError" ? "abort" : "network";
+			return { value: null, err: { name, message: e.message } };
+		}
+	}
+
 	return {
-		async fetch(url) {
-			try {
-				const resp = await _fetch(url);
-				return { value: wrapResponse(resp), err: null };
-			} catch (e) {
-				const name = e.name === "AbortError" ? "abort" : "network";
-				return { value: null, err: { name, message: e.message } };
-			}
-		},
-		async post(url, body) {
-			try {
-				const resp = await _fetch(url, { method: "POST", body });
-				return { value: wrapResponse(resp), err: null };
-			} catch (e) {
-				const name = e.name === "AbortError" ? "abort" : "network";
-				return { value: null, err: { name, message: e.message } };
-			}
-		},
+		async fetch(url) { return request(url); },
+		async post(url, body) { return request(url, { method: "POST", body }); },
 	};
 })();

@@ -55,8 +55,7 @@ fn op_url_parse(#[string] raw: &str) -> String {
 #[string]
 fn op_sha256(#[string] data: &str) -> String {
     use sha2::{Sha256, Digest};
-    let result = Sha256::digest(data.as_bytes());
-    result.iter().map(|b| format!("{:02x}", b)).collect()
+    hex_encode(&Sha256::digest(data.as_bytes()))
 }
 
 /// SHA-512 hash, returns hex string.
@@ -64,8 +63,16 @@ fn op_sha256(#[string] data: &str) -> String {
 #[string]
 fn op_sha512(#[string] data: &str) -> String {
     use sha2::{Sha512, Digest};
-    let result = Sha512::digest(data.as_bytes());
-    result.iter().map(|b| format!("{:02x}", b)).collect()
+    hex_encode(&Sha512::digest(data.as_bytes()))
+}
+
+fn hex_encode(bytes: &[u8]) -> String {
+    use std::fmt::Write;
+    let mut hex = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        let _ = write!(hex, "{:02x}", b);
+    }
+    hex
 }
 
 /// Generate a v4 UUID.

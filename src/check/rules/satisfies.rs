@@ -56,13 +56,21 @@ mod tests {
 /// Substitute generic type params in a type reference.
 /// e.g. with map {T → User}, TypeRef::Named("T") becomes TypeRef::Named("User")
 fn substitute_type(ty: &crate::ast::TypeRef, map: &std::collections::HashMap<String, &crate::ast::TypeRef>) -> crate::ast::TypeRef {
+    use crate::ast::TypeRef;
     match ty {
-        crate::ast::TypeRef::Named(name) => {
+        TypeRef::Named(name) => {
             if let Some(replacement) = map.get(name) {
                 (*replacement).clone()
             } else {
                 ty.clone()
             }
+        }
+        TypeRef::Generic(name, args) => {
+            let subst_args: Vec<TypeRef> = args.iter().map(|a| substitute_type(a, map)).collect();
+            TypeRef::Generic(name.clone(), subst_args)
+        }
+        TypeRef::Nullable(inner) => {
+            TypeRef::Nullable(Box::new(substitute_type(inner, map)))
         }
         _ => ty.clone(),
     }
