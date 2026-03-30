@@ -433,6 +433,9 @@ fn has_interpolation(s: &str) -> bool {
             if !found_close { continue; }
             let trimmed = content.trim();
             if trimmed.is_empty() { continue; }
+            // Must start with a letter or underscore (not a digit)
+            let first = trimmed.chars().next().unwrap();
+            if !first.is_alphabetic() && first != '_' { continue; }
             // Only valid interpolation if content is an identifier path or method call
             // Allows: {name}, {user.age}, {value.toString()}, {item.to_log()}
             if trimmed.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '.' || c == '(' || c == ')') {
@@ -605,6 +608,14 @@ mod tests {
         let expr = p.parse_expr().unwrap();
         assert!(matches!(expr, Expr::String(_)),
             "braces with spaces around content should not interpolate, got: {:?}", expr);
+    }
+
+    #[test]
+    fn numeric_braces_not_interpolated() {
+        let mut p = Parser::new(tokenize(r#""{123}""#));
+        let expr = p.parse_expr().unwrap();
+        assert!(matches!(expr, Expr::String(_)),
+            "numeric braces should not be interpolated, got: {:?}", expr);
     }
 
     #[test]

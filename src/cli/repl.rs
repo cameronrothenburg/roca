@@ -68,16 +68,7 @@ pub fn run_repl() {
 }
 
 fn eval_expr(input: &str, defs: &[String]) {
-    // Emit definitions as JS
     let def_src = defs.join("\n");
-    let def_js = if def_src.is_empty() {
-        String::new()
-    } else {
-        match crate::parse::try_parse(&def_src) {
-            Ok(f) => crate::emit::emit(&f).replace("export ", ""),
-            Err(_) => String::new(),
-        }
-    };
 
     // Try as expression — wrap in a function, capture result
     let expr_src = format!(
@@ -93,13 +84,14 @@ fn eval_expr(input: &str, defs: &[String]) {
             for e in &real { println!("  {}", e); }
             return;
         }
-        // Emit definitions, then extract expression JS and log it
-        let mini_src = format!("fn __e() -> Ok {{ const __v = {} return Ok test {{}} }}", input);
-        if let Ok(f) = crate::parse::try_parse(&mini_src) {
-            let emitted = crate::emit::emit(&f).replace("export ", "");
-            // Extract body between first { and last }
-            if let (Some(start), Some(end)) = (emitted.find('{'), emitted.rfind('}')) {
-                let body = emitted[start+1..end].trim().replace("return null;", "");
+        // Emit everything, then extract the __repl__ body for the expression
+        let emitted = crate::emit::emit(&file).replace("export ", "");
+        // Find __repl__ function and extract its body
+        if let Some(fn_start) = emitted.find("function __repl__()") {
+            let rest = &emitted[fn_start..];
+            if let (Some(start), Some(end)) = (rest.find('{'), rest.rfind('}')) {
+                let body = rest[start+1..end].trim().replace("return null;", "");
+                let def_js = emitted[..fn_start].trim();
                 let run_js = format!(
                     "{}\n{}\nconst __r = __v;\nconsole.log(typeof __r === 'object' && __r !== null ? JSON.stringify(__r) : __r);",
                     def_js, body
