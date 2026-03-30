@@ -27,6 +27,7 @@ fn all_rules() -> Vec<Box<dyn Rule>> {
         Box::new(rules::unhandled::UnhandledErrorsRule),
         Box::new(rules::manual_err::NoManualErrRule),
         Box::new(rules::docs::DocsRule),
+        Box::new(rules::fn_errors::FnErrorsRule),
     ]
 }
 

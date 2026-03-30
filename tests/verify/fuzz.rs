@@ -1,4 +1,4 @@
-use super::harness::{run, run_with_tests};
+use super::harness::run_with_tests;
 
 #[test]
 fn fuzz_tests_generated_for_pub_functions() {

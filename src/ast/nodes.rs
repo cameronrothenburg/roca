@@ -170,6 +170,7 @@ pub struct StructDef {
 pub struct SatisfiesDef {
     pub struct_name: String,
     pub contract_name: String,
+    pub type_args: Vec<TypeRef>,
     pub methods: Vec<FnDef>,
 }
 

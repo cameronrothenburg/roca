@@ -15,16 +15,15 @@ fn extern_contract_type_checks_fields() {
         }
 
         pub fn get_status(url: String) -> Number {
-            let resp, err = wait fetchData(url)
-            if err { return 0 }
+            const resp = wait fetchData(url)
             return resp.status
-            crash { fetchData -> halt }
+            crash { fetchData -> fallback(fn(e) -> 0) }
             test { self("http://example.com") == 200 }
         }
         "#,
         r#"
-            // Wire up the extern
-            globalThis.fetchData = async (url) => ({ status: 200, ok: true });
+            // Wire up the extern — must return {value, err} tuple
+            globalThis.fetchData = async (url) => ({ value: { status: 200, ok: true }, err: null });
             const result = await get_status("http://test.com");
             console.log(result);
         "#,
@@ -69,9 +68,9 @@ fn extern_contract_method_call() {
             err failed = "failed"
         }
 
-        pub fn check_header() -> String {
-            let headers, err = wait getHeaders()
-            if err { return "error" }
+        pub fn check_header() -> String, err {
+            if false { return err.failed }
+            const headers = wait getHeaders()
             const has = headers.has("content-type")
             if has { return "found" }
             return "missing"
@@ -79,15 +78,18 @@ fn extern_contract_method_call() {
                 getHeaders -> halt
                 headers.has -> skip
             }
-            test { self() == "found" }
+            test { self() == "found" self() is err.failed }
         }
         "#,
         r#"
             globalThis.getHeaders = async () => ({
-                get: (name) => name === "content-type" ? "application/json" : null,
-                has: (name) => name === "content-type",
+                value: {
+                    get: (name) => name === "content-type" ? "application/json" : null,
+                    has: (name) => name === "content-type",
+                },
+                err: null,
             });
-            const result = await check_header();
+            const { value: result } = await check_header();
             console.log(result);
         "#,
     ), "found");
@@ -110,10 +112,9 @@ fn extern_fn_mock_emitted() {
         }
 
         pub fn fetch_status(url: String) -> Number {
-            let resp, err = wait globalFetch(url)
-            if err { return 0 }
+            const resp = wait globalFetch(url)
             return resp.status
-            crash { globalFetch -> halt }
+            crash { globalFetch -> fallback(fn(e) -> 0) }
             test { self("http://example.com") == 200 }
         }
     "#);
@@ -140,10 +141,9 @@ fn extern_fn_mock_in_proof_tests() {
         }
 
         pub fn fetch_status(url: String) -> Number {
-            let resp, err = wait globalFetch(url)
-            if err { return 0 }
+            const resp = wait globalFetch(url)
             return resp.status
-            crash { globalFetch -> halt }
+            crash { globalFetch -> fallback(fn(e) -> 0) }
             test { self("http://example.com") == 200 }
         }
         "#,
@@ -174,16 +174,15 @@ fn extern_fn_mock_works_at_runtime() {
         }
 
         pub fn fetch_status(url: String) -> Number {
-            let resp, err = wait globalFetch(url)
-            if err { return 0 }
+            const resp = wait globalFetch(url)
             return resp.status
-            crash { globalFetch -> halt }
+            crash { globalFetch -> fallback(fn(e) -> 0) }
             test { self("http://example.com") == 200 }
         }
         "#,
         r#"
-            // Wire up mock (same as what test harness would do)
-            globalThis.globalFetch = async (url) => ({ status: 200, body: "ok" });
+            // Wire up mock (same as what test harness would do) — must return {value, err} tuple
+            globalThis.globalFetch = async (url) => ({ value: { status: 200, body: "ok" }, err: null });
             const result = await fetch_status("http://test.com");
             console.log(result);
         "#,

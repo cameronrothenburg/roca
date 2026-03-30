@@ -49,7 +49,7 @@ fn method_on_non_nullable_passes() {
     assert!(null_errors.is_empty(), "non-nullable should pass, got: {:?}", null_errors);
 }
 
-// ─── Nullable in struct — JS execution ──────────────────
+// ─── Optional in struct — JS execution ──────────────────
 
 #[test]
 fn nullable_field_can_be_null() {
@@ -57,7 +57,7 @@ fn nullable_field_can_be_null() {
         r#"
         pub struct Profile {
             name: String
-            bio: String | null
+            bio: Optional<String>
         }{}
 
         pub fn has_bio(p: Profile) -> Bool {
@@ -81,7 +81,7 @@ fn nullable_field_with_value() {
         r#"
         pub struct Config {
             name: String
-            description: String | null
+            description: Optional<String>
         }{}
 
         pub fn display(c: Config) -> String {
@@ -99,26 +99,35 @@ fn nullable_field_with_value() {
     ), "app\napp: my app");
 }
 
-// ─── Return type nullable ───────────────────────────────
+// ─── Return type — use errors, not nullable ─────────────
 
 #[test]
 fn function_returns_nullable() {
     assert_eq!(run(
         r#"
-        pub fn find(id: String) -> String | null {
-            if id == "" { return null }
-            return "found: " + id
-            test {
-                self("1") == "found: 1"
-                self("") == null
+        /// Finds an item by id
+        pub struct Find {
+            call(id: String) -> String, err {
+                err not_found = "not_found"
+            }
+        }{
+            pub fn call(id: String) -> String, err {
+                if id == "" { return err.not_found }
+                return "found: " + id
+                test {
+                    self("1") == "found: 1"
+                    self("") is err.not_found
+                }
             }
         }
         "#,
         r#"
-            console.log(find("1"));
-            console.log(find(""));
+            const { value: v1 } = Find.call("1");
+            console.log(v1);
+            const { value: v2, err } = Find.call("");
+            console.log(err ? "not_found" : v2);
         "#,
-    ), "found: 1\nnull");
+    ), "found: 1\nnot_found");
 }
 
 // ─── Error message quality ──────────────────────────────

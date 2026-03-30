@@ -69,7 +69,6 @@ fn private_not_exported() {
         }
         pub fn use_helper(x: Number) -> Number {
             return helper(x) + helper(x)
-            crash { helper -> halt }
             test { self(5) == 12 }
         }"#,
         "console.log(use_helper(5));",

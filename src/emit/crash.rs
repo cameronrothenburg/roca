@@ -14,6 +14,7 @@ use super::ast_helpers::{
     unary_not, console_call, args1, args2,
 };
 use super::expressions::build_expr;
+use super::helpers::{make_result, null};
 
 /// Wrap a call expression with a crash strategy, returning flat statements.
 /// Roca functions return [value, err] tuples — crash handlers check the err element.
@@ -24,13 +25,14 @@ pub(crate) fn wrap_with_strategy<'a>(
     var_name: &str,
     strategy: &roca::CrashHandlerKind,
     source_expr: &roca::Expr,
+    returns_err: bool,
 ) -> Vec<Statement<'a>> {
     match strategy {
         roca::CrashHandlerKind::Simple(chain) => {
-            wrap_chain(ast, call_expr, var_name, chain, source_expr)
+            wrap_chain(ast, call_expr, var_name, chain, source_expr, returns_err)
         }
         roca::CrashHandlerKind::Detailed { arms, default } => {
-            wrap_detailed(ast, call_expr, var_name, arms, default)
+            wrap_detailed(ast, call_expr, var_name, arms, default, returns_err)
         }
     }
 }
@@ -41,13 +43,14 @@ fn wrap_chain<'a>(
     var_name: &str,
     chain: &roca::CrashChain,
     source_expr: &roca::Expr,
+    returns_err: bool,
 ) -> Vec<Statement<'a>> {
     // Find the terminal step (last in chain)
     let terminal = chain.last().unwrap_or(&roca::CrashStep::Halt);
     let has_log = chain.iter().any(|s| matches!(s, roca::CrashStep::Log));
 
     // Use the terminal step, with log/retry handled inline
-    wrap_terminal(ast, call_expr, var_name, terminal, has_log, source_expr)
+    wrap_terminal(ast, call_expr, var_name, terminal, has_log, source_expr, returns_err)
 }
 
 fn wrap_terminal<'a>(
@@ -57,6 +60,7 @@ fn wrap_terminal<'a>(
     strategy: &roca::CrashStep,
     has_log: bool,
     source_expr: &roca::Expr,
+    returns_err: bool,
 ) -> Vec<Statement<'a>> {
     let tmp = format!("_{}_tmp", var_name);
     let err_name = format!("_{}_err", var_name);
@@ -75,11 +79,18 @@ fn wrap_terminal<'a>(
 
     match strategy {
         roca::CrashStep::Halt => {
-            // if (_err) throw _err;
             let test = ident(ast, &err_name);
-            let throw = throw_stmt(ast, ident(ast, &err_name));
-            stmts.push(if_stmt(ast, test, throw, None));
-            // const var_name = _tmp[0]
+            if returns_err {
+                // if (_err) return { value: null, err: _err };
+                let ret_val = make_result(ast, null(ast), ident(ast, &err_name));
+                let ret_stmt = ast.statement_return(SPAN, Some(ret_val));
+                stmts.push(if_stmt(ast, test, ret_stmt, None));
+            } else {
+                // if (_err) throw _err;
+                let throw = throw_stmt(ast, ident(ast, &err_name));
+                stmts.push(if_stmt(ast, test, throw, None));
+            }
+            // const var_name = _tmp.value
             let val_access = static_field(ast, &tmp, "value");
             stmts.push(const_decl(ast, var_name, val_access));
         }
@@ -179,8 +190,13 @@ fn wrap_terminal<'a>(
                 BinaryOperator::StrictEquality,
                 number_lit(ast, (*attempts - 1) as f64),
             );
-            let throw_err = throw_stmt(ast, ident(ast, &err_name));
-            loop_stmts.push(if_stmt(ast, last_check, throw_err, None));
+            let final_err = if returns_err {
+                let ret_val = make_result(ast, null(ast), ident(ast, &err_name));
+                ast.statement_return(SPAN, Some(ret_val))
+            } else {
+                throw_stmt(ast, ident(ast, &err_name))
+            };
+            loop_stmts.push(if_stmt(ast, last_check, final_err, None));
 
             let loop_body = block(ast, loop_stmts);
             let for_init = ForStatementInit::VariableDeclaration(ast.alloc(init));
@@ -197,6 +213,7 @@ fn wrap_detailed<'a>(
     var_name: &str,
     arms: &[roca::CrashArm],
     default: &Option<roca::CrashChain>,
+    returns_err: bool,
 ) -> Vec<Statement<'a>> {
     let tmp = format!("_{}_tmp", var_name);
     let err_name = format!("_{}_err", var_name);
@@ -213,7 +230,7 @@ fn wrap_detailed<'a>(
     // if (_err) { if/else chain based on _err.message }
     let test = ident(ast, &err_name);
 
-    let if_body = build_catch_if_chain(ast, var_name, &tmp, &err_name, arms, default);
+    let if_body = build_catch_if_chain(ast, var_name, &tmp, &err_name, arms, default, returns_err);
     let if_s = if_stmt(ast, test, Statement::BlockStatement(ast.alloc(if_body)), None);
     stmts.push(if_s);
 
@@ -231,11 +248,12 @@ fn build_catch_if_chain<'a>(
     err_name: &str,
     arms: &[roca::CrashArm],
     default: &Option<roca::CrashChain>,
+    returns_err: bool,
 ) -> BlockStatement<'a> {
     let mut stmts = ast.vec();
 
     let mut result: Option<Statement<'a>> = default.as_ref().and_then(|chain| {
-        chain.last().map(|step| strategy_to_stmt(ast, step, var_name, err_name))
+        chain.last().map(|step| strategy_to_stmt(ast, step, var_name, err_name, returns_err))
     });
 
     for arm in arms.iter().rev() {
@@ -245,7 +263,7 @@ fn build_catch_if_chain<'a>(
         let test = ast.expression_binary(SPAN, err_name_access, BinaryOperator::StrictEquality, expected);
 
         let handler = arm.chain.last()
-            .map(|step| strategy_to_stmt(ast, step, var_name, err_name))
+            .map(|step| strategy_to_stmt(ast, step, var_name, err_name, returns_err))
             .unwrap_or_else(|| ast.statement_empty(SPAN));
         let mut then_stmts = ast.vec();
         then_stmts.push(handler);
@@ -261,10 +279,15 @@ fn build_catch_if_chain<'a>(
     ast.block_statement(SPAN, stmts)
 }
 
-fn strategy_to_stmt<'a>(ast: &AstBuilder<'a>, strategy: &roca::CrashStep, _var_name: &str, err_name: &str) -> Statement<'a> {
+fn strategy_to_stmt<'a>(ast: &AstBuilder<'a>, strategy: &roca::CrashStep, _var_name: &str, err_name: &str, returns_err: bool) -> Statement<'a> {
     match strategy {
         roca::CrashStep::Halt => {
-            throw_stmt(ast, ident(ast, err_name))
+            if returns_err {
+                let ret_val = make_result(ast, null(ast), ident(ast, err_name));
+                ast.statement_return(SPAN, Some(ret_val))
+            } else {
+                throw_stmt(ast, ident(ast, err_name))
+            }
         }
         roca::CrashStep::Skip | roca::CrashStep::Log => {
             let stmts = ast.vec();

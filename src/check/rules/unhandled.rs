@@ -71,7 +71,23 @@ impl UnhandledErrorsRule {
             }
             vec![]
         } else {
-            collect_returned_error_names(&ctx.func.def.body)
+            // Standalone fn: errors come from return err.x AND from crash halt propagation.
+            // Halt-propagated errors only count as "declared" if the function is itself
+            // declared with , err (returns_err == true).
+            let mut names = collect_returned_error_names(&ctx.func.def.body);
+            if ctx.func.def.returns_err {
+                if let Some(crash) = &ctx.func.def.crash {
+                    for handler in &crash.handlers {
+                        let halting = self.halting_error_names(handler, ctx);
+                        for e in halting {
+                            if !names.contains(&e) {
+                                names.push(e);
+                            }
+                        }
+                    }
+                }
+            }
+            names
         }
     }
 

@@ -154,7 +154,7 @@ fn cross_module_method_on_imported_type() {
     "#).unwrap();
 
     // Build both files, emit JS, run cross-module
-    let project = roca::resolve::resolve_directory(Path::new(&dir));
+    let _project = roca::resolve::resolve_directory(Path::new(&dir));
 
     let email_source = fs::read_to_string(dir.join("email.roca")).unwrap();
     let email_file = roca::parse::parse(&email_source);

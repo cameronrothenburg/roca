@@ -110,3 +110,23 @@ All stdlib methods are safe -- they do not return errors and do not need crash b
 Contract requiring `to_log() -> String`. The types `String`, `Number`, `Bool`, and `Bytes` all satisfy `Loggable`.
 
 The functions `log()`, `error()`, and `warn()` require their arguments to satisfy `Loggable`.
+
+## Serializable
+
+Contract for types that can be converted to a JSON string.
+
+| Method | Signature |
+|--------|-----------|
+| `toJSON()` | `-> String` |
+
+## Deserializable\<T\>
+
+Contract for types that can be constructed from a JSON string. Generic — the type parameter specifies the return type.
+
+| Method | Signature |
+|--------|-----------|
+| `parse(data)` | `-> T, err { err invalid }` |
+
+## Stdlib Modules
+
+See [Stdlib Modules](../integration/stdlib-modules.md) for `std::json`, `std::http`, `std::url`, `std::crypto`, `std::encoding`, and `std::time`.

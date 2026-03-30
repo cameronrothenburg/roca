@@ -108,10 +108,16 @@ pub(crate) fn generate_mock_patches(file: &roca::SourceFile, is_embed: bool) -> 
             if let Some(mock_def) = &f.mock {
                 for entry in &mock_def.entries {
                     let mock_val = emit_expr_js(&entry.value);
+                    // Wrap in {value, err} tuple if the extern fn returns errors
+                    let return_val = if f.returns_err {
+                        format!("{{ value: {}, err: null }}", mock_val)
+                    } else {
+                        mock_val
+                    };
                     patches.push(format!(
                         "globalThis.{name} = async function() {{ return {val}; }};",
                         name = f.name,
-                        val = mock_val,
+                        val = return_val,
                     ));
                 }
             }
