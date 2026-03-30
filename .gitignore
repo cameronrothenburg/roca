@@ -1,5 +1,5 @@
 /target
 /docs/book
 *.js
-!stdlib/*.js
+!packages/stdlib/*.js
 !docs/*.js

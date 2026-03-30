@@ -17,7 +17,7 @@ pub struct ContractRegistry {
     pub satisfies_map: HashMap<String, Vec<String>>,
 }
 
-const STDLIB_SOURCE: &str = include_str!("../../stdlib/primitives.roca");
+const STDLIB_SOURCE: &str = include_str!("../../packages/stdlib/primitives.roca");
 
 /// Stdlib parsed once and cached for the lifetime of the process.
 static STDLIB_AST: LazyLock<SourceFile> = LazyLock::new(|| crate::parse::parse(STDLIB_SOURCE));
@@ -31,9 +31,9 @@ fn stdlib_module(name: &str) -> Option<String> {
 
     // Check alongside binary first, then common install locations
     for base in &[
-        exe_dir.join("../stdlib"),
-        exe_dir.join("../../stdlib"),
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("stdlib"),
+        exe_dir.join("../packages/stdlib"),
+        exe_dir.join("../../packages/stdlib"),
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("packages/stdlib"),
     ] {
         let path = base.join(format!("{}.roca", name));
         if let Ok(source) = std::fs::read_to_string(&path) {

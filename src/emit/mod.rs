@@ -19,9 +19,9 @@ fn stdlib_runtime(module: &str) -> Option<String> {
     let exe_dir = exe.parent()?;
 
     for base in &[
-        exe_dir.join("../stdlib"),
-        exe_dir.join("../../stdlib"),
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("stdlib"),
+        exe_dir.join("../packages/stdlib"),
+        exe_dir.join("../../packages/stdlib"),
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("packages/stdlib"),
     ] {
         let path = base.join(format!("{}.js", module));
         if let Ok(source) = std::fs::read_to_string(&path) {

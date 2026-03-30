@@ -2,7 +2,7 @@ use std::path::Path;
 use crate::ast::*;
 use crate::check::walker::type_ref_to_name;
 
-const STDLIB_SOURCE: &str = include_str!("../../stdlib/primitives.roca");
+const STDLIB_SOURCE: &str = include_str!("../../packages/stdlib/primitives.roca");
 
 /// A search match with display info
 struct Match {
@@ -203,9 +203,9 @@ fn find_stdlib_dir() -> Option<std::path::PathBuf> {
     let exe = std::env::current_exe().ok()?;
     let exe_dir = exe.parent()?;
     for base in &[
-        exe_dir.join("../stdlib"),
-        exe_dir.join("../../stdlib"),
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("stdlib"),
+        exe_dir.join("../packages/stdlib"),
+        exe_dir.join("../../packages/stdlib"),
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("packages/stdlib"),
     ] {
         if base.exists() {
             return Some(base.clone());
@@ -227,9 +227,9 @@ fn load_stdlib_modules() -> Vec<String> {
     };
 
     let search_dirs = [
-        exe_dir.join("../stdlib"),
-        exe_dir.join("../../stdlib"),
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("stdlib"),
+        exe_dir.join("../packages/stdlib"),
+        exe_dir.join("../../packages/stdlib"),
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("packages/stdlib"),
     ];
 
     for base in &search_dirs {
