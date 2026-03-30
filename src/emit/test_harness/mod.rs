@@ -130,8 +130,17 @@ pub fn emit_tests(file: &roca::SourceFile, import_path: &str) -> Option<(String,
 
     let summary_js = "console.log(_passed + \" passed, \" + _failed + \" failed\");\nif (_failed > 0) process.exit(1);";
 
+    // For async tests, put everything inside the async IIFE so
+    // battle tests and summary run after async assertions complete.
     let test_section = if has_async {
-        format!("{}\nawait (async () => {{\n{}\n}})();", counter_decls, test_code)
+        let mut inner = test_code;
+        if !battle_tests.is_empty() {
+            inner.push('\n');
+            inner.push_str(&battle_tests);
+        }
+        inner.push('\n');
+        inner.push_str(summary_js);
+        format!("{}\n(async () => {{\n{}\n}})();", counter_decls, inner)
     } else {
         format!("{}\n{}", counter_decls, test_code)
     };
@@ -159,15 +168,19 @@ pub fn emit_tests(file: &roca::SourceFile, import_path: &str) -> Option<(String,
         let mut parts = vec![main_js];
         if !mock_patches.is_empty() { parts.push(mock_patches); }
         parts.push(test_section);
-        if !battle_tests.is_empty() { parts.push(battle_tests); }
-        parts.push(summary_js.to_string());
+        if !has_async {
+            if !battle_tests.is_empty() { parts.push(battle_tests); }
+            parts.push(summary_js.to_string());
+        }
         parts.join("\n")
     } else {
         let mut parts = vec![import_line];
         if !mock_patches.is_empty() { parts.push(mock_patches); }
         parts.push(test_section);
-        if !battle_tests.is_empty() { parts.push(battle_tests); }
-        parts.push(summary_js.to_string());
+        if !has_async {
+            if !battle_tests.is_empty() { parts.push(battle_tests); }
+            parts.push(summary_js.to_string());
+        }
         parts.join("\n")
     };
 

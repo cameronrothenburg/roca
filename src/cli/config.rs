@@ -109,11 +109,3 @@ pub fn collect_roca_files(dir: &Path, files: &mut Vec<PathBuf>) {
     }
 }
 
-const ROCA_TEST_RUNTIME: &[u8] = include_bytes!("../../packages/stdlib/roca-test.js");
-
-pub fn write_test_runtime(out_dir: &Path) {
-    let dest = out_dir.join("roca-test.js");
-    if !dest.exists() {
-        let _ = fs::write(&dest, ROCA_TEST_RUNTIME);
-    }
-}

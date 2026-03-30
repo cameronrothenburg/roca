@@ -26,8 +26,6 @@ pub fn build_file(path: &Path) {
         std::process::exit(1);
     });
 
-    write_test_runtime(&out_dir);
-
     let name = path.file_stem().unwrap().to_str().unwrap();
     let out_path = out_dir.join(format!("{}.js", name));
 
@@ -45,42 +43,25 @@ pub fn build_file(path: &Path) {
 
     // Run tests
     if let Some((test_js, _count)) = emit::test_harness::emit_tests(&file, "__embed__") {
-        let test_path = out_dir.join(format!("{}.test.js", name));
-        fs::write(&test_path, &test_js).unwrap_or_else(|e| {
-            eprintln!("error writing {}: {}", test_path.display(), e);
-            std::process::exit(1);
-        });
-
-        let output = std::process::Command::new("bun")
-            .arg(test_path.to_str().unwrap())
-            .output()
-            .expect("failed to run bun");
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
+        let (stdout, success) = super::runtime::run_tests(&test_js);
 
         let (passed, failed) = parse_test_counts(&stdout);
         log_event(&LogEvent::TestResult {
             file: &path_str,
             passed, failed,
-            output: &format!("{}{}", stdout, stderr),
+            output: &stdout,
         });
 
-        if !output.status.success() {
-            eprint!("{}", stderr);
+        if !success {
             print!("{}", stdout);
             let _ = fs::remove_file(&out_path);
-            let _ = fs::remove_file(&test_path);
             eprintln!("\n✗ proof tests failed — no JS emitted");
             log_event(&LogEvent::BuildFailed { file: &path_str, reason: "proof tests failed" });
             std::process::exit(1);
         }
 
         print!("{}", stdout);
-        let _ = fs::remove_file(&test_path);
     }
-
-    let _ = fs::remove_file(out_dir.join("roca-test.js"));
 
     // Generate package.json in out/
     let checked = vec![(path.to_path_buf(), path_str.clone(), file)];
@@ -112,8 +93,6 @@ pub fn build_directory(dir: &Path) {
         eprintln!("error creating {}: {}", out_dir.display(), e);
         std::process::exit(1);
     });
-
-    write_test_runtime(&out_dir);
 
     // ─── Phase 1: Check all files ───────────────────────
     println!("checking {} file(s)...", files.len());
@@ -175,20 +154,9 @@ pub fn build_directory(dir: &Path) {
     let mut total_passed = 0;
     let mut total_failed = 0;
 
-    for (file_path, fp_str, file) in &checked {
-        let out_path = output_path_for(file_path, dir, &out_dir);
+    for (_file_path, fp_str, file) in &checked {
         if let Some((test_js, _count)) = emit::test_harness::emit_tests(file, "__embed__") {
-            let test_path = out_path.with_extension("test.js");
-            fs::write(&test_path, &test_js).unwrap_or_else(|e| {
-                eprintln!("error writing {}: {}", test_path.display(), e);
-            });
-
-            let output = std::process::Command::new("bun")
-                .arg(test_path.to_str().unwrap())
-                .output()
-                .expect("failed to run bun");
-
-            let stdout = String::from_utf8_lossy(&output.stdout);
+            let (stdout, success) = super::runtime::run_tests(&test_js);
 
             let (passed, failed) = parse_test_counts(&stdout);
             log_event(&LogEvent::TestResult {
@@ -197,22 +165,16 @@ pub fn build_directory(dir: &Path) {
                 output: &stdout,
             });
 
-            if !output.status.success() {
-                let stderr = String::from_utf8_lossy(&output.stderr);
+            if !success {
                 print!("{}", stdout);
-                eprint!("{}", stderr);
                 log_event(&LogEvent::BuildFailed { file: fp_str, reason: "proof tests failed" });
                 failed_files.push(fp_str.clone());
                 total_failed += failed;
             } else {
                 total_passed += passed;
             }
-
-            let _ = fs::remove_file(&test_path);
         }
     }
-
-    let _ = fs::remove_file(out_dir.join("roca-test.js"));
 
     println!("\n{} passed, {} failed across {} file(s)", total_passed, total_failed, files.len());
 

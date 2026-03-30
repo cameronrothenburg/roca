@@ -26,9 +26,6 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
-      - name: Install Bun
-        uses: oven-sh/setup-bun@v2
-
       - name: Build
         run: cargo build
 

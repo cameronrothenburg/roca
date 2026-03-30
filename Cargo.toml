@@ -14,3 +14,4 @@ oxc_span = "0.122"
 tower-lsp = "0.20"
 tokio = { version = "1", features = ["full"] }
 dashmap = "6"
+rquickjs = { version = "0.11.0", features = ["parallel"] }

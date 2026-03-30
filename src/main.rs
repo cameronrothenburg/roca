@@ -97,13 +97,13 @@ fn main() {
                 out_dir.join(format!("{}.js", name))
             };
 
-            let status = std::process::Command::new("bun")
-                .arg(js_path.to_str().unwrap())
-                .status()
-                .expect("failed to run bun");
+            let code = fs::read_to_string(&js_path).unwrap_or_else(|e| {
+                eprintln!("error reading {}: {}", js_path.display(), e);
+                std::process::exit(1);
+            });
 
-            if !status.success() {
-                std::process::exit(status.code().unwrap_or(1));
+            if !cli::runtime::run_js(&code) {
+                std::process::exit(1);
             }
         }
         "search" => {
