@@ -1,0 +1,22 @@
+/**
+ * Text encoding/decoding and base64.
+ * Import with: import { encode, decode, btoa, atob } from std::encoding
+ */
+
+/// Encode a string to UTF-8 bytes. Always succeeds.
+pub extern fn encode(input: String) -> Bytes
+
+/// Decode UTF-8 bytes to a string
+pub extern fn decode(bytes: Bytes) -> String, err {
+    err invalid = "invalid byte sequence"
+}
+
+/// Encode a string to base64
+pub extern fn btoa(input: String) -> String, err {
+    err invalid = "input contains characters outside Latin1 range"
+}
+
+/// Decode a base64 string
+pub extern fn atob(input: String) -> String, err {
+    err invalid = "invalid base64 input"
+}
