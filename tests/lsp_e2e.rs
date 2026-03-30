@@ -23,18 +23,18 @@ fn send_notification(stdin: &mut impl Write, method: &str, params: &str) {
     ));
 }
 
-fn read_message(reader: &mut BufReader<impl std::io::Read>) -> String {
+fn read_message(reader: &mut BufReader<std::process::ChildStdout>) -> String {
     let mut header = String::new();
     loop {
         header.clear();
-        reader.read_line(&mut header).unwrap();
+        if reader.read_line(&mut header).unwrap() == 0 {
+            return String::new(); // EOF
+        }
         let trimmed = header.trim();
         if trimmed.starts_with("Content-Length:") {
             let len: usize = trimmed.split(": ").nth(1).unwrap().parse().unwrap();
-            // Consume blank line
             let mut blank = String::new();
             reader.read_line(&mut blank).unwrap();
-            // Read body
             let mut body = vec![0u8; len];
             std::io::Read::read_exact(reader, &mut body).unwrap();
             return String::from_utf8(body).unwrap();
@@ -42,11 +42,14 @@ fn read_message(reader: &mut BufReader<impl std::io::Read>) -> String {
     }
 }
 
-/// Read messages until we get one with an "id" field (response, not notification)
-fn read_response(reader: &mut BufReader<impl std::io::Read>) -> String {
+/// Read messages until we get a response (has "result" or "error" with an "id")
+fn read_response(reader: &mut BufReader<std::process::ChildStdout>) -> String {
     loop {
         let msg = read_message(reader);
-        if msg.contains(r#""id""#) {
+        if msg.is_empty() { return msg; }
+        // Notifications have "method" but no "id" at the top level
+        // Responses have "id" and either "result" or "error"
+        if msg.contains(r#""result""#) || (msg.contains(r#""error""#) && msg.contains(r#""id""#)) {
             return msg;
         }
     }
@@ -73,50 +76,47 @@ fn spawn_lsp() -> (std::process::ChildStdin, BufReader<std::process::ChildStdout
 fn lsp_initialize_and_shutdown() {
     let (mut stdin, mut stdout, mut child) = spawn_lsp();
 
-    // Initialize
     send_request(&mut stdin, 1, "initialize", r#"{"capabilities":{}}"#);
     let resp = read_response(&mut stdout);
-    assert!(resp.contains("capabilities"), "init response: {}", resp);
+    assert!(resp.contains("capabilities"), "init should return capabilities: {}", resp);
+    assert!(resp.contains("completionProvider"), "should support completion: {}", resp);
 
     send_notification(&mut stdin, "initialized", "{}");
 
-    // Shutdown
     send_request(&mut stdin, 2, "shutdown", "null");
     let resp = read_response(&mut stdout);
     assert!(resp.contains(r#""id":2"#), "shutdown response: {}", resp);
 
     send_notification(&mut stdin, "exit", "null");
+    drop(stdin);
     let status = child.wait().unwrap();
     assert!(status.success());
 }
 
 #[test]
-fn lsp_open_file_and_get_symbols() {
+fn lsp_document_symbols() {
     let (mut stdin, mut stdout, mut child) = spawn_lsp();
 
     send_request(&mut stdin, 1, "initialize", r#"{"capabilities":{}}"#);
     let _ = read_response(&mut stdout);
     send_notification(&mut stdin, "initialized", "{}");
 
-    // Open a file
-    let content = r#"import { Http } from std::http\npub fn greet(name: String) -> String {\n    return name\n    test {}\n}"#;
     send_notification(&mut stdin, "textDocument/didOpen", &format!(
-        r#"{{"textDocument":{{"uri":"file:///test.roca","languageId":"roca","version":1,"text":"{}"}}}}"#,
-        content
+        r#"{{"textDocument":{{"uri":"file:///test.roca","languageId":"roca","version":1,"text":"pub fn greet(name: String) -> String {{\n    return name\n    test {{}}\n}}"}}}}"#
     ));
 
-    // Small delay for server to process
+    // Wait for diagnostics to be published
     std::thread::sleep(std::time::Duration::from_millis(200));
 
-    // Request symbols
-    send_request(&mut stdin, 2, "textDocument/documentSymbol", r#"{"textDocument":{"uri":"file:///test.roca"}}"#);
+    send_request(&mut stdin, 2, "textDocument/documentSymbol",
+        r#"{"textDocument":{"uri":"file:///test.roca"}}"#);
     let resp = read_response(&mut stdout);
-    assert!(resp.contains("greet"), "symbols should contain greet: {}", resp);
+    assert!(resp.contains("greet"), "should contain function symbol: {}", resp);
 
-    // Shutdown
     send_request(&mut stdin, 3, "shutdown", "null");
     let _ = read_response(&mut stdout);
     send_notification(&mut stdin, "exit", "null");
+    drop(stdin);
     let _ = child.wait();
 }
 
@@ -128,17 +128,14 @@ fn lsp_completion_stdlib_modules() {
     let _ = read_response(&mut stdout);
     send_notification(&mut stdin, "initialized", "{}");
 
-    let content = "import { Http } from std::";
     send_notification(&mut stdin, "textDocument/didOpen", &format!(
-        r#"{{"textDocument":{{"uri":"file:///test.roca","languageId":"roca","version":1,"text":"{}"}}}}"#,
-        content
+        r#"{{"textDocument":{{"uri":"file:///test.roca","languageId":"roca","version":1,"text":"import {{ Http }} from std::"}}}}"#
     ));
 
     std::thread::sleep(std::time::Duration::from_millis(200));
 
     send_request(&mut stdin, 2, "textDocument/completion", &format!(
-        r#"{{"textDocument":{{"uri":"file:///test.roca"}},"position":{{"line":0,"character":{}}}}}"#,
-        content.len()
+        r#"{{"textDocument":{{"uri":"file:///test.roca"}},"position":{{"line":0,"character":27}}}}"#
     ));
     let resp = read_response(&mut stdout);
     assert!(resp.contains("json") || resp.contains("http") || resp.contains("crypto"),
@@ -147,5 +144,6 @@ fn lsp_completion_stdlib_modules() {
     send_request(&mut stdin, 3, "shutdown", "null");
     let _ = read_response(&mut stdout);
     send_notification(&mut stdin, "exit", "null");
+    drop(stdin);
     let _ = child.wait();
 }
