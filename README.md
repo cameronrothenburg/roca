@@ -1,5 +1,7 @@
 # Roca
 
+*From the Spanish word for rock.*
+
 A contractual language that compiles to JavaScript. Built for AI-generated code.
 
 ## The Problem

@@ -1,6 +1,6 @@
 # Introduction
 
-Roca is a contractual language that compiles to JavaScript.
+Roca — from the Spanish word for *rock* — is a contractual language that compiles to JavaScript.
 
 Guaranteeing code is clean and error-free normally requires a stack of external tools — linters, scanners, test frameworks, type checkers — all configured and maintained separately. When an issue is found in one place, nothing forces fixing it everywhere else. AI makes this harder: it generates code fast, but without a feedback loop it has no reason to think about error handling, edge cases, or test coverage.
 
