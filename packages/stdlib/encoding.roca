@@ -1,22 +1,26 @@
 /**
  * Text encoding/decoding and base64.
- * Import with: import { encode, decode, btoa, atob } from std::encoding
+ * Import with: import { Encoding } from std::encoding
  */
-
-/// Encode a string to UTF-8 bytes. Always succeeds.
-pub extern fn encode(input: String) -> Bytes
-
-/// Decode UTF-8 bytes to a string
-pub extern fn decode(bytes: Bytes) -> String, err {
-    err invalid = "invalid byte sequence"
-}
-
-/// Encode a string to base64
-pub extern fn btoa(input: String) -> String, err {
-    err invalid = "input contains characters outside Latin1 range"
-}
-
-/// Decode a base64 string
-pub extern fn atob(input: String) -> String, err {
-    err invalid = "invalid base64 input"
+pub extern contract Encoding {
+    /// Encode a string to UTF-8 bytes. Always succeeds.
+    encode(input: String) -> Bytes
+    /// Decode UTF-8 bytes to a string
+    decode(bytes: Bytes) -> String, err {
+        err invalid = "invalid byte sequence"
+    }
+    /// Encode a string to base64
+    btoa(input: String) -> String, err {
+        err invalid = "input contains characters outside Latin1 range"
+    }
+    /// Decode a base64 string
+    atob(input: String) -> String, err {
+        err invalid = "invalid base64 input"
+    }
+    mock {
+        encode -> Bytes
+        decode -> "hello"
+        btoa -> "aGVsbG8="
+        atob -> "hello"
+    }
 }
