@@ -117,15 +117,7 @@ fn eval_expr(input: &str, defs: &[String]) {
 }
 
 fn run_bun(js: &str) {
-    match std::process::Command::new("bun").arg("-e").arg(js).output() {
-        Ok(out) => {
-            let stdout = String::from_utf8_lossy(&out.stdout);
-            let stderr = String::from_utf8_lossy(&out.stderr);
-            if !stdout.is_empty() { print!("{}", stdout); }
-            if !stderr.is_empty() { eprint!("{}", stderr); }
-        }
-        Err(e) => eprintln!("  failed to run bun: {}", e),
-    }
+    super::runtime::run_js(js);
 }
 
 fn is_definition(s: &str) -> bool {

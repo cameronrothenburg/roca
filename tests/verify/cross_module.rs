@@ -161,19 +161,11 @@ fn cross_module_method_on_imported_type() {
     let email_js = roca::emit::emit(&email_file);
     fs::write(dir.join("email.js"), &email_js).unwrap();
 
-    // Write a runner that uses Email.trim() from JS
-    fs::write(dir.join("run.js"), r#"
-        import { Email } from "./email.js";
-        const e = Email.create(" cam@test.com ");
-        console.log(e.trim());
-    "#).unwrap();
-
-    let output = std::process::Command::new("bun")
-        .arg(dir.join("run.js").to_str().unwrap())
-        .output()
-        .expect("failed to run bun");
-
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    // Run inline: inline email.js + test code (strip exports/imports)
+    let inline_js = email_js.replace("export ", "");
+    let test_code = format!("{}\nconst e = Email.create(\" cam@test.com \");\nconsole.log(e.trim());", inline_js);
+    let (stdout, _) = roca::cli::runtime::run_tests(&test_code);
+    let stdout = stdout.trim().to_string();
     let _ = fs::remove_dir_all(&dir);
 
     assert_eq!(stdout, "cam@test.com",

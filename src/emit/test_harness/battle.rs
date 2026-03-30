@@ -41,18 +41,14 @@ pub(crate) fn generate_battle_tests(file: &roca::SourceFile) -> String {
     }
 
     let mut out = String::new();
-    out.push_str("// Battle tests — fast-check property-based testing\n");
-    out.push_str("try {\n");
-    out.push_str("const __dir = typeof __dirname !== 'undefined' ? __dirname : '.';\n");
-    out.push_str("const { fc, battleTest, arb } = require(__dir + '/roca-test.js');\n");
+    out.push_str("// Battle tests — property-based testing\n");
+    out.push_str("if (typeof battleTest !== 'undefined') {\n");
 
     for test in &tests {
         out.push_str(test);
         out.push('\n');
     }
 
-    out.push_str("} catch(_btErr) {\n");
-    out.push_str("  // roca-test.js not available — skip battle tests\n");
     out.push_str("}\n");
 
     out

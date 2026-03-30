@@ -92,18 +92,16 @@ fn cross_file_execution() {
     fs::write(dir.join("types.js"), &types_js).unwrap();
     fs::write(dir.join("main.js"), &main_js).unwrap();
 
-    // Write a runner
-    let runner = format!(
-        "import {{ create_email }} from \"./main.js\";\nconst {{ value: v, err: e }} = create_email(\"cam@test.com\");\nconsole.log(v);\nconsole.log(e);",
+    // Inline both modules + test code (strip exports/imports)
+    let types_inline = types_js.replace("export ", "");
+    let main_inline = main_js.replace("export ", "")
+        .lines().filter(|l| !l.starts_with("import ")).collect::<Vec<_>>().join("\n");
+    let test_code = format!(
+        "{}\n{}\nconst {{ value: v, err: e }} = create_email(\"cam@test.com\");\nconsole.log(v);\nconsole.log(e);",
+        types_inline, main_inline
     );
-    fs::write(dir.join("run.js"), &runner).unwrap();
-
-    let output = std::process::Command::new("bun")
-        .arg(dir.join("run.js").to_str().unwrap())
-        .output()
-        .expect("failed to run bun");
-
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let (stdout, _) = roca::cli::runtime::run_tests(&test_code);
+    let stdout = stdout.trim().to_string();
 
     // Clean up
     let _ = fs::remove_dir_all(&dir);

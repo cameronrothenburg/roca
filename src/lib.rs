@@ -2,6 +2,7 @@
 //! Provides parsing, type checking, and code emission for `.roca` source files.
 
 pub mod ast;
+pub mod cli;
 pub mod constants;
 pub mod parse;
 pub mod check;
