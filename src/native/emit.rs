@@ -39,26 +39,29 @@ pub fn compile_function_bare(
     builder.switch_to_block(entry);
     builder.seal_block(entry);
 
-    // Just emit the body directly
+    // Store params in stack slots
     let mut vars: HashMap<String, VarInfo> = HashMap::new();
-    let params: Vec<Value> = builder.block_params(entry).to_vec();
+    let block_params: Vec<Value> = builder.block_params(entry).to_vec();
     for (i, p) in func.params.iter().enumerate() {
+        let val = block_params[i];
+        let cl_type = roca_to_cranelift(&p.type_ref);
         let slot = builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 0));
-        builder.ins().stack_store(params[i], slot, 0);
-        vars.insert(p.name.clone(), VarInfo { slot, cranelift_type: roca_to_cranelift(&p.type_ref) });
+        builder.ins().stack_store(val, slot, 0);
+        vars.insert(p.name.clone(), VarInfo { slot, cranelift_type: cl_type });
     }
-
+    let mut returned = false;
     for stmt in &func.body {
-        if builder.is_unreachable() { break; }
-        emit_stmt(&mut builder, stmt, &mut vars, false);
+        let _ = std::fs::write("/tmp/cl_in_loop.txt", format!("processing stmt: {:?}", std::mem::discriminant(stmt)));
+        emit_stmt(&mut builder, stmt, &mut vars, false, &mut returned);
+        if returned { break; }
     }
-
-    if !builder.is_unreachable() {
+    if !returned {
         let d = builder.ins().f64const(0.0);
         builder.ins().return_(&[d]);
     }
 
     builder.finalize();
+    let _ = std::fs::write("/tmp/cl_bare_ir.txt", format!("{}", ctx.func.display()));
 
     module.define_function(func_id, &mut ctx).map_err(|e| format!("define: {}", e))?;
     module.clear_context(&mut ctx);
@@ -109,13 +112,14 @@ pub fn compile_function(
 
         // Emit body
         let returns_err = func.returns_err;
+        let mut returned = false;
         for stmt in &func.body {
-            if builder.is_unreachable() { break; }
-            emit_stmt(&mut builder, stmt, &mut vars, returns_err);
+            if returned { break; }
+            emit_stmt(&mut builder, stmt, &mut vars, returns_err, &mut returned);
         }
 
-        // Default return if still reachable
-        if !builder.is_unreachable() {
+        // Default return if not yet returned
+        if !returned {
             let default_val = match &func.return_type {
                 roca::TypeRef::Number => builder.ins().f64const(0.0),
                 _ => builder.ins().iconst(types::I8, 0),
@@ -137,7 +141,7 @@ pub fn compile_function(
     Ok(())
 }
 
-fn emit_stmt(b: &mut FunctionBuilder, stmt: &Stmt, vars: &mut HashMap<String, VarInfo>, returns_err: bool) {
+fn emit_stmt(b: &mut FunctionBuilder, stmt: &Stmt, vars: &mut HashMap<String, VarInfo>, returns_err: bool, returned: &mut bool) {
     match stmt {
         Stmt::Const { name, value, .. } | Stmt::Let { name, value, .. } => {
             let val = emit_expr(b, value, vars);
@@ -154,6 +158,7 @@ fn emit_stmt(b: &mut FunctionBuilder, stmt: &Stmt, vars: &mut HashMap<String, Va
             } else {
                 b.ins().return_(&[val]);
             }
+            *returned = true;
         }
         Stmt::Expr(expr) => { emit_expr(b, expr, vars); }
         Stmt::If { condition, then_body, else_body, .. } => {
@@ -165,15 +170,17 @@ fn emit_stmt(b: &mut FunctionBuilder, stmt: &Stmt, vars: &mut HashMap<String, Va
 
             b.switch_to_block(then_block);
             b.seal_block(then_block);
-            for s in then_body { if b.is_unreachable() { break; } emit_stmt(b, s, vars, returns_err); }
-            if !b.is_unreachable() { b.ins().jump(merge_block, &[]); }
+            let mut then_returned = false;
+            for s in then_body { if then_returned { break; } emit_stmt(b, s, vars, returns_err, &mut then_returned); }
+            if !then_returned { b.ins().jump(merge_block, &[]); }
 
             b.switch_to_block(else_block);
             b.seal_block(else_block);
+            let mut else_returned = false;
             if let Some(body) = else_body {
-                for s in body { if b.is_unreachable() { break; } emit_stmt(b, s, vars, returns_err); }
+                for s in body { if else_returned { break; } emit_stmt(b, s, vars, returns_err, &mut else_returned); }
             }
-            if !b.is_unreachable() { b.ins().jump(merge_block, &[]); }
+            if !else_returned { b.ins().jump(merge_block, &[]); }
 
             b.switch_to_block(merge_block);
             b.seal_block(merge_block);

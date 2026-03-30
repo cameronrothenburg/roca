@@ -59,36 +59,60 @@ mod tests {
                 return 42
             }
         "#);
-        let result = eval_roca(&file);
-        assert!(result.is_ok(), "native compilation failed: {:?}", result);
-    }
 
-    #[test]
-    fn compile_and_call_roca_function() {
-        use cranelift_module::Module;
+        let mut module = JITModule::new(
+            cranelift_jit::JITBuilder::new(cranelift_module::default_libcall_names())
+                .expect("jit builder failed")
+        );
 
-        let file = crate::parse::parse(r#"
-            pub fn add(a: Number, b: Number) -> Number {
-                return a + b
-                test { self(1, 2) == 3 }
-            }
-        "#);
-
-        let mut module = create_jit_module();
-        let rt = runtime::declare_runtime(&mut module);
-
+        let _ = std::fs::write("/tmp/cl_test_items.txt", format!("items: {}, first: {:?}", file.items.len(), std::mem::discriminant(&file.items[0])));
         if let crate::ast::Item::Function(f) = &file.items[0] {
-            emit::compile_function(&mut module, f, &rt).unwrap();
+            let _ = std::fs::write("/tmp/cl_test_entering.txt", format!("entering compile_function_bare for {}", f.name));
+            emit::compile_function_bare(&mut module, f).unwrap();
+        } else {
+            let _ = std::fs::write("/tmp/cl_test_entering.txt", "NOT a function!".to_string());
         }
 
         module.finalize_definitions().unwrap();
 
-        let func_id = module.declare_function("add", cranelift_module::Linkage::Export, &module.make_signature()).ok();
-        if let Some(id) = func_id {
-            let ptr = module.get_finalized_function(id);
-            let add_fn = unsafe { std::mem::transmute::<_, fn(f64, f64) -> f64>(ptr) };
-            assert_eq!(add_fn(37.0, 5.0), 42.0);
+        // Call the compiled function
+        let mut sig = module.make_signature();
+        sig.returns.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::F64));
+        let func_id = module.declare_function("answer", cranelift_module::Linkage::Export, &sig).unwrap();
+        let ptr = module.get_finalized_function(func_id);
+        let answer_fn = unsafe { std::mem::transmute::<_, fn() -> f64>(ptr) };
+        assert_eq!(answer_fn(), 42.0, "Roca function should return 42.0 natively");
+    }
+
+    #[test]
+    fn compile_roca_add() {
+        let file = crate::parse::parse(r#"
+            pub fn add(a: Number, b: Number) -> Number {
+                return a + b
+            }
+        "#);
+
+        let mut module = JITModule::new(
+            cranelift_jit::JITBuilder::new(cranelift_module::default_libcall_names())
+                .expect("jit builder failed")
+        );
+
+        if let crate::ast::Item::Function(f) = &file.items[0] {
+            emit::compile_function_bare(&mut module, f).unwrap();
         }
+        module.finalize_definitions().unwrap();
+
+        let mut sig = module.make_signature();
+        sig.params.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::F64));
+        sig.params.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::F64));
+        sig.returns.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::F64));
+        let func_id = module.declare_function("add", cranelift_module::Linkage::Export, &sig).unwrap();
+        let ptr = module.get_finalized_function(func_id);
+        let add_fn = unsafe { std::mem::transmute::<_, fn(f64, f64) -> f64>(ptr) };
+
+        assert_eq!(add_fn(37.0, 5.0), 42.0);
+        assert_eq!(add_fn(0.0, 0.0), 0.0);
+        assert_eq!(add_fn(-10.0, 10.0), 0.0);
     }
 
     #[test]
