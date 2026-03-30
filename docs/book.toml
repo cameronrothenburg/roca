@@ -8,5 +8,3 @@ src = "src"
 build-dir = "book"
 
 [output.html]
-additional-js = ["highlight-roca.js"]
-additional-css = ["roca-theme.css"]

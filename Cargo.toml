@@ -2,6 +2,9 @@
 name = "roca"
 version = "0.2.0"
 edition = "2024"
+license = "AGPL-3.0-only"
+description = "A contractual language that compiles to JavaScript"
+repository = "https://github.com/cameronrothenburg/roca"
 
 [dependencies]
 oxc_allocator = "0.122"

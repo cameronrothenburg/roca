@@ -1,0 +1,238 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Roca",
+  "scopeName": "source.roca",
+  "fileTypes": ["roca"],
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#numbers" },
+    { "include": "#keywords" },
+    { "include": "#declarations" },
+    { "include": "#types" },
+    { "include": "#functions" },
+    { "include": "#crash-strategies" },
+    { "include": "#error-declarations" },
+    { "include": "#constants" },
+    { "include": "#operators" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.block.documentation.roca",
+          "begin": "/\\*\\*",
+          "end": "\\*/"
+        },
+        {
+          "name": "comment.block.roca",
+          "begin": "/\\*",
+          "end": "\\*/"
+        },
+        {
+          "name": "comment.line.documentation.roca",
+          "match": "///.*$"
+        },
+        {
+          "name": "comment.line.double-slash.roca",
+          "match": "//.*$"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.roca",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [
+            { "name": "constant.character.escape.roca", "match": "\\\\." },
+            {
+              "name": "meta.interpolation.roca",
+              "begin": "\\{",
+              "end": "\\}",
+              "beginCaptures": { "0": { "name": "punctuation.definition.interpolation.begin.roca" } },
+              "endCaptures": { "0": { "name": "punctuation.definition.interpolation.end.roca" } },
+              "patterns": [{ "include": "source.roca" }]
+            }
+          ]
+        },
+        {
+          "name": "string.quoted.single.roca",
+          "begin": "'",
+          "end": "'",
+          "patterns": [
+            { "name": "constant.character.escape.roca", "match": "\\\\." }
+          ]
+        },
+        {
+          "name": "string.quoted.backtick.roca",
+          "begin": "`",
+          "end": "`"
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        { "name": "constant.numeric.roca", "match": "\\b\\d+(\\.\\d+)?\\b" }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.roca",
+          "match": "\\b(if|else|for|in|while|break|continue|return|match|wait|waitAll|waitFirst)\\b"
+        },
+        {
+          "name": "keyword.other.roca",
+          "match": "\\b(import|from|std|crash|test|mock|default)\\b"
+        },
+        {
+          "name": "storage.modifier.roca",
+          "match": "\\b(pub|extern)\\b"
+        },
+        {
+          "name": "storage.type.roca",
+          "match": "\\b(const|let)\\b"
+        }
+      ]
+    },
+    "declarations": {
+      "patterns": [
+        {
+          "name": "meta.declaration.function.roca",
+          "match": "\\b(fn)\\s+(\\w+)",
+          "captures": {
+            "1": { "name": "keyword.declaration.function.roca" },
+            "2": { "name": "entity.name.function.roca" }
+          }
+        },
+        {
+          "name": "meta.declaration.struct.roca",
+          "match": "\\b(struct)\\s+(\\w+)",
+          "captures": {
+            "1": { "name": "keyword.declaration.struct.roca" },
+            "2": { "name": "entity.name.type.roca" }
+          }
+        },
+        {
+          "name": "meta.declaration.contract.roca",
+          "match": "\\b(contract)\\s+(\\w+)",
+          "captures": {
+            "1": { "name": "keyword.declaration.contract.roca" },
+            "2": { "name": "entity.name.type.roca" }
+          }
+        },
+        {
+          "name": "meta.declaration.enum.roca",
+          "match": "\\b(enum)\\s+(\\w+)",
+          "captures": {
+            "1": { "name": "keyword.declaration.enum.roca" },
+            "2": { "name": "entity.name.type.roca" }
+          }
+        },
+        {
+          "name": "meta.declaration.satisfies.roca",
+          "match": "\\b(\\w+)\\s+(satisfies)\\s+(\\w+)",
+          "captures": {
+            "1": { "name": "entity.name.type.roca" },
+            "2": { "name": "keyword.declaration.satisfies.roca" },
+            "3": { "name": "entity.name.type.roca" }
+          }
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "name": "support.type.primitive.roca",
+          "match": "\\b(String|Number|Bool|Ok)\\b"
+        },
+        {
+          "name": "support.type.collection.roca",
+          "match": "\\b(Array|Map|Bytes|Buffer|Optional)\\b"
+        },
+        {
+          "name": "support.type.contract.roca",
+          "match": "\\b(Loggable)\\b"
+        },
+        {
+          "comment": "User-defined types — capitalized identifiers after : or ->",
+          "name": "entity.name.type.roca",
+          "match": "(?<=->\\s|:\\s)[A-Z]\\w*\\b"
+        },
+        {
+          "comment": "Type used as static call target — Email.validate",
+          "name": "entity.name.type.roca",
+          "match": "\\b[A-Z]\\w*(?=\\.\\w+\\()"
+        },
+        {
+          "comment": "Type in struct literal — User { ... }",
+          "name": "entity.name.type.roca",
+          "match": "\\b[A-Z]\\w*(?=\\s*\\{)"
+        }
+      ]
+    },
+    "functions": {
+      "patterns": [
+        {
+          "comment": "Function/method call — name(",
+          "name": "entity.name.function.roca",
+          "match": "\\b(?!if|for|while|match|return|wait|waitAll|waitFirst|fn|pub|const|let|import|from|crash|test|mock|err|log|error|warn)([a-z_]\\w*)(?=\\s*\\()"
+        }
+      ]
+    },
+    "crash-strategies": {
+      "patterns": [
+        {
+          "name": "keyword.operator.crash.roca",
+          "match": "->\\s*(halt|fallback|retry|panic|log)\\b"
+        },
+        {
+          "name": "keyword.operator.pipe.roca",
+          "match": "\\|>"
+        }
+      ]
+    },
+    "error-declarations": {
+      "patterns": [
+        {
+          "name": "meta.error.roca",
+          "match": "\\b(err)\\s+(\\w+)\\s*=",
+          "captures": {
+            "1": { "name": "keyword.other.err.roca" },
+            "2": { "name": "variable.other.error-name.roca" }
+          }
+        },
+        {
+          "name": "meta.error-return.roca",
+          "match": "\\b(err)\\.(\\w+)",
+          "captures": {
+            "1": { "name": "keyword.other.err.roca" },
+            "2": { "name": "variable.other.error-name.roca" }
+          }
+        }
+      ]
+    },
+    "constants": {
+      "patterns": [
+        { "name": "constant.language.roca", "match": "\\b(true|false|null|self|Ok)\\b" },
+        { "name": "variable.language.self.roca", "match": "\\bself\\b" },
+        {
+          "comment": "__mock_ references",
+          "name": "variable.other.mock.roca",
+          "match": "\\b__mock_\\w+\\b"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        { "name": "keyword.operator.comparison.roca", "match": "==|!=|<=|>=|<|>" },
+        { "name": "keyword.operator.logical.roca", "match": "&&|\\|\\||!" },
+        { "name": "keyword.operator.arithmetic.roca", "match": "\\+|-|\\*|/" },
+        { "name": "keyword.operator.arrow.roca", "match": "->" },
+        { "name": "keyword.operator.assignment.roca", "match": "=" }
+      ]
+    }
+  }
+}

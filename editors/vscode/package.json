@@ -1,0 +1,22 @@
+{
+  "name": "roca-lang",
+  "displayName": "Roca",
+  "description": "Syntax highlighting and LSP support for the Roca language",
+  "version": "0.2.0",
+  "publisher": "cameronrothenburg",
+  "engines": { "vscode": "^1.80.0" },
+  "categories": ["Programming Languages"],
+  "contributes": {
+    "languages": [{
+      "id": "roca",
+      "aliases": ["Roca"],
+      "extensions": [".roca"],
+      "configuration": "./language-configuration.json"
+    }],
+    "grammars": [{
+      "language": "roca",
+      "scopeName": "source.roca",
+      "path": "../../syntax/roca.tmLanguage.json"
+    }]
+  }
+}
