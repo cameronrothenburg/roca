@@ -271,7 +271,7 @@ impl Parser {
                 if has_interpolation(&s) {
                     Ok(parse_string_interp(&s))
                 } else {
-                    Ok(Expr::String(s))
+                    Ok(Expr::String(strip_escapes(&s)))
                 }
             }
             Token::NumberLit(n) => {
@@ -411,26 +411,62 @@ impl Parser {
     }
 }
 
+/// Strip escape sequences for braces: `\{` → `{`, `\}` → `}`, `\\` → `\`.
+fn strip_escapes(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            match chars.peek() {
+                Some(&'{') | Some(&'}') | Some(&'\\') => {
+                    result.push(chars.next().unwrap());
+                }
+                _ => result.push(c),
+            }
+        } else {
+            result.push(c);
+        }
+    }
+    result
+}
+
+/// Count consecutive backslashes immediately before position `pos` in a char slice.
+fn count_preceding_backslashes(chars: &[char], pos: usize) -> usize {
+    let mut count = 0;
+    let mut i = pos;
+    while i > 0 {
+        i -= 1;
+        if chars[i] == '\\' {
+            count += 1;
+        } else {
+            break;
+        }
+    }
+    count
+}
+
 /// Check if a string contains interpolation expressions like {name} or {obj.field}.
 /// Empty braces {} are NOT interpolation.
 /// Content with non-identifier characters (colons, commas, spaces) is NOT interpolation.
 /// Only {identifier} and {obj.field} patterns count as interpolation.
 fn has_interpolation(s: &str) -> bool {
-    let mut chars = s.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c == '{' {
-            let mut content = String::new();
+    let chars: Vec<char> = s.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '{' && count_preceding_backslashes(&chars, i) % 2 == 0 {
+            let start = i + 1;
+            i += 1;
             let mut found_close = false;
-            while let Some(&c) = chars.peek() {
-                if c == '}' {
-                    chars.next();
+            while i < chars.len() {
+                if chars[i] == '}' {
                     found_close = true;
                     break;
                 }
-                content.push(c);
-                chars.next();
+                i += 1;
             }
             if !found_close { continue; }
+            let content: String = chars[start..i].iter().collect();
+            i += 1; // skip '}'
             let trimmed = content.trim();
             if trimmed.is_empty() { continue; }
             // Must start with a letter or underscore (not a digit)
@@ -441,45 +477,65 @@ fn has_interpolation(s: &str) -> bool {
             if trimmed.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '.' || c == '(' || c == ')') {
                 return true;
             }
+        } else {
+            i += 1;
         }
     }
     false
 }
 
-/// Parse "hello {name}, age {age}" into StringInterp parts
+/// Parse "hello {name}, age {age}" into StringInterp parts.
+/// Escaped braces `\{` and `\}` are treated as literal `{` and `}`.
+/// `\\` before a brace is a literal backslash (the brace starts interpolation).
 fn parse_string_interp(s: &str) -> Expr {
+    let chars: Vec<char> = s.chars().collect();
     let mut parts = Vec::new();
     let mut current = String::new();
-    let mut chars = s.chars().peekable();
+    let mut i = 0;
 
-    while let Some(c) = chars.next() {
-        if c == '{' {
+    while i < chars.len() {
+        if chars[i] == '\\' && i + 1 < chars.len() {
+            let next = chars[i + 1];
+            if next == '{' || next == '}' {
+                // \{ or \} → literal brace
+                current.push(next);
+                i += 2;
+                continue;
+            }
+            if next == '\\' {
+                // \\ → literal backslash
+                current.push('\\');
+                i += 2;
+                continue;
+            }
+            current.push(chars[i]);
+            i += 1;
+            continue;
+        }
+        if chars[i] == '{' {
             if !current.is_empty() {
                 parts.push(StringPart::Literal(current.clone()));
                 current.clear();
             }
+            i += 1; // skip '{'
             let mut expr_str = String::new();
-            while let Some(&c) = chars.peek() {
-                if c == '}' {
-                    chars.next();
-                    break;
-                }
-                expr_str.push(c);
-                chars.next();
+            while i < chars.len() && chars[i] != '}' {
+                expr_str.push(chars[i]);
+                i += 1;
             }
-            // Parse the expression inside braces — for simple cases, just an identifier
+            if i < chars.len() { i += 1; } // skip '}'
+
             let trimmed = expr_str.trim();
             if trimmed.contains('.') {
-                // Method call or field access: parse as tokens
                 let tokens = super::tokenize(trimmed);
                 let mut p = Parser::new(tokens);
-                // String interp expressions are simple — unwrap is safe here
                 parts.push(StringPart::Expr(p.parse_expr().unwrap()));
             } else {
                 parts.push(StringPart::Expr(Expr::Ident(trimmed.to_string())));
             }
         } else {
-            current.push(c);
+            current.push(chars[i]);
+            i += 1;
         }
     }
     if !current.is_empty() {
@@ -616,6 +672,39 @@ mod tests {
         let expr = p.parse_expr().unwrap();
         assert!(matches!(expr, Expr::String(_)),
             "numeric braces should not be interpolated, got: {:?}", expr);
+    }
+
+    // ─── Escaped braces ─────
+
+    #[test]
+    fn escaped_braces_literal() {
+        let mut p = Parser::new(tokenize(r#""\{name\}""#));
+        let expr = p.parse_expr().unwrap();
+        assert!(matches!(&expr, Expr::String(s) if s == "{name}"),
+            "escaped braces should produce literal string, got: {:?}", expr);
+    }
+
+    #[test]
+    fn escaped_brace_in_interpolated_string() {
+        // \{literal\} followed by real {interp}
+        let mut p = Parser::new(tokenize(r#""price: \{10\} for {name}""#));
+        let expr = p.parse_expr().unwrap();
+        assert!(matches!(expr, Expr::StringInterp(_)),
+            "mixed escaped + real interpolation should work, got: {:?}", expr);
+        if let Expr::StringInterp(parts) = expr {
+            // First part should be literal "price: {10} for "
+            if let StringPart::Literal(s) = &parts[0] {
+                assert!(s.contains("{10}"), "escaped brace should be literal, got: {}", s);
+            }
+        }
+    }
+
+    #[test]
+    fn only_escaped_braces_no_interpolation() {
+        let mut p = Parser::new(tokenize(r#""\{hello\}""#));
+        let expr = p.parse_expr().unwrap();
+        assert!(matches!(&expr, Expr::String(s) if s == "{hello}"),
+            "all-escaped braces should be plain string, got: {:?}", expr);
     }
 
     #[test]
