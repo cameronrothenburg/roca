@@ -7,10 +7,10 @@ Roca is a contractual language that compiles to JavaScript. It was born for AI-g
 Every function has three sections: **logic**, **crash**, **test**. The body is pure happy path. Errors are handled in crash blocks. Proof tests are mandatory.
 
 ```roca
+/// Greets a person by name
 pub fn greet(name: String) -> String {
     const trimmed = name.trim()
     return "Hello " + trimmed
-    crash { name.trim -> skip }
     test {
         self("cam") == "Hello cam"
         self(" cam ") == "Hello cam"

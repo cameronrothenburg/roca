@@ -32,7 +32,6 @@ Create `src/greet.roca`:
 /// Greets a user by name
 pub fn greet(name: String) -> String {
     return "Hello " + name.trim()
-    crash { name.trim -> skip }
     test {
         self("cam") == "Hello cam"
         self(" cam ") == "Hello cam"
