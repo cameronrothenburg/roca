@@ -17,10 +17,4 @@ pub extern contract Fs {
         err not_found = "directory not found"
         err permission = "permission denied"
     }
-    mock {
-        readFile -> ""
-        writeFile -> Ok
-        exists -> true
-        readDir -> []
-    }
 }

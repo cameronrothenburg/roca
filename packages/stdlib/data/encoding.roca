@@ -17,10 +17,4 @@ pub extern contract Encoding {
     atob(input: String) -> String, err {
         err invalid = "invalid base64 input"
     }
-    mock {
-        encode -> Bytes
-        decode -> "hello"
-        btoa -> "aGVsbG8="
-        atob -> "hello"
-    }
 }

@@ -245,7 +245,6 @@ mod tests {
         let e = errors(r#"
             extern fn fetch(url: String) -> String, err {
                 err net = "network error"
-                mock { fetch -> "ok" }
             }
             pub fn go(url: String) -> String, err {
                 let r, e = wait fetch(url)
@@ -265,7 +264,6 @@ mod tests {
         let e = errors(r#"
             extern fn fetch(url: String) -> String, err {
                 err net = "network error"
-                mock { fetch -> "ok" }
             }
             pub fn go(url: String) -> String {
                 let r, e = wait fetch(url)
@@ -284,7 +282,6 @@ mod tests {
         let e = errors(r#"
             extern fn fetch(url: String) -> String, err {
                 err net = "network error"
-                mock { fetch -> "ok" }
             }
             pub fn go(url: String) -> String {
                 let r, e = wait fetch(url)
@@ -303,7 +300,6 @@ mod tests {
         let e = errors(r#"
             extern fn fetch(url: String) -> String, err {
                 err net = "network error"
-                mock { fetch -> "ok" }
             }
             pub fn go(url: String) -> String {
                 let r, e = wait fetch(url)
@@ -322,7 +318,6 @@ mod tests {
         let e = errors(r#"
             extern fn fetch(url: String) -> String, err {
                 err net = "network error"
-                mock { fetch -> "ok" }
             }
             pub fn go(url: String) -> String {
                 let r, e = wait fetch(url)
@@ -341,7 +336,6 @@ mod tests {
         let e = errors(r#"
             extern fn fetch(url: String) -> String, err {
                 err net = "network error"
-                mock { fetch -> "ok" }
             }
             pub struct Api {
                 fetch(url: String) -> String {

@@ -174,7 +174,7 @@ fn type_to_arb(t: &roca::TypeRef, file: &roca::SourceFile) -> String {
             // Check for extern contract with mock — use the mock object
             for item in &file.items {
                 if let roca::Item::ExternContract(c) = item {
-                    if c.name == *name && c.mock.is_some() {
+                    if c.name == *name {
                         return format!("fc.constant(__mock_{})", name);
                     }
                 }

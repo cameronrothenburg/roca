@@ -12,5 +12,5 @@ pub use context::{CompiledFuncs, ValKind};
 pub use compile::{
     build_return_kind_map, build_enum_variant_map, build_struct_def_map,
     declare_all_functions, compile_closures, compile_function,
-    compile_struct_method, compile_mock_stub,
+    compile_struct_method, compile_mock_stub, compile_contract_stubs,
 };

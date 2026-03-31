@@ -3,7 +3,6 @@
 
 use super::crash::CrashBlock;
 use super::err::ErrDecl;
-use super::mock::MockDef;
 use super::stmt::Stmt;
 use super::test_block::TestBlock;
 use super::types::TypeRef;
@@ -29,7 +28,7 @@ pub enum Item {
     ExternFn(ExternFnDef),
 }
 
-/// extern fn name(params) -> ReturnType, err { err declarations, mock block }
+/// extern fn name(params) -> ReturnType, err { err declarations }
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExternFnDef {
     pub name: String,
@@ -38,7 +37,6 @@ pub struct ExternFnDef {
     pub return_type: TypeRef,
     pub returns_err: bool,
     pub errors: Vec<ErrDecl>,
-    pub mock: Option<MockDef>,
 }
 
 /// enum Name { key = value, ... } OR enum Name { Variant(Type) | Variant | ... }
@@ -127,7 +125,7 @@ pub enum Constraint {
 
 // ─── Contract ───────────────────────────────────────────
 
-/// contract Name<T, V: Constraint> { signatures, errors, mock }
+/// contract Name<T, V: Constraint> { signatures, fields, values }
 #[derive(Debug, Clone, PartialEq)]
 pub struct ContractDef {
     pub name: String,
@@ -136,7 +134,6 @@ pub struct ContractDef {
     pub type_params: Vec<TypeParam>,
     pub functions: Vec<FnSignature>,
     pub fields: Vec<Field>,
-    pub mock: Option<MockDef>,
     pub values: Vec<ContractValue>,
 }
 

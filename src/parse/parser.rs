@@ -89,9 +89,8 @@ impl Parser {
             }
         }
 
-        // Optional block with err declarations and/or mock
+        // Optional block with err declarations
         let mut errors = Vec::new();
-        let mut mock = None;
         if self.at(&Token::LBrace) {
             self.advance();
             while !self.at(&Token::RBrace) && !self.at(&Token::EOF) {
@@ -105,9 +104,21 @@ impl Parser {
                     };
                     errors.push(ErrDecl { name: err_name, message });
                 } else if self.at(&Token::Mock) {
-                    mock = Some(self.parse_mock_block()?);
+                    // Skip legacy mock blocks
+                    self.advance(); // consume "mock"
+                    if self.at(&Token::LBrace) {
+                        self.advance(); // consume "{"
+                        let mut depth = 1;
+                        while depth > 0 && !self.at(&Token::EOF) {
+                            match self.advance() {
+                                Token::LBrace => depth += 1,
+                                Token::RBrace => depth -= 1,
+                                _ => {}
+                            }
+                        }
+                    }
                 } else {
-                    return Err(self.err(format!("expected err or mock in extern fn block, got {:?}", self.peek())));
+                    return Err(self.err(format!("expected err in extern fn block, got {:?}", self.peek())));
                 }
             }
             self.expect(&Token::RBrace)?;
@@ -123,7 +134,6 @@ impl Parser {
             return_type,
             returns_err,
             errors,
-            mock,
         })
     }
 

@@ -7,12 +7,4 @@ pub extern contract Path {
     extension(path: String) -> String
     isAbsolute(path: String) -> Bool
     normalize(path: String) -> String
-    mock {
-        join -> ""
-        dirname -> ""
-        basename -> ""
-        extension -> ""
-        isAbsolute -> false
-        normalize -> ""
-    }
 }

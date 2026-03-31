@@ -81,7 +81,7 @@ fn parse_contract_with_mock() {
     let file = parse(src);
     if let Item::Contract(c) = &file.items[0] {
         assert_eq!(c.functions[0].errors.len(), 2);
-        assert!(c.mock.is_some());
+        // mock blocks are auto-generated from types — parsed but not stored
     }
 }
 
@@ -210,14 +210,14 @@ fn parse_extern_fn_no_errors() {
         assert_eq!(f.name, "log");
         assert!(!f.returns_err);
         assert!(f.errors.is_empty());
-        assert!(f.mock.is_none());
     } else {
         panic!("expected ExternFn");
     }
 }
 
 #[test]
-fn parse_extern_fn_with_mock() {
+fn parse_extern_fn_with_legacy_mock() {
+    // mock blocks are parsed but ignored — auto-stubs replace them
     let src = r#"
         extern fn globalFetch(url: String) -> NativeResponse, err {
             err network = "network error"
@@ -231,8 +231,6 @@ fn parse_extern_fn_with_mock() {
         assert_eq!(f.name, "globalFetch");
         assert!(f.returns_err);
         assert_eq!(f.errors.len(), 1);
-        assert!(f.mock.is_some());
-        assert_eq!(f.mock.as_ref().unwrap().entries.len(), 1);
     } else {
         panic!("expected ExternFn");
     }
@@ -309,7 +307,6 @@ fn extern_fn_with_no_block() {
         assert_eq!(f.return_type, TypeRef::Ok);
         assert!(!f.returns_err);
         assert!(f.errors.is_empty());
-        assert!(f.mock.is_none());
     } else {
         panic!("expected ExternFn");
     }

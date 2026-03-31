@@ -97,7 +97,7 @@ mod tests {
     }
 
     #[test]
-    fn invalid_mock_ref_caught() {
+    fn struct_test_without_mock() {
         let e = errors(r#"
             pub struct User {
                 name: String
@@ -110,32 +110,33 @@ mod tests {
             }
             pub fn make() -> User {
                 return User { name: "test" }
-                test { self() == __mock_User }
+                test { self() == User { name: "test" } }
             }
         "#);
-        assert!(e.iter().any(|e| e.code == "invalid-mock-ref"),
-            "expected invalid-mock-ref for struct without mock, got: {:?}", e);
+        assert!(!e.iter().any(|e| e.code == "missing-test"),
+            "struct with test should pass, got: {:?}", e);
     }
 
     #[test]
-    fn valid_mock_ref_allowed() {
+    fn extern_contract_no_mock_block_needed() {
+        // Extern contracts don't need mock blocks — auto-stubs handle test isolation
         let e = errors(r#"
             extern contract Store {
                 getAll() -> String, err {
                     err fail = "fail"
                 }
-                mock { getAll -> "[]" }
             }
             pub struct Env { store: Store }{}
             pub fn go(env: Env) -> String {
                 const data = wait env.store.getAll()
                 return data
                 crash { env.store.getAll -> halt }
-                test { self(Env { store: __mock_Store }) is Ok }
+                test { self(Env { store: Store }) is Ok }
             }
         "#);
-        assert!(!e.iter().any(|e| e.code == "invalid-mock-ref"),
-            "valid mock ref should pass, got: {:?}", e);
+        // Should not have mock-related errors
+        assert!(!e.iter().any(|e| e.code == "invalid-mock-ref" || e.code == "mock-null"),
+            "should not have mock-related errors: {:?}", e);
     }
 
     #[test]
@@ -191,7 +192,7 @@ impl Rule for TestsRule {
         };
 
         check_test_coverage(f, declared_errors, &ctx.func.qualified_name, &mut errors);
-        check_mock_refs(f, ctx.check.file, ctx.check.source_dir.as_deref(), &ctx.func.qualified_name, &mut errors);
+        // Mock refs removed — auto-stubs replace manual mocks
         errors
     }
 }
@@ -239,21 +240,21 @@ fn check_mock_refs(f: &FnDef, file: &SourceFile, source_dir: Option<&std::path::
 
     let mut valid_mocks: HashSet<String> = file.items.iter().filter_map(|item| {
         match item {
-            Item::Contract(c) if c.mock.is_some() => Some(c.name.clone()),
-            Item::ExternContract(c) if c.mock.is_some() => Some(c.name.clone()),
+            Item::Contract(c) => Some(c.name.clone()),
+            Item::ExternContract(c) => Some(c.name.clone()),
             _ => None,
         }
     }).collect();
 
-    // Also check imported files for mock blocks
+    // Also check imported files for contracts (all contracts have auto-stubs now)
     for item in &file.items {
         if let Item::Import(imp) = item {
             if let ImportSource::Path(path) = &imp.source {
                 if let Some(imported) = crate::resolve::try_load_roca_file_from(path, source_dir) {
                     for imp_item in &imported.items {
                         match imp_item {
-                            Item::Contract(c) if c.mock.is_some() => { valid_mocks.insert(c.name.clone()); }
-                            Item::ExternContract(c) if c.mock.is_some() => { valid_mocks.insert(c.name.clone()); }
+                            Item::Contract(c) => { valid_mocks.insert(c.name.clone()); }
+                            Item::ExternContract(c) => { valid_mocks.insert(c.name.clone()); }
                             _ => {}
                         }
                     }

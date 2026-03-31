@@ -21,15 +21,10 @@ impl Parser {
 
         let mut functions = Vec::new();
         let mut fields = Vec::new();
-        let mut mock = None;
         let mut values = Vec::new();
 
         while !self.at(&Token::RBrace) && !self.at(&Token::EOF) {
             match self.peek() {
-                // Mock block
-                Token::Mock => {
-                    mock = Some(self.parse_mock_block()?);
-                }
                 // Error declaration on contract-level (shouldn't happen at top level)
                 Token::Err => {
                     return Err(self.err("err declarations must be inside function signatures"));
@@ -68,6 +63,21 @@ impl Parser {
                         functions.push(self.parse_fn_signature()?);
                     }
                 }
+                // Legacy mock block — skip entirely
+                Token::Mock => {
+                    self.advance(); // consume "mock"
+                    if self.at(&Token::LBrace) {
+                        self.advance(); // consume "{"
+                        let mut depth = 1;
+                        while depth > 0 && !self.at(&Token::EOF) {
+                            match self.advance() {
+                                Token::LBrace => depth += 1,
+                                Token::RBrace => depth -= 1,
+                                _ => {}
+                            }
+                        }
+                    }
+                }
                 // Identifier — could be a field or function signature
                 Token::Ident(_) => {
                     if matches!(self.peek_ahead(1), Token::Colon) {
@@ -94,7 +104,6 @@ impl Parser {
             type_params,
             functions,
             fields,
-            mock,
             values,
         })
     }

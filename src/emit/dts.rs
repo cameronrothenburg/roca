@@ -309,7 +309,6 @@ mod tests {
         let dts = emit_dts(&parse::parse(r#"
             extern fn fetch(url: String) -> String, err {
                 err net = "net"
-                mock { fetch -> "ok" }
             }
             pub fn load(url: String) -> String {
                 const data = wait fetch(url)

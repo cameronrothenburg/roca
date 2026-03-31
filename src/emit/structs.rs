@@ -7,7 +7,7 @@ use oxc_ast::NONE;
 use oxc_ast::AstBuilder;
 use oxc_span::SPAN;
 
-use super::ast_helpers::{param, formal_params, function_body, prop_key, field_access, ident};
+use super::ast_helpers::{param, formal_params, function_body, prop_key};
 use super::statements::build_stmt;
 
 /// Build a struct as a class declaration, including satisfies methods

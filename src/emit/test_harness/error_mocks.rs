@@ -11,9 +11,7 @@ fn collect_extern_contracts(files: &[&roca::SourceFile]) -> Vec<(String, Vec<roc
     for file in files {
         for item in &file.items {
             if let roca::Item::ExternContract(c) = item {
-                if c.mock.is_some() {
-                    result.push((c.name.clone(), c.functions.clone()));
-                }
+                result.push((c.name.clone(), c.functions.clone()));
             }
         }
     }
@@ -106,7 +104,7 @@ fn generate_error_tests_for_fn(
             continue;
         }
 
-        let mock_var = format!("__mock_{}", contract_name);
+        let mock_var = contract_name.to_string();
 
         for err_decl in &sig.errors {
             let err_name = &err_decl.name;

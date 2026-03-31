@@ -5,12 +5,12 @@ use cranelift_codegen::ir::{types, AbiParam, InstBuilder};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_module::{Module, Linkage, FuncId};
 
-use crate::ast::{self as roca, Expr};
+use crate::ast::{self as roca};
 use crate::native::types::roca_to_cranelift;
 use crate::native::runtime::RuntimeFuncs;
-use crate::native::helpers::{alloc_slot, default_for_ir_type};
+use crate::native::helpers::alloc_slot;
 use super::context::{CompiledFuncs, EmitCtx, ValKind, StructLayout, VarInfo};
-use super::helpers::{type_ref_to_kind, emit_scope_cleanup, infer_kind};
+use super::helpers::{type_ref_to_kind, emit_scope_cleanup};
 use super::expr::emit_expr;
 use super::stmt::emit_stmt;
 use super::methods::emit_param_constraints;
@@ -25,6 +25,11 @@ pub fn build_return_kind_map(source: &roca::SourceFile) -> HashMap<String, ValKi
             }
             roca::Item::ExternFn(ef) => {
                 map.insert(ef.name.clone(), type_ref_to_kind(&ef.return_type));
+            }
+            roca::Item::ExternContract(c) => {
+                for sig in &c.functions {
+                    map.insert(format!("{}.{}", c.name, sig.name), type_ref_to_kind(&sig.return_type));
+                }
             }
             _ => {}
         }
@@ -478,6 +483,57 @@ pub fn compile_mock_stub<M: Module>(
         .map_err(|e| format!("compile mock {}: {}", extern_fn.name, e))?;
     module.clear_context(&mut ctx);
     Ok(func_id)
+}
+
+/// Compile auto-stubs for all methods in an extern contract.
+/// Each method gets a JIT function named "Contract.method" that returns a default value.
+pub fn compile_contract_stubs<M: Module>(
+    module: &mut M,
+    contract: &roca::ContractDef,
+    rt: &RuntimeFuncs,
+    compiled: &mut CompiledFuncs,
+) -> Result<(), String> {
+    for sig_def in &contract.functions {
+        let qualified = format!("{}.{}", contract.name, sig_def.name);
+        if compiled.funcs.contains_key(&qualified) { continue; }
+
+        let mut sig = module.make_signature();
+        for param in &sig_def.params {
+            sig.params.push(AbiParam::new(roca_to_cranelift(&param.type_ref)));
+        }
+        sig.returns.push(AbiParam::new(roca_to_cranelift(&sig_def.return_type)));
+        if sig_def.returns_err {
+            sig.returns.push(AbiParam::new(types::I8));
+        }
+
+        let func_id = module.declare_function(&qualified, Linkage::Export, &sig)
+            .map_err(|e| format!("declare stub {}: {}", qualified, e))?;
+        compiled.funcs.insert(qualified.clone(), func_id);
+
+        let mut ctx = module.make_context();
+        ctx.func.signature = sig;
+        let mut bc = FunctionBuilderContext::new();
+        let mut builder = FunctionBuilder::new(&mut ctx.func, &mut bc);
+
+        let entry = builder.create_block();
+        builder.append_block_params_for_function_params(entry);
+        builder.switch_to_block(entry);
+        builder.seal_block(entry);
+
+        let ret_val = default_value(&mut builder, &sig_def.return_type);
+        if sig_def.returns_err {
+            let no_err = builder.ins().iconst(types::I8, 0);
+            builder.ins().return_(&[ret_val, no_err]);
+        } else {
+            builder.ins().return_(&[ret_val]);
+        }
+
+        builder.finalize();
+        module.define_function(func_id, &mut ctx)
+            .map_err(|e| format!("compile stub {}: {}", qualified, e))?;
+        module.clear_context(&mut ctx);
+    }
+    Ok(())
 }
 
 pub fn default_value(b: &mut FunctionBuilder, ty: &roca::TypeRef) -> cranelift_codegen::ir::Value {

@@ -1,0 +1,39 @@
+// Deep stdlib tests: Url contract
+
+import { Url } from std::url
+
+/// Test
+pub fn test_parse_valid(raw: String) -> String, err {
+    const parsed = Url.parse(raw)
+    return Url.host(parsed)
+crash {
+    Url.parse -> halt
+}
+    test {
+        self("https://example.com/path") is Ok
+    }
+}
+
+/// Test
+pub fn test_parse_invalid(raw: String) -> String, err {
+    const parsed = Url.parse(raw)
+    return Url.host(parsed)
+crash {
+    Url.parse -> halt
+}
+    test {
+        self("not a url") is err.invalid_url
+    }
+}
+
+/// Test
+pub fn test_parse_fallback(raw: String) -> String {
+    const parsed = Url.parse(raw)
+    return Url.protocol(parsed)
+crash {
+    Url.parse -> fallback(Url)
+}
+    test {
+        self("https://example.com") is Ok
+    }
+}

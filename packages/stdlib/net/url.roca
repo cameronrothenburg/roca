@@ -33,20 +33,4 @@ pub extern contract Url {
     hasParam(name: String) -> Bool
     /// Convert to string (same as href)
     toString() -> String
-    mock {
-        parse -> Url
-        isValid -> true
-        href -> "https://example.com"
-        origin -> "https://example.com"
-        protocol -> "https:"
-        hostname -> "example.com"
-        host -> "example.com"
-        port -> ""
-        pathname -> "/"
-        search -> ""
-        hash -> ""
-        getParam -> "value"
-        hasParam -> true
-        toString -> "https://example.com"
-    }
 }

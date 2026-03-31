@@ -104,23 +104,33 @@ pub(crate) fn generate_mock_patches(file: &roca::SourceFile, is_embed: bool) -> 
     }
 
     for item in &file.items {
-        if let roca::Item::ExternFn(f) = item {
-            if let Some(mock_def) = &f.mock {
+        match item {
+            roca::Item::ExternFn(f) => {
+                let mock_def = super::values::auto_mock_def_for_extern_fn(f);
                 for entry in &mock_def.entries {
                     let mock_val = emit_expr_js(&entry.value);
-                    // Wrap in {value, err} tuple if the extern fn returns errors
                     let return_val = if f.returns_err {
                         format!("{{ value: {}, err: null }}", mock_val)
                     } else {
                         mock_val
                     };
                     patches.push(format!(
-                        "globalThis.{name} = async function() {{ return {val}; }};",
+                        "globalThis.{name} = function() {{ return {val}; }};",
                         name = f.name,
                         val = return_val,
                     ));
                 }
             }
+            roca::Item::ExternContract(c) => {
+                // Patch real contract methods with auto-stub values
+                for sig in &c.functions {
+                    patches.push(format!(
+                        "{name}.{method} = __mock_{name}.{method};",
+                        name = c.name, method = sig.name,
+                    ));
+                }
+            }
+            _ => {}
         }
     }
 

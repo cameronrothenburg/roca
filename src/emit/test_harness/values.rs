@@ -38,3 +38,36 @@ pub(crate) fn mock_value_for_type(t: &roca::TypeRef) -> String {
         _ => "null".to_string(),
     }
 }
+
+/// Generate a default Roca expression for a type — used for auto-stubs.
+pub(crate) fn default_expr_for_type(ty: &roca::TypeRef) -> roca::Expr {
+    match ty {
+        roca::TypeRef::String => roca::Expr::String("".into()),
+        roca::TypeRef::Number => roca::Expr::Number(0.0),
+        roca::TypeRef::Bool => roca::Expr::Bool(false),
+        roca::TypeRef::Ok => roca::Expr::Null,
+        roca::TypeRef::Named(_) => roca::Expr::Null,
+        roca::TypeRef::Generic(name, _) if name == "Array" => roca::Expr::Array(vec![]),
+        _ => roca::Expr::Null,
+    }
+}
+
+/// Auto-generate a MockDef from contract/extern fn signatures.
+pub(crate) fn auto_mock_def(sigs: &[roca::FnSignature]) -> roca::MockDef {
+    roca::MockDef {
+        entries: sigs.iter().map(|s| roca::MockEntry {
+            method: s.name.clone(),
+            value: default_expr_for_type(&s.return_type),
+        }).collect(),
+    }
+}
+
+/// Auto-generate a MockDef for a single extern fn.
+pub(crate) fn auto_mock_def_for_extern_fn(ef: &roca::ExternFnDef) -> roca::MockDef {
+    roca::MockDef {
+        entries: vec![roca::MockEntry {
+            method: ef.name.clone(),
+            value: default_expr_for_type(&ef.return_type),
+        }],
+    }
+}

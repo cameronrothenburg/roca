@@ -100,7 +100,6 @@ mod tests {
         let e = errors(r#"
             extern fn fetch(url: String) -> String, err {
                 err net = "net"
-                mock { fetch -> "ok" }
             }
             fn go() -> String, err {
                 let r, e = wait fetch("x")
@@ -117,7 +116,6 @@ mod tests {
         let e = errors(r#"
             extern fn fetch(url: String) -> String, err {
                 err net = "net"
-                mock { fetch -> "ok" }
             }
             fn go() -> String, err {
                 let r, e = wait fetch("x")

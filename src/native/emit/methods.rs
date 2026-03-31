@@ -95,13 +95,21 @@ pub fn emit_method_call(b: &mut FunctionBuilder, target: &Expr, method: &str, ar
         }
     }
 
-    // Struct static method call: Counter.current(c)
+    // Struct static method / extern contract method call: Counter.current(c), Fs.readFile(path)
     if let Expr::Ident(type_name) = target {
         let qualified = format!("{}.{}", type_name, method);
         if let Some(&func_ref) = ctx.get_func(&qualified) {
             let arg_vals: Vec<Value> = args.iter().map(|a| emit_expr(b, a, ctx)).collect();
             let call = b.ins().call(func_ref, &arg_vals);
-            let results = b.inst_results(call);
+            let results = b.inst_results(call).to_vec();
+            if results.len() >= 2 {
+                let value = results[0];
+                let err_tag = results[1];
+                if let Some(handler) = ctx.crash_handlers.get(&qualified).cloned() {
+                    return emit_crash_handler(b, value, err_tag, &handler, ctx);
+                }
+                return value;
+            }
             if !results.is_empty() { return results[0]; }
         }
     }

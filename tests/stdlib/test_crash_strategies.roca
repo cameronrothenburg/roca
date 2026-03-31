@@ -1,0 +1,85 @@
+// Deep tests: every crash strategy on error-returning functions
+
+import { Fs } from std::fs
+
+// Strategy: fallback — swallow error, use default value
+/// Test
+pub fn crash_fallback(path: String) -> String {
+    const content = Fs.readFile(path)
+    return content
+crash {
+    Fs.readFile -> fallback("default")
+}
+    test {
+        self("/missing") == "default"
+    }
+}
+
+// Strategy: skip — swallow error, continue with null
+/// Test
+pub fn crash_skip(path: String) -> String {
+    const content = Fs.readFile(path)
+    return "completed"
+crash {
+    Fs.readFile -> skip
+}
+    test {
+        self("/missing") == "completed"
+    }
+}
+
+// Strategy: halt — propagate error to caller
+/// Test
+pub fn crash_halt(path: String) -> String, err {
+    const content = Fs.readFile(path)
+    return content
+crash {
+    Fs.readFile -> halt
+}
+    test {
+        self("/any") is Ok
+    }
+}
+
+// Strategy: log |> fallback — log then recover
+/// Test
+pub fn crash_log_fallback(path: String) -> String {
+    const content = Fs.readFile(path)
+    return content
+crash {
+    Fs.readFile -> log |> fallback("logged-and-recovered")
+}
+    test {
+        self("/missing") == "logged-and-recovered"
+    }
+}
+
+// Strategy: log |> halt — log then propagate
+/// Test
+pub fn crash_log_halt(path: String) -> String, err {
+    const content = Fs.readFile(path)
+    return content
+crash {
+    Fs.readFile -> log |> halt
+}
+    test {
+        self("/any") is Ok
+    }
+}
+
+// Detailed: different strategies per error type
+/// Test
+pub fn crash_detailed(path: String) -> String, err {
+    const content = Fs.readFile(path)
+    return content
+crash {
+    Fs.readFile {
+        err.not_found -> fallback("not found")
+        err.permission -> halt
+        default -> log |> halt
+    }
+}
+    test {
+        self("/missing") is Ok
+    }
+}

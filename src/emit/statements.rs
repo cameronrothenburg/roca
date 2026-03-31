@@ -162,25 +162,20 @@ pub(crate) fn build_stmt<'a>(
             result
         }
         roca::Stmt::Return(expr) => {
-            // Check if the return expression is a crash-handled call with fallback
-            // Fallback changes the value, so we need to unwrap before returning
+            // Crash-handled calls must be unwrapped before returning to avoid double-wrapping.
+            // The crash handler extracts .value from the error tuple — the return just needs
+            // to wrap that extracted value in { value, err: null } if returns_err.
             if let Some(handler) = find_crash_handler(expr, crash) {
-                let is_fallback = match &handler.strategy {
-                    roca::CrashHandlerKind::Simple(chain) => chain.iter().any(|s| matches!(s, roca::CrashStep::Fallback(_))),
-                    _ => false,
-                };
-                if is_fallback {
-                    let call_expr = build_expr(ast, expr);
-                    let tmp_name = "_ret";
-                    let mut stmts = wrap_with_strategy(ast, call_expr, tmp_name, &handler.strategy, expr, returns_err);
-                    let ret_val = ident(ast, tmp_name);
-                    if returns_err {
-                        stmts.push(ast.statement_return(SPAN, Some(make_result(ast, ret_val, null(ast)))));
-                    } else {
-                        stmts.push(ast.statement_return(SPAN, Some(ret_val)));
-                    }
-                    return stmts;
+                let call_expr = build_expr(ast, expr);
+                let tmp_name = "_ret";
+                let mut stmts = wrap_with_strategy(ast, call_expr, tmp_name, &handler.strategy, expr, returns_err);
+                let ret_val = ident(ast, tmp_name);
+                if returns_err {
+                    stmts.push(ast.statement_return(SPAN, Some(make_result(ast, ret_val, null(ast)))));
+                } else {
+                    stmts.push(ast.statement_return(SPAN, Some(ret_val)));
                 }
+                return stmts;
             }
 
             let val = build_expr(ast, expr);

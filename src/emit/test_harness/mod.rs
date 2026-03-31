@@ -77,14 +77,12 @@ pub fn emit_tests(file: &roca::SourceFile, import_path: &str) -> Option<(String,
         for item in &mock_file.items {
             match item {
                 roca::Item::Contract(c) => {
-                    if let Some(mock_def) = &c.mock {
-                        emit_mock_object(&ast, &c.name, mock_def, false, &c.functions, &mut body);
-                    }
+                    let mock_def = values::auto_mock_def(&c.functions);
+                    emit_mock_object(&ast, &c.name, &mock_def, false, &c.functions, &mut body);
                 }
                 roca::Item::ExternContract(c) => {
-                    if let Some(mock_def) = &c.mock {
-                        emit_mock_object(&ast, &c.name, mock_def, true, &c.functions, &mut body);
-                    }
+                    let mock_def = values::auto_mock_def(&c.functions);
+                    emit_mock_object(&ast, &c.name, &mock_def, true, &c.functions, &mut body);
                 }
                 _ => {}
             }

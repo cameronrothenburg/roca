@@ -8,9 +8,4 @@ pub extern contract Process {
     }
     exit(code: Number) -> Ok
     cwd() -> String
-    mock {
-        args -> []
-        exit -> Ok
-        cwd -> "."
-    }
 }

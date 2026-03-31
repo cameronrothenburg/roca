@@ -33,10 +33,15 @@ pub fn compile_all<M: Module>(
     emit::declare_all_functions(module, source, &mut compiled)?;
 
     for item in &source.items {
-        if let crate::ast::Item::ExternFn(ef) = item {
-            if let Some(mock) = &ef.mock {
-                emit::compile_mock_stub(module, ef, mock, &rt, &mut compiled)?;
+        match item {
+            crate::ast::Item::ExternFn(ef) => {
+                let mock = crate::emit::test_harness::values::auto_mock_def_for_extern_fn(ef);
+                emit::compile_mock_stub(module, ef, &mock, &rt, &mut compiled)?;
             }
+            crate::ast::Item::ExternContract(c) => {
+                emit::compile_contract_stubs(module, c, &rt, &mut compiled)?;
+            }
+            _ => {}
         }
     }
 

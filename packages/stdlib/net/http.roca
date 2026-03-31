@@ -46,16 +46,4 @@ pub extern contract Http {
     }
     /// Get a response header by name — null if missing
     header(name: String) -> Optional<String>
-    mock {
-        get -> Http
-        post -> Http
-        put -> Http
-        patch -> Http
-        delete -> Http
-        status -> 200
-        ok -> true
-        text -> "mock body"
-        json -> "mock"
-        header -> "text/plain"
-    }
 }

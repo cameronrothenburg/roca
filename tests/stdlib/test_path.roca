@@ -1,0 +1,51 @@
+// Deep stdlib tests: Path contract
+
+import { Path } from std::path
+
+/// Test
+pub fn test_join(base: String, seg: String) -> String {
+    return Path.join(base, seg)
+    test {
+        self("/usr", "bin") == "/usr/bin"
+        self(".", "file.txt") == "./file.txt"
+    }
+}
+
+/// Test
+pub fn test_dirname(p: String) -> String {
+    return Path.dirname(p)
+    test {
+        self("/usr/bin/roca") == "/usr/bin"
+        self("file.txt") == "."
+    }
+}
+
+/// Test
+pub fn test_basename(p: String) -> String {
+    return Path.basename(p)
+    test {
+        self("/usr/bin/roca") == "roca"
+        self("/file.txt") == "file.txt"
+    }
+}
+
+/// Test
+pub fn test_extension(p: String) -> String {
+    return Path.extension(p)
+    test {
+        self("file.txt") == ".txt"
+        self("archive.tar.gz") == ".gz"
+        self("no-ext") == ""
+    }
+}
+
+/// Test
+pub fn test_combined(dir: String, name: String) -> String {
+    const full = Path.join(dir, name)
+    const ext = Path.extension(full)
+    return ext
+    test {
+        self("/src", "main.rs") == ".rs"
+        self(".", "readme.md") == ".md"
+    }
+}

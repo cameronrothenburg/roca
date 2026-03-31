@@ -10,8 +10,4 @@ pub extern contract Time {
     parse(input: String) -> Number, err {
         err parse_failed = "invalid date string"
     }
-    mock {
-        now -> 1711800000000
-        parse -> 1711800000000
-    }
 }

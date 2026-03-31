@@ -1,0 +1,87 @@
+// Deep stdlib tests: Fs contract — all error paths and crash strategies
+
+import { Fs } from std::fs
+
+/// Test
+pub fn test_read_with_fallback(path: String) -> String {
+    const content = Fs.readFile(path)
+    return content
+crash {
+    Fs.readFile -> fallback("default content")
+}
+    test {
+        self("/nonexistent") == "default content"
+    }
+}
+
+/// Test
+pub fn test_read_with_skip(path: String) -> String {
+    const content = Fs.readFile(path)
+    return "done"
+crash {
+    Fs.readFile -> skip
+}
+    test {
+        self("/any") == "done"
+    }
+}
+
+/// Test
+pub fn test_read_halt(path: String) -> String, err {
+    const content = Fs.readFile(path)
+    return content
+crash {
+    Fs.readFile -> halt
+}
+    test {
+        self("/nonexistent") is err.not_found
+    }
+}
+
+/// Test
+pub fn test_read_detailed(path: String) -> String, err {
+    const content = Fs.readFile(path)
+    return content
+crash {
+    Fs.readFile {
+        err.not_found -> fallback("missing")
+        err.permission -> halt
+        default -> log |> halt
+    }
+}
+    test {
+        self("/nonexistent") is Ok
+    }
+}
+
+/// Test
+pub fn test_write_halt(path: String, content: String) -> Ok, err {
+    Fs.writeFile(path, content)
+    return Ok
+crash {
+    Fs.writeFile -> halt
+}
+    test {
+        self("/tmp/test", "data") is Ok
+    }
+}
+
+/// Test
+pub fn test_exists() -> Bool {
+    return Fs.exists("/tmp")
+    test {
+        self() is Ok
+    }
+}
+
+/// Test
+pub fn test_readdir_halt(path: String) -> Number, err {
+    const entries = Fs.readDir(path)
+    return entries.length
+crash {
+    Fs.readDir -> halt
+}
+    test {
+        self("/nonexistent") is err.not_found
+    }
+}

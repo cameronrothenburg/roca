@@ -430,35 +430,32 @@ fn native_test_runner_failing() {
 }
 
 #[test]
-fn mock_extern_fn() {
+fn auto_stub_extern_fn() {
+    // Auto-stub returns default for Number (0.0) — no mock block needed
     let mut m = jit(r#"
-        extern fn fetch_price() -> Number {
-        mock {
-            fetch_price -> 42
-        }}
+        extern fn fetch_price() -> Number
         pub fn get_price() -> Number {
             return fetch_price()
         }
     "#);
     let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "get_price", 0)) };
-    assert_eq!(f(), 42.0);
+    assert_eq!(f(), 0.0); // auto-stub returns default Number
 }
 
 #[test]
-fn mock_extern_fn_with_err() {
+fn auto_stub_extern_fn_with_err() {
+    // Auto-stub returns default String ("") with no error — crash fallback not triggered
     let source = crate::parse::parse(r#"
         extern fn load(id: Number) -> String, err {
             err not_found = "not found"
-        mock {
-            load -> "cached"
-        }}
+        }
         pub fn safe_load(id: Number) -> String {
             return load(id)
         crash {
             load -> fallback("default")
         }
         test {
-            self(1) == "cached"
+            self(1) == ""
         }}
     "#);
     let result = test_runner::run_tests(&source);
