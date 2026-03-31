@@ -117,6 +117,32 @@ pub fn build_return_kind_map(source: &roca::SourceFile) -> HashMap<String, ValKi
     map
 }
 
+/// Declare all functions in the module (signatures only, no bodies).
+/// This enables forward references — any function can call any other.
+pub fn declare_all_functions<M: Module>(
+    module: &mut M,
+    source: &roca::SourceFile,
+    compiled: &mut CompiledFuncs,
+) -> Result<(), String> {
+    for item in &source.items {
+        if let roca::Item::Function(f) = item {
+            if compiled.funcs.contains_key(&f.name) { continue; }
+            let mut sig = module.make_signature();
+            for param in &f.params {
+                sig.params.push(AbiParam::new(roca_to_cranelift(&param.type_ref)));
+            }
+            sig.returns.push(AbiParam::new(roca_to_cranelift(&f.return_type)));
+            if f.returns_err {
+                sig.returns.push(AbiParam::new(types::I8));
+            }
+            let func_id = module.declare_function(&f.name, Linkage::Export, &sig)
+                .map_err(|e| format!("declare {}: {}", f.name, e))?;
+            compiled.funcs.insert(f.name.clone(), func_id);
+        }
+    }
+    Ok(())
+}
+
 /// Pre-compile all closures in a source file as top-level functions.
 /// Each closure gets a unique name based on its params and body hash.
 pub fn compile_closures<M: Module>(

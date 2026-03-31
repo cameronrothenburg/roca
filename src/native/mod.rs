@@ -31,7 +31,10 @@ pub fn compile_all<M: Module>(
     // Build function return kind map from all definitions
     let func_return_kinds = emit::build_return_kind_map(source);
 
-    // Compile mock stubs for extern fns before user functions
+    // Pass 1: Declare all functions (signatures only) for forward references
+    emit::declare_all_functions(module, source, &mut compiled)?;
+
+    // Compile mock stubs for extern fns
     for item in &source.items {
         if let crate::ast::Item::ExternFn(ef) = item {
             if let Some(mock) = &ef.mock {
@@ -43,6 +46,7 @@ pub fn compile_all<M: Module>(
     // Pre-compile closures as top-level functions
     emit::compile_closures(module, source, &rt, &mut compiled, &func_return_kinds)?;
 
+    // Pass 2: Define all function bodies
     for item in &source.items {
         if let crate::ast::Item::Function(f) = item {
             emit::compile_function(module, f, &rt, &mut compiled, &func_return_kinds)?;
@@ -791,6 +795,60 @@ mod tests {
 
     #[test]
     // ─── Integration Tests (real coding patterns) ──────
+
+    #[test]
+    fn forward_reference_calls() {
+        // Caller defined BEFORE callee — tests forward references
+        let mut m = jit(r#"
+            pub fn caller() -> Number {
+                return callee(5)
+            }
+            pub fn callee(n: Number) -> Number {
+                return n * 3
+            }
+        "#);
+        let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "caller", 0)) };
+        assert_eq!(f(), 15.0);
+    }
+
+    #[test]
+    fn forward_reference_chain() {
+        // A → B → C where A is defined first, C is defined last
+        let mut m = jit(r#"
+            pub fn step_a() -> Number {
+                return step_b() + 1
+            }
+            pub fn step_b() -> Number {
+                return step_c() + 10
+            }
+            pub fn step_c() -> Number {
+                return 100
+            }
+        "#);
+        let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "step_a", 0)) };
+        assert_eq!(f(), 111.0); // 100 + 10 + 1
+    }
+
+    #[test]
+    fn mutual_recursion() {
+        // Two functions that call each other
+        let mut m = jit(r#"
+            pub fn is_even(n: Number) -> Number {
+                if n == 0 { return 1 }
+                return is_odd(n - 1)
+            }
+            pub fn is_odd(n: Number) -> Number {
+                if n == 0 { return 0 }
+                return is_even(n - 1)
+            }
+        "#);
+        let even = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "is_even", 1)) };
+        let odd = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "is_odd", 1)) };
+        assert_eq!(even(4.0), 1.0);
+        assert_eq!(even(3.0), 0.0);
+        assert_eq!(odd(3.0), 1.0);
+        assert_eq!(odd(4.0), 0.0);
+    }
 
     #[test]
     fn integration_validate_and_transform() {
