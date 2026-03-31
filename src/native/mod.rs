@@ -49,8 +49,21 @@ pub fn compile_all<M: Module>(
 
     // Pass 2: Define all function bodies
     for item in &source.items {
-        if let crate::ast::Item::Function(f) = item {
-            emit::compile_function(module, f, &rt, &mut compiled, &func_return_kinds, &enum_variants)?;
+        match item {
+            crate::ast::Item::Function(f) => {
+                emit::compile_function(module, f, &rt, &mut compiled, &func_return_kinds, &enum_variants)?;
+            }
+            crate::ast::Item::Struct(s) => {
+                for method in &s.methods {
+                    emit::compile_struct_method(module, method, &s.name, &s.fields, &rt, &mut compiled, &func_return_kinds, &enum_variants)?;
+                }
+            }
+            crate::ast::Item::Satisfies(sat) => {
+                for method in &sat.methods {
+                    emit::compile_struct_method(module, method, &sat.struct_name, &[], &rt, &mut compiled, &func_return_kinds, &enum_variants)?;
+                }
+            }
+            _ => {}
         }
     }
     Ok(())
@@ -873,6 +886,45 @@ mod tests {
     }
 
     #[test]
+    fn struct_method_self_read() {
+        let mut m = jit(r#"
+            pub struct Counter {
+                count: Number
+            }{
+                fn current() -> Number {
+                    return self.count
+                }
+            }
+            pub fn test_method() -> Number {
+                const c = Counter { count: 10 }
+                return Counter.current(c)
+            }
+        "#);
+        let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "test_method", 0)) };
+        assert_eq!(f(), 10.0);
+    }
+
+    #[test]
+    fn struct_method_self_write() {
+        let mut m = jit(r#"
+            pub struct Counter {
+                count: Number
+            }{
+                fn increment() -> Number {
+                    self.count = self.count + 1
+                    return self.count
+                }
+            }
+            pub fn test_write() -> Number {
+                let c = Counter { count: 5 }
+                return Counter.increment(c)
+            }
+        "#);
+        let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "test_write", 0)) };
+        assert_eq!(f(), 6.0);
+    }
+
+    #[test]
     fn forward_reference_calls() {
         // Caller defined BEFORE callee — tests forward references
         let mut m = jit(r#"
@@ -1059,14 +1111,13 @@ mod tests {
     }
 
     // ─── Memory Tests ──────────────────────────────────
-    // All memory tests acquire MEM_TEST_LOCK to prevent parallel interference.
-    // Pattern: lock → reset → compile → run → assert exact counts.
+    // Thread-local counters — no lock needed, tests run in parallel safely.
+    // Pattern: reset → compile → run → assert exact counts.
 
     macro_rules! mem_test {
         ($name:ident, $body:block) => {
             #[test]
             fn $name() {
-                let _lock = runtime::MEM_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
                 runtime::MEM.reset();
                 $body
             }
@@ -1076,12 +1127,12 @@ mod tests {
     mem_test!(rc_alloc_and_release, {
         let ptr = runtime::roca_rc_alloc(32);
         assert_ne!(ptr, 0);
-        assert_eq!(runtime::MEM.allocs.load(std::sync::atomic::Ordering::SeqCst), 1);
-        assert_eq!(runtime::MEM.frees.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert_eq!(runtime::MEM.stats().0, 1);
+        assert_eq!(runtime::MEM.stats().1, 0);
 
         runtime::roca_rc_release(ptr);
-        assert_eq!(runtime::MEM.frees.load(std::sync::atomic::Ordering::SeqCst), 1);
-        assert_eq!(runtime::MEM.live_bytes.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert_eq!(runtime::MEM.stats().1, 1);
+        assert_eq!(runtime::MEM.stats().4, 0);
     });
 
     mem_test!(rc_retain_delays_free, {
@@ -1089,10 +1140,10 @@ mod tests {
         runtime::roca_rc_retain(ptr); // refcount 2
 
         runtime::roca_rc_release(ptr); // refcount 1
-        assert_eq!(runtime::MEM.frees.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert_eq!(runtime::MEM.stats().1, 0);
 
         runtime::roca_rc_release(ptr); // refcount 0, freed
-        assert_eq!(runtime::MEM.frees.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(runtime::MEM.stats().1, 1);
     });
 
     mem_test!(rc_null_is_safe, {
@@ -1103,7 +1154,7 @@ mod tests {
 
     mem_test!(rc_multiple_allocs_all_freed, {
         let ptrs: Vec<i64> = (0..10).map(|_| runtime::roca_rc_alloc(24)).collect();
-        assert_eq!(runtime::MEM.allocs.load(std::sync::atomic::Ordering::SeqCst), 10);
+        assert_eq!(runtime::MEM.stats().0, 10);
         for ptr in ptrs { runtime::roca_rc_release(ptr); }
         runtime::MEM.assert_clean();
     });

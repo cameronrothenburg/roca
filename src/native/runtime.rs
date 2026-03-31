@@ -10,8 +10,7 @@ use cranelift_codegen::ir::types;
 use cranelift_jit::JITBuilder;
 use cranelift_module::{Module, Linkage, FuncId};
 use std::ffi::CStr;
-use std::sync::atomic::{AtomicU64, AtomicI64, Ordering};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Define all runtime functions in one place.
 /// Format: (emit_key, symbol_name, fn_ptr, [param_types], [return_types])
@@ -218,8 +217,7 @@ extern "C" fn roca_string_index_of(haystack: i64, needle: i64) -> f64 {
 
 extern "C" fn roca_array_new() -> i64 {
     let ptr = Box::into_raw(Box::new(Vec::<i64>::new())) as i64;
-    MEM.allocs.fetch_add(1, Ordering::SeqCst);
-    MEM.live_bytes.fetch_add(32, Ordering::SeqCst); // approximate Vec overhead
+    MEM.track_alloc(32);
     ptr
 }
 
@@ -256,10 +254,9 @@ extern "C" fn roca_array_join(arr: i64, sep: i64) -> i64 {
 }
 
 extern "C" fn roca_struct_alloc(num_fields: i64) -> i64 {
-    let size = 24 + num_fields as i64 * 8; // Vec overhead + fields
+    let size = 24 + num_fields as i64 * 8;
     let ptr = Box::into_raw(Box::new(vec![0i64; num_fields as usize])) as i64;
-    MEM.allocs.fetch_add(1, Ordering::SeqCst);
-    MEM.live_bytes.fetch_add(size, Ordering::SeqCst);
+    MEM.track_alloc(size);
     ptr
 }
 
@@ -295,61 +292,74 @@ extern "C" fn roca_struct_get_ptr(ptr: i64, idx: i64) -> i64 {
 //
 // Payload is accessed at ptr + 8.
 
-/// Global memory tracker for testing — counts allocs, frees, retains, releases.
-/// Set `debug` to true to print every memory operation.
+/// Thread-local memory tracker — each test thread has its own counters.
+/// This eliminates race conditions between parallel tests.
 pub struct MemTracker {
-    pub allocs: AtomicU64,
-    pub frees: AtomicU64,
-    pub retains: AtomicU64,
-    pub releases: AtomicU64,
-    pub live_bytes: AtomicI64,
-    pub debug: std::sync::atomic::AtomicBool,
+    pub debug: AtomicBool,
+}
+
+thread_local! {
+    static TL_ALLOCS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    static TL_FREES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    static TL_RETAINS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    static TL_RELEASES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    static TL_LIVE_BYTES: std::cell::Cell<i64> = const { std::cell::Cell::new(0) };
 }
 
 pub static MEM: MemTracker = MemTracker {
-    allocs: AtomicU64::new(0),
-    frees: AtomicU64::new(0),
-    retains: AtomicU64::new(0),
-    releases: AtomicU64::new(0),
-    live_bytes: AtomicI64::new(0),
-    debug: std::sync::atomic::AtomicBool::new(false),
+    debug: AtomicBool::new(false),
 };
-
-/// Lock for serializing memory tests. Hold this while running a test that checks MEM.
-pub static MEM_TEST_LOCK: Mutex<()> = Mutex::new(());
 
 impl MemTracker {
     pub fn set_debug(&self, on: bool) {
         self.debug.store(on, Ordering::SeqCst);
     }
 
-    fn is_debug(&self) -> bool {
+    pub fn is_debug(&self) -> bool {
         self.debug.load(Ordering::SeqCst)
     }
 
     pub fn reset(&self) {
-        self.allocs.store(0, Ordering::SeqCst);
-        self.frees.store(0, Ordering::SeqCst);
-        self.retains.store(0, Ordering::SeqCst);
-        self.releases.store(0, Ordering::SeqCst);
-        self.live_bytes.store(0, Ordering::SeqCst);
+        TL_ALLOCS.with(|c| c.set(0));
+        TL_FREES.with(|c| c.set(0));
+        TL_RETAINS.with(|c| c.set(0));
+        TL_RELEASES.with(|c| c.set(0));
+        TL_LIVE_BYTES.with(|c| c.set(0));
     }
 
     pub fn stats(&self) -> (u64, u64, u64, u64, i64) {
         (
-            self.allocs.load(Ordering::SeqCst),
-            self.frees.load(Ordering::SeqCst),
-            self.retains.load(Ordering::SeqCst),
-            self.releases.load(Ordering::SeqCst),
-            self.live_bytes.load(Ordering::SeqCst),
+            TL_ALLOCS.with(|c| c.get()),
+            TL_FREES.with(|c| c.get()),
+            TL_RETAINS.with(|c| c.get()),
+            TL_RELEASES.with(|c| c.get()),
+            TL_LIVE_BYTES.with(|c| c.get()),
         )
     }
 
     pub fn assert_clean(&self) {
         let (allocs, frees, ..) = self.stats();
         assert_eq!(allocs, frees, "memory leak: {} allocs but only {} frees", allocs, frees);
-        let live = self.live_bytes.load(Ordering::SeqCst);
+        let live = TL_LIVE_BYTES.with(|c| c.get());
         assert_eq!(live, 0, "live bytes should be 0 but got {}", live);
+    }
+
+    pub fn track_alloc(&self, bytes: i64) {
+        TL_ALLOCS.with(|c| c.set(c.get() + 1));
+        TL_LIVE_BYTES.with(|c| c.set(c.get() + bytes));
+    }
+
+    pub fn track_free(&self, bytes: i64) {
+        TL_FREES.with(|c| c.set(c.get() + 1));
+        TL_LIVE_BYTES.with(|c| c.set(c.get() - bytes));
+    }
+
+    pub fn track_retain(&self) {
+        TL_RETAINS.with(|c| c.set(c.get() + 1));
+    }
+
+    pub fn track_release(&self) {
+        TL_RELEASES.with(|c| c.set(c.get() + 1));
     }
 }
 
@@ -381,8 +391,7 @@ pub extern "C" fn roca_rc_alloc(payload_size: i64) -> i64 {
         *(base as *mut i64) = 1;                      // refcount = 1
         *((base as *mut i64).add(1)) = total as i64;  // total size
     }
-    MEM.allocs.fetch_add(1, Ordering::SeqCst);
-    MEM.live_bytes.fetch_add(total as i64, Ordering::SeqCst);
+    MEM.track_alloc(total as i64);
     // Return pointer to payload, not header
     unsafe { base.add(RC_HEADER_SIZE) as i64 }
 }
@@ -393,7 +402,7 @@ pub extern "C" fn roca_rc_retain(ptr: i64) {
     let header = rc_header(ptr);
     unsafe { *header += 1; }
     let new_rc = unsafe { *header };
-    MEM.retains.fetch_add(1, Ordering::SeqCst);
+    MEM.track_retain();
     if MEM.is_debug() {
         let s = read_cstr(ptr);
         eprintln!("  [mem] retain {:#x} rc={} \"{}\"", ptr, new_rc, s);
@@ -406,8 +415,7 @@ pub extern "C" fn roca_free_array(ptr: i64) {
     if MEM.is_debug() { eprintln!("  [mem] free_array {:#x}", ptr); }
     let v = unsafe { Box::from_raw(ptr as *mut Vec<i64>) };
     drop(v);
-    MEM.frees.fetch_add(1, Ordering::SeqCst);
-    MEM.live_bytes.fetch_sub(32, Ordering::SeqCst);
+    MEM.track_free(32);
 }
 
 /// Free a struct (Vec<i64>). Releases the first n_heap_fields slots as RC pointers.
@@ -425,14 +433,13 @@ pub extern "C" fn roca_free_struct(ptr: i64, n_heap_fields: i64) {
     let v = unsafe { Box::from_raw(ptr as *mut Vec<i64>) };
     let size = 24 + v.len() as i64 * 8;
     drop(v);
-    MEM.frees.fetch_add(1, Ordering::SeqCst);
-    MEM.live_bytes.fetch_sub(size, Ordering::SeqCst);
+    MEM.track_free(size);
 }
 
 /// Decrement refcount. Free if zero. Takes payload pointer.
 pub extern "C" fn roca_rc_release(ptr: i64) {
     if ptr == 0 { return; }
-    MEM.releases.fetch_add(1, Ordering::SeqCst);
+    MEM.track_release();
     let header = rc_header(ptr);
     let rc = unsafe { &mut *header };
     *rc -= 1;
@@ -444,11 +451,10 @@ pub extern "C" fn roca_rc_release(ptr: i64) {
         let total_size = unsafe { *header.add(1) } as usize;
         if total_size < RC_HEADER_SIZE {
             // Corrupted header — skip dealloc to avoid UB, but still track
-            MEM.frees.fetch_add(1, Ordering::SeqCst);
+            MEM.track_free(0);
             return;
         }
-        MEM.frees.fetch_add(1, Ordering::SeqCst);
-        MEM.live_bytes.fetch_sub(total_size as i64, Ordering::SeqCst);
+        MEM.track_free(total_size as i64);
         let base = unsafe { (ptr as *mut u8).sub(RC_HEADER_SIZE) };
         let layout = std::alloc::Layout::from_size_align(total_size, 8).unwrap();
         unsafe { std::alloc::dealloc(base, layout); }

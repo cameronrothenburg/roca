@@ -41,14 +41,18 @@ pub enum ValKind {
     Other, // unknown — not freed at scope exit (safety: only free what we can identify)
 }
 
-/// Tracks struct field layouts for field access by index.
+/// Tracks struct field layouts for field access by index and type.
 struct StructLayout {
-    fields: Vec<String>,
+    fields: Vec<(String, ValKind)>,
 }
 
 impl StructLayout {
     fn field_index(&self, name: &str) -> Option<usize> {
-        self.fields.iter().position(|f| f == name)
+        self.fields.iter().position(|(f, _)| f == name)
+    }
+
+    fn field_kind(&self, name: &str) -> ValKind {
+        self.fields.iter().find(|(f, _)| f == name).map(|(_, k)| *k).unwrap_or(ValKind::Other)
     }
 }
 
@@ -143,9 +147,24 @@ pub fn declare_all_functions<M: Module>(
     compiled: &mut CompiledFuncs,
 ) -> Result<(), String> {
     for item in &source.items {
-        if let roca::Item::Function(f) = item {
-            if compiled.funcs.contains_key(&f.name) { continue; }
+        let fns_to_declare: Vec<(&roca::FnDef, Option<&str>)> = match item {
+            roca::Item::Function(f) => vec![(f, None)],
+            roca::Item::Struct(s) => s.methods.iter().map(|m| (m, Some(s.name.as_str()))).collect(),
+            roca::Item::Satisfies(sat) => sat.methods.iter().map(|m| (m, Some(sat.struct_name.as_str()))).collect(),
+            _ => vec![],
+        };
+        for (f, struct_name) in fns_to_declare {
+            let qualified = if let Some(sn) = struct_name {
+                format!("{}.{}", sn, f.name)
+            } else {
+                f.name.clone()
+            };
+            if compiled.funcs.contains_key(&qualified) { continue; }
             let mut sig = module.make_signature();
+            // Struct methods get `self` (I64 struct pointer) as first param
+            if struct_name.is_some() {
+                sig.params.push(AbiParam::new(types::I64));
+            }
             for param in &f.params {
                 sig.params.push(AbiParam::new(roca_to_cranelift(&param.type_ref)));
             }
@@ -153,9 +172,9 @@ pub fn declare_all_functions<M: Module>(
             if f.returns_err {
                 sig.returns.push(AbiParam::new(types::I8));
             }
-            let func_id = module.declare_function(&f.name, Linkage::Export, &sig)
-                .map_err(|e| format!("declare {}: {}", f.name, e))?;
-            compiled.funcs.insert(f.name.clone(), func_id);
+            let func_id = module.declare_function(&qualified, Linkage::Export, &sig)
+                .map_err(|e| format!("declare {}: {}", qualified, e))?;
+            compiled.funcs.insert(qualified, func_id);
         }
     }
     Ok(())
@@ -369,6 +388,114 @@ pub fn compile_function<M: Module>(
 
     module.define_function(func_id, &mut ctx)
         .map_err(|e| format!("compile error in {}: {}", func.name, e))?;
+    module.clear_context(&mut ctx);
+    Ok(func_id)
+}
+
+/// Compile a struct method. `self` is the first parameter (struct pointer).
+/// Field access via self.field uses struct_get by field index.
+pub fn compile_struct_method<M: Module>(
+    module: &mut M,
+    func: &roca::FnDef,
+    struct_name: &str,
+    fields: &[roca::Field],
+    rt: &RuntimeFuncs,
+    compiled: &mut CompiledFuncs,
+    func_return_kinds: &HashMap<String, ValKind>,
+    enum_variants: &HashMap<String, Vec<String>>,
+) -> Result<FuncId, String> {
+    let qualified = format!("{}.{}", struct_name, func.name);
+
+    // Signature: self (I64) + params
+    let mut sig = module.make_signature();
+    sig.params.push(AbiParam::new(types::I64)); // self
+    for param in &func.params {
+        sig.params.push(AbiParam::new(roca_to_cranelift(&param.type_ref)));
+    }
+    sig.returns.push(AbiParam::new(roca_to_cranelift(&func.return_type)));
+    if func.returns_err {
+        sig.returns.push(AbiParam::new(types::I8));
+    }
+
+    let func_id = module.declare_function(&qualified, Linkage::Export, &sig)
+        .map_err(|e| format!("declare method {}: {}", qualified, e))?;
+    compiled.funcs.insert(qualified.clone(), func_id);
+
+    let mut ctx = module.make_context();
+    ctx.func.signature = sig;
+    let mut bc = FunctionBuilderContext::new();
+    let mut builder = FunctionBuilder::new(&mut ctx.func, &mut bc);
+
+    let entry = builder.create_block();
+    builder.append_block_params_for_function_params(entry);
+    builder.switch_to_block(entry);
+    builder.seal_block(entry);
+
+    let ret_type = roca_to_cranelift(&func.return_type);
+    let mut crash_handlers = HashMap::new();
+    if let Some(crash) = &func.crash {
+        for handler in &crash.handlers {
+            crash_handlers.insert(handler.call.clone(), handler.strategy.clone());
+        }
+    }
+    let mut emit_ctx = EmitCtx {
+        vars: HashMap::new(),
+        func_refs: rt.import_all(module, &mut builder.func, compiled),
+        returns_err: func.returns_err,
+        return_type: ret_type,
+        struct_layouts: HashMap::new(),
+        var_struct_type: HashMap::new(),
+        crash_handlers,
+        func_return_kinds: func_return_kinds.clone(),
+        enum_variants: enum_variants.clone(),
+        live_heap_vars: Vec::new(),
+        loop_heap_base: 0,
+        loop_exit: None,
+        loop_header: None,
+    };
+
+    // Register struct field layout for self.field access
+    let field_info: Vec<(String, ValKind)> = fields.iter().map(|f| {
+        (f.name.clone(), type_ref_to_kind(&f.type_ref))
+    }).collect();
+    emit_ctx.struct_layouts.insert(struct_name.to_string(), StructLayout { fields: field_info });
+    emit_ctx.var_struct_type.insert("self".to_string(), struct_name.to_string());
+
+    // Store params: self is block_params[0], then regular params
+    let block_params: Vec<Value> = builder.block_params(entry).to_vec();
+    let self_slot = alloc_slot(&mut builder, block_params[0]);
+    // self is borrowed — store in vars but NOT in live_heap_vars (don't free at scope exit)
+    emit_ctx.vars.insert("self".to_string(), VarInfo {
+        slot: self_slot, cranelift_type: types::I64, kind: ValKind::Struct, is_heap: false,
+    });
+
+    for (i, p) in func.params.iter().enumerate() {
+        let cl_type = roca_to_cranelift(&p.type_ref);
+        let slot = alloc_slot(&mut builder, block_params[i + 1]);
+        emit_ctx.set_var(p.name.clone(), slot, cl_type);
+    }
+
+    // Emit body
+    let mut returned = false;
+    for stmt in &func.body {
+        if returned { break; }
+        emit_stmt(&mut builder, stmt, &mut emit_ctx, &mut returned);
+    }
+
+    if !returned {
+        emit_scope_cleanup(&mut builder, &emit_ctx, None);
+        let default_val = default_value(&mut builder, &func.return_type);
+        if func.returns_err {
+            let no_err = builder.ins().iconst(types::I8, 0);
+            builder.ins().return_(&[default_val, no_err]);
+        } else {
+            builder.ins().return_(&[default_val]);
+        }
+    }
+
+    builder.finalize();
+    module.define_function(func_id, &mut ctx)
+        .map_err(|e| format!("compile method {}: {}", qualified, e))?;
     module.clear_context(&mut ctx);
     Ok(func_id)
 }
@@ -799,7 +926,12 @@ fn emit_stmt(b: &mut FunctionBuilder, stmt: &Stmt, ctx: &mut EmitCtx, returned: 
             }
         }
         Stmt::FieldAssign { target, field, value } => {
-            if let Expr::Ident(var_name) = target {
+            let var_name = match target {
+                Expr::Ident(name) => Some(name.as_str()),
+                Expr::SelfRef => Some("self"),
+                _ => None,
+            };
+            if let Some(var_name) = var_name {
                 if let Some(struct_name) = ctx.var_struct_type.get(var_name).cloned() {
                     if let Some(layout) = ctx.struct_layouts.get(&struct_name) {
                         if let Some(idx) = layout.field_index(field) {
@@ -950,6 +1082,13 @@ fn emit_expr(b: &mut FunctionBuilder, expr: &Expr, ctx: &mut EmitCtx) -> Value {
             icmp_to_i64(b, ir::condcodes::IntCC::Equal, val, zero)
         }
         Expr::Closure { params, body } => emit_closure(b, params, body, ctx),
+        Expr::SelfRef => {
+            if let Some(var) = ctx.get_var("self") {
+                load_slot(b, var.slot, var.cranelift_type)
+            } else {
+                b.ins().iconst(types::I64, 0)
+            }
+        }
         Expr::Null => b.ins().iconst(types::I64, 0),
         Expr::StringInterp(parts) => emit_string_interp(b, parts, ctx),
         Expr::Match { value, arms } => emit_match(b, value, arms, ctx),
@@ -1185,17 +1324,30 @@ fn emit_field_access(b: &mut FunctionBuilder, target: &Expr, field: &str, ctx: &
         }
     }
 
-    // Check if target is a struct variable
-    if let Expr::Ident(var_name) = target {
-        if let Some(struct_name) = ctx.var_struct_type.get(var_name) {
-            if let Some(layout) = ctx.struct_layouts.get(struct_name) {
+    // Check if target is a struct variable (including self)
+    let var_name = match target {
+        Expr::Ident(name) => Some(name.as_str()),
+        Expr::SelfRef => Some("self"),
+        _ => None,
+    };
+    if let Some(var_name) = var_name {
+        if let Some(struct_name) = ctx.var_struct_type.get(var_name).cloned() {
+            if let Some(layout) = ctx.struct_layouts.get(&struct_name) {
                 if let Some(idx) = layout.field_index(field) {
+                    let field_kind = layout.field_kind(field);
                     let obj = emit_expr(b, target, ctx);
                     let idx_val = b.ins().iconst(types::I64, idx as i64);
-                    // TODO: track field types properly. For now, try f64 first.
-                    if let Some(f) = ctx.get_func("__struct_get_f64") {
-                        return call_rt(b, *f, &[obj, idx_val]);
-                    }
+                    return match field_kind {
+                        ValKind::Number => {
+                            if let Some(f) = ctx.get_func("__struct_get_f64") { call_rt(b, *f, &[obj, idx_val]) }
+                            else { b.ins().f64const(0.0) }
+                        }
+                        _ => {
+                            // String, Array, Struct, EnumVariant, Other — all are I64 pointers
+                            if let Some(f) = ctx.get_func("__struct_get_ptr") { call_rt(b, *f, &[obj, idx_val]) }
+                            else { b.ins().iconst(types::I64, 0) }
+                        }
+                    };
                 }
             }
         }
@@ -1393,7 +1545,7 @@ fn emit_struct_lit(b: &mut FunctionBuilder, name: &str, fields: &[(String, Expr)
     // Register layout if not already known
     if !ctx.struct_layouts.contains_key(name) {
         ctx.struct_layouts.insert(name.to_string(), StructLayout {
-            fields: fields.iter().map(|(n, _)| n.clone()).collect(),
+            fields: fields.iter().map(|(n, v)| (n.clone(), infer_kind(v, ctx))).collect(),
         });
     }
 
@@ -1475,6 +1627,18 @@ fn emit_method_call(b: &mut FunctionBuilder, target: &Expr, method: &str, args: 
     if let Expr::Ident(name) = target {
         if ctx.enum_variants.get(name).map_or(false, |vs| vs.contains(&method.to_string())) {
             return emit_enum_variant(b, method, args, ctx);
+        }
+    }
+
+    // Check if this is a struct static method call: Counter.current(c)
+    // Resolves to compiled function "Counter.current" with args as (self, ...)
+    if let Expr::Ident(type_name) = target {
+        let qualified = format!("{}.{}", type_name, method);
+        if let Some(&func_ref) = ctx.get_func(&qualified) {
+            let arg_vals: Vec<Value> = args.iter().map(|a| emit_expr(b, a, ctx)).collect();
+            let call = b.ins().call(func_ref, &arg_vals);
+            let results = b.inst_results(call);
+            if !results.is_empty() { return results[0]; }
         }
     }
 
