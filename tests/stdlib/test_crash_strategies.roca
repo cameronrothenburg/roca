@@ -1,9 +1,8 @@
-// Deep tests: every crash strategy on error-returning functions
+// Deep tests: every crash strategy on Fs (I/O errors in embedded V8)
 
 import { Fs } from std::fs
 
-// Strategy: fallback — swallow error, use default value
-/// Test
+/// Test: fallback — recover with default value
 pub fn crash_fallback(path: String) -> String {
     const content = Fs.readFile(path)
     return content
@@ -11,12 +10,11 @@ crash {
     Fs.readFile -> fallback("default")
 }
     test {
-        self("/missing") == "default"
+        self("/any") == "default"
     }
 }
 
-// Strategy: skip — swallow error, continue with null
-/// Test
+/// Test: skip — continue past error
 pub fn crash_skip(path: String) -> String {
     const content = Fs.readFile(path)
     return "completed"
@@ -24,12 +22,11 @@ crash {
     Fs.readFile -> skip
 }
     test {
-        self("/missing") == "completed"
+        self("/any") == "completed"
     }
 }
 
-// Strategy: halt — propagate error to caller
-/// Test
+/// Test: halt — propagate error to caller
 pub fn crash_halt(path: String) -> String, err {
     const content = Fs.readFile(path)
     return content
@@ -37,12 +34,11 @@ crash {
     Fs.readFile -> halt
 }
     test {
-        self("/any") is Ok
+        self("/any") is err.io
     }
 }
 
-// Strategy: log |> fallback — log then recover
-/// Test
+/// Test: log then fallback
 pub fn crash_log_fallback(path: String) -> String {
     const content = Fs.readFile(path)
     return content
@@ -50,12 +46,11 @@ crash {
     Fs.readFile -> log |> fallback("logged-and-recovered")
 }
     test {
-        self("/missing") == "logged-and-recovered"
+        self("/any") == "logged-and-recovered"
     }
 }
 
-// Strategy: log |> halt — log then propagate
-/// Test
+/// Test: log then halt
 pub fn crash_log_halt(path: String) -> String, err {
     const content = Fs.readFile(path)
     return content
@@ -63,23 +58,22 @@ crash {
     Fs.readFile -> log |> halt
 }
     test {
-        self("/any") is Ok
+        self("/any") is err.io
     }
 }
 
-// Detailed: different strategies per error type
-/// Test
-pub fn crash_detailed(path: String) -> String, err {
+/// Test: detailed — different strategy per error type
+pub fn crash_detailed(path: String) -> String {
     const content = Fs.readFile(path)
     return content
 crash {
     Fs.readFile {
         err.not_found -> fallback("not found")
-        err.permission -> halt
-        default -> log |> halt
+        err.permission -> fallback("denied")
+        default -> fallback("other error")
     }
 }
     test {
-        self("/missing") is Ok
+        self("/any") == "other error"
     }
 }

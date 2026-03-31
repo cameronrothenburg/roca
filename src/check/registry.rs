@@ -35,7 +35,7 @@ static STDLIB_AST: LazyLock<SourceFile> = LazyLock::new(|| crate::parse::parse(S
 
 /// Stdlib modules — loaded dynamically from the stdlib directory.
 /// The module name maps to stdlib/{name}.roca
-fn stdlib_module(name: &str) -> Option<String> {
+pub fn load_stdlib_module(name: &str) -> Option<String> {
     let exe = std::env::current_exe().ok()?;
     let exe_dir = exe.parent()?;
 
@@ -111,7 +111,7 @@ impl ContractRegistry {
                 }
                 Item::Import(imp) => {
                     if let ImportSource::Std(Some(module)) = &imp.source {
-                        if let Some(src) = stdlib_module(module) {
+                        if let Some(src) = load_stdlib_module(module) {
                             if let Ok(parsed) = crate::parse::try_parse(&src) {
                                 // Load only the imported names
                                 for imp_item in &parsed.items {

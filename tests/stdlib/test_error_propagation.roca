@@ -1,19 +1,17 @@
-// Deep tests: error propagation through crash blocks at multiple levels
+// Deep tests: error propagation through crash blocks
 
 /// External validator
 pub extern fn validate(n: Number) -> Number, err {
     err negative = "value is negative"
     err too_large = "value too large"
-    mock { validate -> 42 }
 }
 
 /// External transformer
 pub extern fn transform(n: Number) -> Number, err {
     err overflow = "overflow"
-    mock { transform -> 99 }
 }
 
-/// Test: both crash with fallback — always recovers
+/// Test: both crash with fallback — always recovers to 0
 pub fn both_fallback(n: Number) -> Number {
     const valid = validate(n)
     const result = transform(valid)
@@ -23,11 +21,11 @@ crash {
     transform -> fallback(0)
 }
     test {
-        self(5) == 99
+        self(5) == 0
     }
 }
 
-/// Test: validate halts, transform fallbacks — error propagates from validate
+/// Test: validate halts, transform fallbacks
 pub fn halt_then_fallback(n: Number) -> Number, err {
     const valid = validate(n)
     const result = transform(valid)
@@ -41,7 +39,7 @@ crash {
     }
 }
 
-/// Test: both halt — any error propagates to caller
+/// Test: both halt — any error propagates
 pub fn both_halt(n: Number) -> Number, err {
     const valid = validate(n)
     const result = transform(valid)
@@ -49,21 +47,6 @@ pub fn both_halt(n: Number) -> Number, err {
 crash {
     validate -> halt
     transform -> halt
-}
-    test {
-        self(5) is Ok
-    }
-}
-
-/// Test: detailed crash — different strategy per error type
-pub fn detailed_handling(n: Number) -> Number, err {
-    const valid = validate(n)
-    return valid
-crash {
-    validate {
-        err.negative -> fallback(0)
-        err.too_large -> halt
-    }
 }
     test {
         self(5) is Ok

@@ -61,10 +61,20 @@ pub fn emit_tests(file: &roca::SourceFile, import_path: &str) -> Option<(String,
     let mut imported_files: Vec<(String, roca::SourceFile)> = Vec::new();
     for item in &file.items {
         if let roca::Item::Import(imp) = item {
-            if let roca::ImportSource::Path(path) = &imp.source {
-                if let Some(parsed) = crate::resolve::try_load_roca_file(path) {
-                    imported_files.push((path.clone(), parsed));
+            match &imp.source {
+                roca::ImportSource::Path(path) => {
+                    if let Some(parsed) = crate::resolve::try_load_roca_file(path) {
+                        imported_files.push((path.clone(), parsed));
+                    }
                 }
+                roca::ImportSource::Std(Some(module)) => {
+                    if let Some(source) = crate::check::registry::load_stdlib_module(module) {
+                        if let Ok(parsed) = crate::parse::try_parse(&source) {
+                            imported_files.push((format!("std::{}", module), parsed));
+                        }
+                    }
+                }
+                _ => {}
             }
         }
     }
@@ -130,7 +140,7 @@ pub fn emit_tests(file: &roca::SourceFile, import_path: &str) -> Option<(String,
     let program = ast.program(SPAN, SourceType::mjs(), source_text, ast.vec(), None, ast.vec(), body);
     let test_code = Codegen::new().build(&program).code;
 
-    let mock_patches = generate_mock_patches(file, import_path == "__embed__");
+    let mock_patches = generate_mock_patches(&mock_files, import_path == "__embed__");
 
     let summary_js = "console.log(_passed + \" passed, \" + _failed + \" failed\");\nif (_failed > 0) process.exit(1);";
 

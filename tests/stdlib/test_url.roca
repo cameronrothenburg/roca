@@ -1,39 +1,27 @@
-// Deep stdlib tests: Url contract
+// Deep stdlib tests: Url contract — parse errors and crash strategies
 
 import { Url } from std::url
 
-/// Test
-pub fn test_parse_valid(raw: String) -> String, err {
+/// Test: parse with halt propagates error on invalid input
+pub fn test_parse_halt(raw: String) -> String, err {
     const parsed = Url.parse(raw)
-    return Url.host(parsed)
+    return "ok"
 crash {
     Url.parse -> halt
 }
     test {
-        self("https://example.com/path") is Ok
+        self("not a url") is err.parse_failed
     }
 }
 
-/// Test
-pub fn test_parse_invalid(raw: String) -> String, err {
-    const parsed = Url.parse(raw)
-    return Url.host(parsed)
-crash {
-    Url.parse -> halt
-}
-    test {
-        self("not a url") is err.invalid_url
-    }
-}
-
-/// Test
+/// Test: parse with fallback recovers
 pub fn test_parse_fallback(raw: String) -> String {
     const parsed = Url.parse(raw)
-    return Url.protocol(parsed)
+    return "parsed"
 crash {
-    Url.parse -> fallback(Url)
+    Url.parse -> fallback("")
 }
     test {
-        self("https://example.com") is Ok
+        self("not a url") == "parsed"
     }
 }

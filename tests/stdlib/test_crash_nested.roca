@@ -1,10 +1,9 @@
 // Deep tests: nested crash blocks — error propagation through 3 levels
-// Note: inline tests run against mocks which return success values.
-// Error injection is handled by the auto-generated error mock tests.
+// In embedded V8, Fs calls fail with err.io. Tests verify crash chains handle this.
 
 import { Fs } from std::fs
 
-/// Test: level C halts errors from Fs
+/// Test: level C halts — propagates I/O error
 pub fn level_c(path: String) -> String, err {
     const content = Fs.readFile(path)
     return content
@@ -12,11 +11,11 @@ crash {
     Fs.readFile -> halt
 }
     test {
-        self("/any") is Ok
+        self("/any") is err.io
     }
 }
 
-/// Test: level B calls C, provides fallback on error
+/// Test: level B catches C's error with fallback
 pub fn level_b(path: String) -> String {
     const result = level_c(path)
     return result
@@ -24,16 +23,16 @@ crash {
     level_c -> fallback("b-default")
 }
     test {
-        self("/any") == ""
+        self("/any") == "b-default"
     }
 }
 
-/// Test: level A calls B which always succeeds
+/// Test: level A calls B which always recovers
 pub fn level_a(path: String) -> String {
     const text = level_b(path)
     return text.toUpperCase()
     test {
-        self("/any") == ""
+        self("/any") == "B-DEFAULT"
     }
 }
 
@@ -45,7 +44,7 @@ crash {
     Fs.readFile -> halt
 }
     test {
-        self("/any") is Ok
+        self("/any") is err.io
     }
 }
 
@@ -57,11 +56,11 @@ crash {
     strict_c -> halt
 }
     test {
-        self("/any") is Ok
+        self("/any") is err.io
     }
 }
 
-/// Test: strict A halts from B
+/// Test: strict A halts from B — error bubbles up 3 levels
 pub fn strict_a(path: String) -> String, err {
     const text = strict_b(path)
     return text
@@ -69,6 +68,6 @@ crash {
     strict_b -> halt
 }
     test {
-        self("/any") is Ok
+        self("/any") is err.io
     }
 }
