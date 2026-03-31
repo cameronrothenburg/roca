@@ -1,0 +1,30 @@
+// Integration: closures and higher-order functions
+
+pub fn apply(n: Number, f: fn(Number) -> Number) -> Number {
+    return f(n)
+}
+
+pub fn apply_twice(n: Number, f: fn(Number) -> Number) -> Number {
+    return f(f(n))
+}
+
+pub fn compose() -> Number {
+    const inc = fn(x) -> x + 1
+    const dbl = fn(x) -> x * 2
+    const a = apply_twice(3, inc)
+    const b = apply_twice(3, dbl)
+    return a + b
+}
+
+pub fn pipeline_closures() -> Number {
+    const step1 = fn(x) -> x + 10
+    const step2 = fn(x) -> x * 3
+    return apply(apply(5, step1), step2)
+}
+
+test {
+    compose() == 17
+    pipeline_closures() == 45
+    apply(10, fn(x) -> x * 2) == 20
+    apply_twice(1, fn(x) -> x + 5) == 11
+}
