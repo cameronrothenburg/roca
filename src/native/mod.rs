@@ -1102,6 +1102,75 @@ mod tests {
         assert_eq!(f(99.0), 100.0);
     }
 
+    // ─── File I/O Tests ────────────────────────────────
+
+    #[test]
+    fn fs_read_file() {
+        let tmp = std::env::temp_dir().join("roca_test_read.txt");
+        std::fs::write(&tmp, "hello roca").unwrap();
+        let path_cstr = format!("{}\0", tmp.display());
+        let (ptr, err) = runtime::roca_fs_read_file(path_cstr.as_ptr() as i64);
+        assert_eq!(err, 0, "should succeed");
+        assert_ne!(ptr, 0);
+        let content = unsafe { std::ffi::CStr::from_ptr(ptr as *const i8) }.to_str().unwrap();
+        assert_eq!(content, "hello roca");
+        std::fs::remove_file(&tmp).ok();
+    }
+
+    #[test]
+    fn fs_read_file_not_found() {
+        let path = "/tmp/roca_nonexistent_file_12345.txt\0";
+        let (_, err) = runtime::roca_fs_read_file(path.as_ptr() as i64);
+        assert_eq!(err, 1, "should return not_found error tag");
+    }
+
+    #[test]
+    fn fs_write_file() {
+        let tmp = std::env::temp_dir().join("roca_test_write.txt");
+        let path_cstr = format!("{}\0", tmp.display());
+        let content = "written by roca\0";
+        let err = runtime::roca_fs_write_file(
+            path_cstr.as_ptr() as i64,
+            content.as_ptr() as i64,
+        );
+        assert_eq!(err, 0, "should succeed");
+        let read_back = std::fs::read_to_string(&tmp).unwrap();
+        assert_eq!(read_back, "written by roca");
+        std::fs::remove_file(&tmp).ok();
+    }
+
+    #[test]
+    fn fs_exists() {
+        let tmp = std::env::temp_dir().join("roca_test_exists.txt");
+        std::fs::write(&tmp, "x").unwrap();
+        let path_cstr = format!("{}\0", tmp.display());
+        assert_eq!(runtime::roca_fs_exists(path_cstr.as_ptr() as i64), 1);
+        std::fs::remove_file(&tmp).ok();
+        assert_eq!(runtime::roca_fs_exists(path_cstr.as_ptr() as i64), 0);
+    }
+
+    #[test]
+    fn fs_read_dir() {
+        let tmp_dir = std::env::temp_dir().join("roca_test_dir");
+        std::fs::create_dir_all(&tmp_dir).ok();
+        std::fs::write(tmp_dir.join("a.txt"), "a").ok();
+        std::fs::write(tmp_dir.join("b.txt"), "b").ok();
+        let path_cstr = format!("{}\0", tmp_dir.display());
+        let (arr_ptr, err) = runtime::roca_fs_read_dir(path_cstr.as_ptr() as i64);
+        assert_eq!(err, 0, "should succeed");
+        assert_ne!(arr_ptr, 0);
+        let len = runtime::roca_array_len(arr_ptr);
+        assert!(len >= 2, "should have at least 2 entries, got {}", len);
+        std::fs::remove_dir_all(&tmp_dir).ok();
+    }
+
+    #[test]
+    fn fs_read_dir_not_found() {
+        let path = "/tmp/roca_nonexistent_dir_12345\0";
+        let (_, err) = runtime::roca_fs_read_dir(path.as_ptr() as i64);
+        assert_eq!(err, 1, "should return not_found");
+    }
+
     #[test]
     fn aot_produces_object() {
         let file = crate::parse::parse("pub fn add(a: Number, b: Number) -> Number { return a + b }");

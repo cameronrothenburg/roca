@@ -96,6 +96,12 @@ runtime_funcs! {
     // Conversion
     (f64_to_bool,       "roca_f64_to_bool",       roca_f64_to_bool,       [types::F64],                                [types::I8]),
 
+    // File I/O
+    (fs_read_file,      "roca_fs_read_file",      roca_fs_read_file,      [types::I64],                                [types::I64, types::I8]),
+    (fs_write_file,     "roca_fs_write_file",     roca_fs_write_file,     [types::I64, types::I64],                    [types::I8]),
+    (fs_exists,         "roca_fs_exists",         roca_fs_exists,         [types::I64],                                [types::I8]),
+    (fs_read_dir,       "roca_fs_read_dir",       roca_fs_read_dir,       [types::I64],                                [types::I64, types::I8]),
+
     // Memory management
     (string_new,        "roca_string_new",        roca_string_new,        [types::I64],                                [types::I64]),
     (rc_alloc,          "roca_rc_alloc",          roca_rc_alloc,          [types::I64],                                [types::I64]),
@@ -231,7 +237,7 @@ extern "C" fn roca_array_get_f64(arr: i64, idx: i64) -> f64 {
     unsafe { &*(arr as *const Vec<i64>) }.get(idx as usize).map(|&b| f64::from_bits(b as u64)).unwrap_or(0.0)
 }
 
-extern "C" fn roca_array_len(arr: i64) -> i64 {
+pub extern "C" fn roca_array_len(arr: i64) -> i64 {
     if arr == 0 { return 0; }
     unsafe { &*(arr as *const Vec<i64>) }.len() as i64
 }
@@ -371,6 +377,70 @@ const RC_HEADER_SIZE: usize = 16;
 /// Get header pointer from payload pointer
 fn rc_header(payload_ptr: i64) -> *mut i64 {
     unsafe { (payload_ptr as *mut u8).sub(RC_HEADER_SIZE) as *mut i64 }
+}
+
+// ─── File I/O ─────────────────────────────────────────
+
+/// Read a file to string. Returns (content_ptr, err_tag).
+/// err_tag: 0 = OK, 1 = not_found, 2 = permission, 3 = io
+pub extern "C" fn roca_fs_read_file(path: i64) -> (i64, u8) {
+    let path_str = read_cstr(path);
+    match std::fs::read_to_string(path_str) {
+        Ok(content) => (alloc_str(&content), 0),
+        Err(e) => {
+            let tag = match e.kind() {
+                std::io::ErrorKind::NotFound => 1,
+                std::io::ErrorKind::PermissionDenied => 2,
+                _ => 3,
+            };
+            (alloc_str(""), tag)
+        }
+    }
+}
+
+/// Write string content to a file. Returns err_tag.
+/// err_tag: 0 = OK, 1 = permission, 2 = io
+pub extern "C" fn roca_fs_write_file(path: i64, content: i64) -> u8 {
+    let path_str = read_cstr(path);
+    let content_str = read_cstr(content);
+    match std::fs::write(path_str, content_str) {
+        Ok(()) => 0,
+        Err(e) => match e.kind() {
+            std::io::ErrorKind::PermissionDenied => 1,
+            _ => 2,
+        },
+    }
+}
+
+/// Check if a path exists. Returns 1 (true) or 0 (false).
+pub extern "C" fn roca_fs_exists(path: i64) -> u8 {
+    if std::path::Path::new(read_cstr(path)).exists() { 1 } else { 0 }
+}
+
+/// Read directory entries. Returns (array_ptr, err_tag).
+/// The array contains string pointers to entry names.
+pub extern "C" fn roca_fs_read_dir(path: i64) -> (i64, u8) {
+    let path_str = read_cstr(path);
+    match std::fs::read_dir(path_str) {
+        Ok(entries) => {
+            let arr = roca_array_new();
+            for entry in entries.flatten() {
+                if let Some(name) = entry.file_name().to_str() {
+                    let name_ptr = alloc_str(name);
+                    roca_array_push_str(arr, name_ptr);
+                }
+            }
+            (arr, 0)
+        }
+        Err(e) => {
+            let tag = match e.kind() {
+                std::io::ErrorKind::NotFound => 1,
+                std::io::ErrorKind::PermissionDenied => 2,
+                _ => 3,
+            };
+            (roca_array_new(), tag)
+        }
+    }
 }
 
 /// Create an RC'd string from a static C string pointer.
