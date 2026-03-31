@@ -6,13 +6,47 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "S
 
 ---
 
-## 4.1 Import Syntax
+## 4.1 Project Structure
+
+Every Roca project MUST have a `roca.toml` file at its root. This file defines the project identity and configuration.
+
+```toml
+name = "my-app"
+version = "1.0.0"
+```
+
+The compiler MUST reject any directory build that does not contain a `roca.toml`. Single-file builds MAY work without one, but directory builds MUST NOT.
+
+### 4.1.1 Required Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | String | Package name (used in output `package.json`) |
+| `version` | String | Semver version |
+
+### 4.1.2 Source Directory
+
+Roca source files live in `src/` by default. The compiler MUST search for `.roca` files in the `src/` directory relative to `roca.toml`.
+
+```
+my-app/
+  roca.toml
+  src/
+    main.roca
+    types.roca
+    db/
+      client.roca
+```
+
+---
+
+## 4.2 Imports
 
 ```
 Import = 'import' '{' Ident (',' Ident)* '}' 'from' StringLit
 ```
 
-### 4.1.1 Standard Library
+### 4.2.1 Standard Library
 
 Stdlib contracts (Math, Fs, Http, JSON, etc.) are NOT imported. They are built into the compiler. The compiler recognizes stdlib contract names and emits the correct runtime calls automatically.
 
@@ -27,7 +61,27 @@ test {
 
 The compiler MUST know all stdlib contract names and their method signatures at compile time. Stdlib contracts are defined in `packages/stdlib/**/*.roca` and embedded in the compiler binary.
 
-### 4.1.2 File Imports
+### 4.2.2 Reserved Names
+
+User code MUST NOT define contracts, structs, or enums with the same names as stdlib contracts. The following names are reserved:
+
+`String`, `Number`, `Bool`, `Array`, `Map`, `Optional`, `Bytes`, `Buffer`, `Math`, `JSON`, `Fs`, `Http`, `Url`, `Crypto`, `Encoding`, `Time`, `Path`, `Char`, `NumberParse`, `Process`, `Loggable`, `Serializable`, `Deserializable`
+
+A conforming compiler MUST reject user-defined types that collide with these names with diagnostic `reserved-name`.
+
+Users MAY extend stdlib contracts via `satisfies`:
+
+```roca
+/// Extending a stdlib contract — allowed
+MyStruct satisfies Loggable {
+    fn toLog() -> String {
+        return self.name
+    test { }
+    }
+}
+```
+
+### 4.2.3 File Imports
 
 The `import` statement brings names from other `.roca` files into scope:
 
@@ -38,7 +92,7 @@ import { DatabaseClient } from "./db/client.roca"
 
 Import paths MUST be relative (starting with `./` or `../`) and MUST use the `.roca` extension. The compiler resolves paths relative to the importing file's directory.
 
-### 4.1.3 User Extern Contracts
+### 4.2.4 User Extern Contracts
 
 User-defined extern contracts are NOT imported. They are declared as types and passed as function parameters:
 
@@ -69,7 +123,7 @@ The caller provides the real implementation at runtime. In tests, the compiler a
 
 ---
 
-## 4.2 Runtime Package
+## 4.3 Runtime Package
 
 ### 4.2.1 Package Identity
 
@@ -147,7 +201,7 @@ This is how users bridge existing JS code into Roca's error protocol without rew
 
 ---
 
-## 4.3 JS Compilation Output
+## 4.4 JS Compilation Output
 
 ### 4.3.1 Stdlib Imports
 
@@ -207,7 +261,7 @@ This mapping applies ONLY to contracts imported via `std::`. User-defined types 
 
 ---
 
-## 4.4 Runtime Environments
+## 4.5 Runtime Environments
 
 The `@rocalang/runtime` package MUST work in two environments: Node.js/Bun and browsers.
 
@@ -224,7 +278,7 @@ All modules available. The runtime uses native APIs:
 | URL | native `URL` |
 | Math, Path, Char, etc. | Pure JS (no platform dependency) |
 
-### 4.4.2 Browser
+### 4.5.2 Browser
 
 Most modules available. The runtime detects the environment and adapts:
 
@@ -234,8 +288,30 @@ Most modules available. The runtime detects the environment and adapts:
 | Crypto | `crypto.subtle` |
 | URL | native `URL` |
 | Math, Path, Char, etc. | Pure JS |
-| Fs | **NOT available** — compiler SHOULD warn |
-| Process | **NOT available** — compiler SHOULD warn |
+| Fs | **NOT available** |
+| Process | **NOT available** |
+
+### 4.5.3 Unavailable Functions
+
+Importing the runtime MUST NOT throw. The runtime MUST only return an error when a function that is not implemented on the current platform is actually called.
+
+```javascript
+// Browser runtime — Fs.readFile throws
+roca.Fs.readFile("config.json");
+// → { value: null, err: { name: "platform", message: "Fs.readFile is not available in browsers" } }
+```
+
+The error name MUST be `"platform"`. The message MUST identify the function and the environment. This ensures crash blocks can handle platform unavailability:
+
+```roca
+pub fn loadConfig(path: String) -> String {
+    const data = Fs.readFile(path)
+    return data
+crash {
+    Fs.readFile -> fallback("{}")
+}
+}
+```
 
 ### 4.4.3 Test Execution
 
@@ -262,7 +338,7 @@ This means:
 
 ---
 
-## 4.5 Stdlib Modules
+## 4.6 Stdlib Modules
 
 | Module | Import Path | Contract | Description |
 |--------|------------|----------|-------------|
