@@ -23,9 +23,14 @@ pub fn type_ref_to_name(t: &TypeRef) -> String {
     }
 }
 
+/// Get just the type name from scope (convenience for existing code)
+pub fn scope_type(scope: &Scope, name: &str) -> Option<String> {
+    scope.get(name).map(|v| v.type_name.clone())
+}
+
 pub fn resolve_type(expr: &Expr, scope: &Scope) -> Option<String> {
     match expr {
-        Expr::Ident(name) => scope.get(name).cloned(),
+        Expr::Ident(name) => scope_type(scope, name),
         Expr::String(_) | Expr::StringInterp(_) => Some("String".to_string()),
         Expr::Number(_) => Some("Number".to_string()),
         Expr::Bool(_) => Some("Bool".to_string()),
@@ -46,8 +51,8 @@ pub fn resolve_type(expr: &Expr, scope: &Scope) -> Option<String> {
                     if matches!(target.as_ref(), Expr::SelfRef) { "self" } else { base },
                     field
                 );
-                if let Some(t) = scope.get(&key) {
-                    return Some(t.clone());
+                if let Some(t) = scope_type(scope, &key) {
+                    return Some(t);
                 }
             }
             None
@@ -111,7 +116,7 @@ pub fn infer_type_with_registry(expr: &Expr, scope: &Scope, registry: Option<&su
             }
             Some("Array".to_string())
         }
-        Expr::Ident(name) => scope.get(name).cloned(),
+        Expr::Ident(name) => scope_type(scope, name),
         _ => None,
     }
 }
@@ -172,7 +177,7 @@ fn walk_function(check: &CheckContext, fn_ctx: &FnContext, rules: &[Box<dyn Rule
 fn walk_function_with_fields(check: &CheckContext, fn_ctx: &FnContext, fields: &[Field], rules: &[Box<dyn Rule>], errors: &mut Vec<RuleError>) {
     let mut scope = build_scope(&fn_ctx.def.params);
     for field in fields {
-        scope.insert(format!("self.{}", field.name), type_ref_to_name(&field.type_ref));
+        scope.insert(format!("self.{}", field.name), VarInfo::new_const(type_ref_to_name(&field.type_ref)));
     }
     walk_function_inner(check, fn_ctx, scope, rules, errors);
 }
@@ -195,18 +200,18 @@ fn walk_stmts(stmts: &[Stmt], check: &CheckContext, fn_ctx: &FnContext, mut scop
         match stmt {
             Stmt::Const { name, value, type_ann, .. } => {
                 walk_expr(value, check, fn_ctx, &scope, rules, errors);
-                if let Some(t) = type_ann {
-                    scope.insert(name.clone(), type_ref_to_name(t));
-                } else if let Some(t) = infer_type_with_registry(value, &scope, Some(check.registry)) {
-                    scope.insert(name.clone(), t);
+                let type_name = type_ann.as_ref().map(type_ref_to_name)
+                    .or_else(|| infer_type_with_registry(value, &scope, Some(check.registry)));
+                if let Some(t) = type_name {
+                    scope.insert(name.clone(), VarInfo::new_const(t));
                 }
             }
             Stmt::Let { name, value, type_ann, .. } => {
                 walk_expr(value, check, fn_ctx, &scope, rules, errors);
-                if let Some(t) = type_ann {
-                    scope.insert(name.clone(), type_ref_to_name(t));
-                } else if let Some(t) = infer_type_with_registry(value, &scope, Some(check.registry)) {
-                    scope.insert(name.clone(), t);
+                let type_name = type_ann.as_ref().map(type_ref_to_name)
+                    .or_else(|| infer_type_with_registry(value, &scope, Some(check.registry)));
+                if let Some(t) = type_name {
+                    scope.insert(name.clone(), VarInfo::new_let(t));
                 }
             }
             Stmt::LetResult { value, .. } => {
@@ -224,21 +229,19 @@ fn walk_stmts(stmts: &[Stmt], check: &CheckContext, fn_ctx: &FnContext, mut scop
 
                 if let Some((var_name, is_eq_null)) = extract_null_check(condition) {
                     if is_eq_null {
-                        // if x == null { return } → narrow x to non-null after the if
                         walk_stmts(then_body, check, fn_ctx, scope.clone(), rules, errors);
                         if body_exits(then_body) {
-                            if let Some(t) = scope.get(&var_name).cloned() {
-                                if t.ends_with('?') {
-                                    scope.insert(var_name, t.trim_end_matches('?').to_string());
+                            if let Some(v) = scope.get(&var_name).cloned() {
+                                if v.type_name.ends_with('?') {
+                                    scope.insert(var_name, VarInfo { type_name: v.type_name.trim_end_matches('?').to_string(), ..v });
                                 }
                             }
                         }
                     } else {
-                        // if x != null { ... } → narrow x to non-null inside then_body
                         let mut then_scope = scope.clone();
-                        if let Some(t) = then_scope.get(&var_name).cloned() {
-                            if t.ends_with('?') {
-                                then_scope.insert(var_name, t.trim_end_matches('?').to_string());
+                        if let Some(v) = then_scope.get(&var_name).cloned() {
+                            if v.type_name.ends_with('?') {
+                                then_scope.insert(var_name, VarInfo { type_name: v.type_name.trim_end_matches('?').to_string(), ..v });
                             }
                         }
                         walk_stmts(then_body, check, fn_ctx, then_scope, rules, errors);
@@ -300,7 +303,7 @@ fn walk_expr(expr: &Expr, check: &CheckContext, fn_ctx: &FnContext, scope: &Scop
         Expr::Match { value, arms } => {
             walk_expr(value, check, fn_ctx, scope, rules, errors);
             for arm in arms {
-                if let Some(p) = &arm.pattern { walk_expr(p, check, fn_ctx, scope, rules, errors); }
+                if let Some(crate::ast::MatchPattern::Value(p)) = &arm.pattern { walk_expr(p, check, fn_ctx, scope, rules, errors); }
                 walk_expr(&arm.value, check, fn_ctx, scope, rules, errors);
             }
         }
@@ -313,7 +316,7 @@ fn walk_expr(expr: &Expr, check: &CheckContext, fn_ctx: &FnContext, scope: &Scop
 fn build_scope(params: &[Param]) -> Scope {
     let mut scope = Scope::new();
     for p in params {
-        scope.insert(p.name.clone(), type_ref_to_name(&p.type_ref));
+        scope.insert(p.name.clone(), VarInfo::new_const(type_ref_to_name(&p.type_ref)));
     }
     scope
 }

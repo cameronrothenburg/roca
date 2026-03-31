@@ -59,6 +59,11 @@ pub const MANUAL_ERR_CHECK: &str = "manual-err-check";
 pub const MISSING_DOC: &str = "missing-doc";
 // Function error rules
 pub const FN_ERROR_DEF: &str = "no-fn-error-def";
+// Ownership rules
+pub const USE_AFTER_MOVE: &str = "use-after-move";
+pub const MOVE_IN_LOOP: &str = "move-in-loop";
+pub const MUST_BE_CONST: &str = "must-be-const";
+pub const RECURSIVE_CYCLE: &str = "recursive-cycle";
 
 #[derive(Debug, Clone)]
 pub struct RuleError {

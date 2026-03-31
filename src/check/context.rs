@@ -4,8 +4,28 @@ use std::collections::HashMap;
 use crate::ast::*;
 use super::registry::ContractRegistry;
 
-/// Variable name → type name
-pub type Scope = HashMap<String, String>;
+/// Variable ownership info — is_const/is_moved will be read once
+/// ownership checks migrate from standalone sets to walker scope.
+#[derive(Clone, Debug)]
+pub struct VarInfo {
+    pub type_name: String,
+    #[allow(dead_code)]
+    pub is_const: bool,
+    #[allow(dead_code)]
+    pub is_moved: bool,
+}
+
+impl VarInfo {
+    pub fn new_const(type_name: String) -> Self {
+        Self { type_name, is_const: true, is_moved: false }
+    }
+    pub fn new_let(type_name: String) -> Self {
+        Self { type_name, is_const: false, is_moved: false }
+    }
+}
+
+/// Variable name → ownership info
+pub type Scope = HashMap<String, VarInfo>;
 
 /// Context about the function being checked
 #[derive(Clone)]
