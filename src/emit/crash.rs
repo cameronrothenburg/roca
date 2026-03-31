@@ -139,7 +139,7 @@ fn wrap_terminal<'a>(
             let val_access = static_field(ast, &tmp, "value");
             stmts.push(const_decl(ast, var_name, val_access));
         }
-        roca::CrashStep::Retry { attempts, .. } => {
+        roca::CrashStep::Retry { attempts, delay_ms } => {
             stmts.clear(); // remove the initial _tmp and _err we added above
 
             stmts.push(let_decl(ast, var_name));
@@ -182,6 +182,34 @@ fn wrap_terminal<'a>(
             success_stmts.push(break_stmt(ast));
             let success_block = block(ast, success_stmts);
             loop_stmts.push(if_stmt(ast, not_err, success_block, None));
+
+            // Delay between retries: await new Promise(r => setTimeout(r, delay_ms))
+            if *delay_ms > 0 {
+                let r_pattern = ast.binding_pattern_binding_identifier(SPAN, "r");
+                let r_formal = ast.plain_formal_parameter(SPAN, r_pattern);
+                let mut params_vec = ast.vec();
+                params_vec.push(r_formal);
+                let params = ast.alloc(ast.formal_parameters(SPAN, FormalParameterKind::ArrowFormalParameters, params_vec, NONE));
+
+                let mut set_args = ast.vec();
+                set_args.push(Argument::from(ident(ast, "r")));
+                set_args.push(Argument::from(number_lit(ast, *delay_ms as f64)));
+                let set_timeout = ast.expression_call(
+                    SPAN,
+                    ident(ast, "setTimeout"),
+                    NONE, set_args, false,
+                );
+                let mut body_stmts = ast.vec();
+                body_stmts.push(expr_stmt(ast, set_timeout));
+                let arrow_body = ast.alloc(ast.function_body(SPAN, ast.vec(), body_stmts));
+                let arrow = ast.expression_arrow_function(SPAN, false, false, NONE, params, NONE, arrow_body);
+
+                let mut promise_args = ast.vec();
+                promise_args.push(Argument::from(arrow));
+                let promise_new = ast.expression_new(SPAN, ident(ast, "Promise"), NONE, promise_args);
+                let await_delay = ast.expression_await(SPAN, promise_new);
+                loop_stmts.push(expr_stmt(ast, await_delay));
+            }
 
             // if (_attempt === N-1) throw _err
             let last_check = ast.expression_binary(

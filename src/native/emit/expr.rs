@@ -344,17 +344,16 @@ fn emit_call(b: &mut FunctionBuilder, target: &Expr, args: &[Expr], ctx: &mut Em
         }
         if let Some(&func_ref) = ctx.get_func(name) {
             let arg_vals: Vec<Value> = args.iter().map(|a| emit_expr(b, a, ctx)).collect();
+
+            if let Some(handler) = ctx.crash_handlers.get(name).cloned() {
+                let arg_slots: Vec<_> = arg_vals.iter().map(|v| alloc_slot(b, *v)).collect();
+                let arg_types: Vec<_> = arg_vals.iter().map(|v| b.func.dfg.value_type(*v)).collect();
+                return super::methods::emit_crash_call(b, func_ref, &arg_slots, &arg_types, &handler, ctx);
+            }
+
             let call = b.ins().call(func_ref, &arg_vals);
             let results = b.inst_results(call).to_vec();
-
-            if results.len() >= 2 {
-                let value = results[0];
-                let err_tag = results[1];
-                if let Some(handler) = ctx.crash_handlers.get(name).cloned() {
-                    return super::methods::emit_crash_handler(b, value, err_tag, &handler, ctx);
-                }
-                return value;
-            }
+            if results.len() >= 2 { return results[0]; }
             if !results.is_empty() { return results[0]; }
         }
 

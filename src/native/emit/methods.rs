@@ -100,16 +100,17 @@ pub fn emit_method_call(b: &mut FunctionBuilder, target: &Expr, method: &str, ar
         let qualified = format!("{}.{}", type_name, method);
         if let Some(&func_ref) = ctx.get_func(&qualified) {
             let arg_vals: Vec<Value> = args.iter().map(|a| emit_expr(b, a, ctx)).collect();
+
+            if let Some(handler) = ctx.crash_handlers.get(&qualified).cloned() {
+                // Store args in slots for potential retry
+                let arg_slots: Vec<_> = arg_vals.iter().map(|v| alloc_slot(b, *v)).collect();
+                let arg_types: Vec<_> = arg_vals.iter().map(|v| b.func.dfg.value_type(*v)).collect();
+                return emit_crash_call(b, func_ref, &arg_slots, &arg_types, &handler, ctx);
+            }
+
             let call = b.ins().call(func_ref, &arg_vals);
             let results = b.inst_results(call).to_vec();
-            if results.len() >= 2 {
-                let value = results[0];
-                let err_tag = results[1];
-                if let Some(handler) = ctx.crash_handlers.get(&qualified).cloned() {
-                    return emit_crash_handler(b, value, err_tag, &handler, ctx);
-                }
-                return value;
-            }
+            if results.len() >= 2 { return results[0]; }
             if !results.is_empty() { return results[0]; }
         }
     }
@@ -357,6 +358,99 @@ pub fn emit_enum_variant(b: &mut FunctionBuilder, variant: &str, args: &[Expr], 
     ptr
 }
 
+/// Emit a crash-handled call with retry support.
+/// If the crash chain includes Retry, wraps the call in a loop.
+/// `func_ref` and `arg_slots` allow re-calling the function on retry.
+pub fn emit_crash_call(
+    b: &mut FunctionBuilder,
+    func_ref: ir::FuncRef,
+    arg_slots: &[ir::StackSlot],
+    arg_types: &[ir::Type],
+    handler: &CrashHandlerKind,
+    ctx: &mut EmitCtx,
+) -> Value {
+    let chain = match handler {
+        CrashHandlerKind::Simple(chain) => chain.clone(),
+        CrashHandlerKind::Detailed { default, .. } => {
+            default.clone().unwrap_or_else(|| vec![CrashStep::Halt])
+        }
+    };
+
+    // Check if chain has retry
+    let retry = chain.iter().find_map(|s| {
+        if let CrashStep::Retry { attempts, delay_ms } = s { Some((*attempts, *delay_ms)) } else { None }
+    });
+
+    // Make the initial call
+    let args: Vec<Value> = arg_slots.iter().zip(arg_types).map(|(s, t)| load_slot(b, *s, *t)).collect();
+    let call = b.ins().call(func_ref, &args);
+    let results = b.inst_results(call).to_vec();
+    if results.len() < 2 {
+        return if results.is_empty() { b.ins().iconst(types::I64, 0) } else { results[0] };
+    }
+
+    let result_type = b.func.dfg.value_type(results[0]);
+    let value_slot = alloc_slot(b, results[0]);
+    let err_slot = alloc_slot(b, results[1]);
+
+    if let Some((attempts, delay_ms)) = retry {
+        // Retry loop: header checks counter, body re-calls and checks result
+        let header = b.create_block();
+        let body = b.create_block();
+        let done = b.create_block();
+
+        // Init counter, check first result
+        let counter_init = b.ins().iconst(types::I64, 1); // attempt 0 already done
+        let counter_slot = alloc_slot(b, counter_init);
+        let first_err = load_slot(b, err_slot, types::I8);
+        b.ins().brif(first_err, header, &[], done, &[]);
+
+        // Header: check if more attempts remain
+        b.switch_to_block(header);
+        let counter = load_slot(b, counter_slot, types::I64);
+        let max = b.ins().iconst(types::I64, attempts as i64);
+        let has_more = b.ins().icmp(ir::condcodes::IntCC::SignedLessThan, counter, max);
+        b.ins().brif(has_more, body, &[], done, &[]);
+
+        // Body: sleep, re-call, increment counter
+        b.switch_to_block(body);
+        b.seal_block(body);
+
+        if delay_ms > 0 {
+            if let Some(&sleep_fn) = ctx.get_func("__sleep") {
+                let ms = b.ins().f64const(delay_ms as f64);
+                call_void(b, sleep_fn, &[ms]);
+            }
+        }
+
+        let retry_args: Vec<Value> = arg_slots.iter().zip(arg_types).map(|(s, t)| load_slot(b, *s, *t)).collect();
+        let retry_call = b.ins().call(func_ref, &retry_args);
+        let retry_results = b.inst_results(retry_call).to_vec();
+        b.ins().stack_store(retry_results[0], value_slot, 0);
+        b.ins().stack_store(retry_results[1], err_slot, 0);
+
+        // Increment counter
+        let cur = load_slot(b, counter_slot, types::I64);
+        let one = b.ins().iconst(types::I64, 1);
+        let next = b.ins().iadd(cur, one);
+        b.ins().stack_store(next, counter_slot, 0);
+
+        // Check result — success breaks, failure loops back to header
+        let retry_err = load_slot(b, err_slot, types::I8);
+        b.ins().brif(retry_err, header, &[], done, &[]);
+
+        b.seal_block(header); // sealed after back-edge from body
+
+        b.switch_to_block(done);
+        b.seal_block(done);
+    }
+
+    // After retry (or no retry): check final error state
+    let final_value = load_slot(b, value_slot, result_type);
+    let final_err = load_slot(b, err_slot, types::I8);
+    emit_crash_handler(b, final_value, final_err, handler, ctx)
+}
+
 pub fn emit_crash_handler(
     b: &mut FunctionBuilder,
     value: Value,
@@ -385,6 +479,9 @@ pub fn emit_crash_handler(
             default.clone().unwrap_or_else(|| vec![CrashStep::Halt])
         }
     };
+
+    // Filter out Retry — already handled by emit_crash_call
+    let chain: Vec<_> = chain.into_iter().filter(|s| !matches!(s, CrashStep::Retry { .. })).collect();
 
     let terminates = chain.iter().any(|s| matches!(s, CrashStep::Halt | CrashStep::Panic));
     let err_result = emit_crash_chain(b, &chain, result_type, ctx);

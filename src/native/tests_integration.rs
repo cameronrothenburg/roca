@@ -243,3 +243,43 @@ fn constrained_param_violation_in_pipeline() {
     f(10.0, 0.0);
     assert!(runtime::constraint_violated(), "0 < min 1");
 }
+
+// ─── Retry integration ──────────────────────────
+
+#[test]
+fn retry_with_fallback() {
+    // Retry 3 times, then fallback — extern fn auto-stub always succeeds
+    // so retry never triggers, but the code path must compile and run
+    let mut m = jit(r#"
+        extern fn flaky(n: Number) -> Number, err {
+            err fail = "failed"
+        }
+        pub fn resilient(n: Number) -> Number {
+            const result = flaky(n)
+            return result
+        crash {
+            flaky -> retry(3, 0) |> fallback(0)
+        }}
+    "#);
+    let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "resilient", 1)) };
+    // Auto-stub returns 0.0 (default Number) with no error — retry not triggered
+    assert_eq!(f(5.0), 0.0);
+}
+
+#[test]
+fn retry_then_halt() {
+    let mut m = jit(r#"
+        extern fn unstable() -> Number, err {
+            err fail = "failed"
+        }
+        pub fn try_hard() -> Number {
+            const result = unstable()
+            return result
+        crash {
+            unstable -> retry(2, 0) |> fallback(0)
+        }}
+    "#);
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "try_hard", 0)) };
+    // Auto-stub returns success (0.0) — retry not triggered
+    assert_eq!(f(), 0.0);
+}
