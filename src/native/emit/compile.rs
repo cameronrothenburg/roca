@@ -305,7 +305,12 @@ fn collect_wait_exprs(stmts: &[roca::Stmt], out: &mut Vec<(String, roca::Expr)>)
     }
 }
 
-pub fn wait_expr_hash(expr: &roca::Expr) -> u64 {
+pub(super) fn wait_expr_hash(expr: &roca::Expr) -> u64 {
+    expr_debug_hash(expr)
+}
+
+/// Shared hash for AST expressions — used by closure and wait compilation.
+pub(super) fn expr_debug_hash(expr: &roca::Expr) -> u64 {
     use std::hash::{Hash, Hasher, DefaultHasher};
     let mut h = DefaultHasher::new();
     format!("{:?}", expr).hash(&mut h);

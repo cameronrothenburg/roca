@@ -287,8 +287,15 @@ pub extern "C" fn roca_thread_call_f64(fn_ptr: i64) -> f64 {
     fp()
 }
 
+/// Shared tokio runtime for wait operations — created once, reused across calls.
+fn tokio_rt() -> &'static tokio::runtime::Runtime {
+    static RT: std::sync::LazyLock<tokio::runtime::Runtime> = std::sync::LazyLock::new(|| {
+        tokio::runtime::Runtime::new().expect("failed to create tokio runtime")
+    });
+    &RT
+}
+
 /// Spawn N function pointers as tokio tasks, wait for all to complete.
-/// fn_ptrs is an array of I64 function pointers. Returns array of f64 results.
 pub extern "C" fn roca_wait_all(fn_ptrs: i64, count: i64) -> i64 {
     let arr = roca_array_new();
     if fn_ptrs == 0 || count <= 0 { return arr; }
@@ -297,8 +304,7 @@ pub extern "C" fn roca_wait_all(fn_ptrs: i64, count: i64) -> i64 {
         .map(|i| roca_array_get_str(fn_ptrs, i as i64))
         .collect();
 
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    rt.block_on(async {
+    tokio_rt().block_on(async {
         let mut handles = Vec::new();
         for fp in ptrs {
             handles.push(tokio::task::spawn_blocking(move || {
@@ -323,8 +329,7 @@ pub extern "C" fn roca_wait_first(fn_ptrs: i64, count: i64) -> f64 {
         .map(|i| roca_array_get_str(fn_ptrs, i as i64))
         .collect();
 
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    rt.block_on(async {
+    tokio_rt().block_on(async {
         let (tx, mut rx) = tokio::sync::mpsc::channel(1);
         for fp in ptrs {
             let tx = tx.clone();
@@ -334,7 +339,7 @@ pub extern "C" fn roca_wait_first(fn_ptrs: i64, count: i64) -> f64 {
                 let _ = tx.blocking_send(f());
             });
         }
-        drop(tx); // drop original sender so rx completes when all senders done
+        drop(tx);
         rx.recv().await.unwrap_or(0.0)
     })
 }

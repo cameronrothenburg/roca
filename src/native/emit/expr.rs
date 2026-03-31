@@ -388,9 +388,8 @@ fn emit_closure(b: &mut FunctionBuilder, params: &[String], body: &Expr, ctx: &m
 
 /// Simple hash for identifying closures by their AST structure
 pub fn closure_hash(params: &[String], body: &Expr) -> u64 {
-    use std::hash::{Hash, Hasher, DefaultHasher};
-    let mut h = DefaultHasher::new();
+    use std::hash::{Hash, Hasher};
+    let mut h = std::hash::DefaultHasher::new();
     for p in params { p.hash(&mut h); }
-    format!("{:?}", body).hash(&mut h);
-    h.finish()
+    h.finish() ^ super::compile::expr_debug_hash(body)
 }
