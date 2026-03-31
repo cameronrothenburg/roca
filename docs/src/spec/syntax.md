@@ -243,7 +243,7 @@ An extern function declares a function provided by the runtime. The body contain
 ExternFn = 'pub'? 'extern' 'fn' Ident '(' Params ')' '->' TypeRef (',' 'err')? '{' ErrDecl* '}'
 ```
 
-Extern functions SHOULD use the `pub` modifier. They MUST NOT have a body, crash block, or test block — only error declarations. The parser also accepts `mock` blocks inside extern functions, but they are parsed and ignored (legacy).
+Extern functions SHOULD use the `pub` modifier. They MUST NOT have a body, crash block, or test block — only error declarations.
 
 ```roca
 pub extern fn fetch(url: String) -> String, err {
@@ -400,7 +400,7 @@ pub fn fetchUser(id: String) -> User, err {
     const response = http.get("/users/{id}")
     return User { name: response.name }
 crash {
-    http.get -> retry(3, 1000)
+    http.get -> log |> retry(3, 1000) |> halt
     http.get -> retry(3, 500) |> log |> fallback(defaultUser)
     db.query -> call {
         err.not_found -> skip
@@ -409,6 +409,19 @@ crash {
 }
 test {
     self("abc") == User { name: "test" }
+}}
+
+// Detailed crash handlers with error matching
+pub fn loadConfig(path: String) -> Config, err {
+    err missing = "config file not found"
+    const data = Fs.readFile(path)
+    return parse(data)
+crash {
+    Fs.readFile {
+        err.not_found -> fallback("default")
+        err.permission -> halt
+        default -> log |> halt
+    }
 }}
 ```
 
@@ -419,10 +432,9 @@ The test block contains proof assertions for the function. It appears after the 
 ```
 TestBlock = 'test' '{' TestCase* '}'
 TestCase = 'self' '(' Args ')' ('==' Expr | 'is' 'err' '.' Ident | 'is' 'Ok')
-         | Ident '(' Args ')' 'is' StatusMock
 ```
 
-Test cases call the function using `self` and assert value equality (`==`), error identity (`is err.name`), or success (`is Ok`). The `StatusMock` pattern allows asserting on mock status.
+Test cases call the function using `self` and assert value equality (`==`), error identity (`is err.name`), or success (`is Ok`).
 
 ```roca
 pub fn add(a: Number, b: Number) -> Number {
@@ -717,16 +729,18 @@ const combined = firstName + " " + lastName
 
 ### 2.5.4 Unary Expressions
 
-A unary expression applies a prefix operator to a single operand.
+A unary expression applies a prefix operator to a single operand. Unary operators are `!` (logical not) and `-` (negation, desugared as `0 - expr`).
 
 ```
-Unary = '!' Expr
+Unary = ('!' | '-') Expr
 ```
 
 ```roca
 if !isValid {
     return err.invalid
 }
+const negative = -count
+const inverted = -1 * factor
 ```
 
 ### 2.5.5 Call Expressions
@@ -775,11 +789,11 @@ const nested = matrix[row][col]
 
 ### 2.5.8 Match Expression
 
-A match expression selects a branch based on a value. Every match MUST include a wildcard (`_`) arm or be exhaustive over all enum variants.
+A match expression selects a branch based on a value. Every match MUST include a wildcard (`_`) arm or be exhaustive over all enum variants. Arms are separated by whitespace (newlines). Commas between arms are OPTIONAL.
 
 ```
 Match = 'match' Expr '{' MatchArm+ '}'
-MatchArm = MatchPattern '=>' Expr
+MatchArm = MatchPattern '=>' Expr ','?
 MatchPattern = Literal | Ident '.' Ident ('(' Ident ')')? | '_'
 ```
 
@@ -929,7 +943,7 @@ Operators MUST be parsed according to the following precedence table, from highe
 
 | Precedence | Category | Operators | Associativity |
 |---|---|---|---|
-| 1 (highest) | Unary | `!` | Right |
+| 1 (highest) | Unary | `!`, `-` | Right |
 | 2 | Multiplicative | `*`, `/` | Left |
 | 3 | Additive | `+`, `-` | Left |
 | 4 | Comparison | `<`, `>`, `<=`, `>=` | Left |
