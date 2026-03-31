@@ -154,10 +154,22 @@ pub fn emit(file: &ast::SourceFile) -> String {
     let program = ast.program(SPAN, SourceType::mjs(), source_text, ast.vec(), None, ast.vec(), body);
     let code = Codegen::new().build(&program).code;
 
-    // Generate stub exports for extern contracts — runtime injects real implementations
+    // Generate stub exports for extern contracts that have no JS wrapper.
+    // Contracts imported via std:: get real JS wrappers from stdlib_runtime().
+    // User-defined extern contracts (no stdlib wrapper) need default stubs.
+    let imported_contracts: std::collections::HashSet<&str> = file.items.iter().filter_map(|item| {
+        if let Item::Import(imp) = item {
+            if matches!(&imp.source, ast::ImportSource::Std(Some(_))) {
+                return Some(imp.names.iter().map(|n| n.as_str()).collect::<Vec<_>>());
+            }
+        }
+        None
+    }).flatten().collect();
+
     let mut extern_stubs = Vec::new();
     for item in &file.items {
         if let Item::ExternContract(c) = item {
+            if imported_contracts.contains(c.name.as_str()) { continue; }
             let methods: Vec<String> = c.functions.iter().map(|sig| {
                 let default = test_harness::values::emit_expr_js(
                     &test_harness::values::default_expr_for_type(&sig.return_type)
