@@ -6,6 +6,7 @@ use crate::ast::*;
 use crate::errors::{self, RuleError};
 use crate::check::rule::Rule;
 use crate::check::context::FnCheckContext;
+use crate::check::walker::type_ref_to_name;
 
 #[cfg(test)]
 mod tests {
@@ -118,8 +119,7 @@ mod tests {
     }
 
     #[test]
-    fn extern_contract_no_mock_block_needed() {
-        // Extern contracts don't need mock blocks — auto-stubs handle test isolation
+    fn extern_contract_compiles_without_mock() {
         let e = errors(r#"
             extern contract Store {
                 getAll() -> String, err {
@@ -134,9 +134,9 @@ mod tests {
                 test { self(Env { store: Store }) is Ok }
             }
         "#);
-        // Should not have mock-related errors
-        assert!(!e.iter().any(|e| e.code == "invalid-mock-ref" || e.code == "mock-null"),
-            "should not have mock-related errors: {:?}", e);
+        // No test-related errors should fire for this valid code
+        let test_errs: Vec<_> = e.iter().filter(|e| e.code == "missing-test").collect();
+        assert!(test_errs.is_empty(), "should not require mock block: {:?}", test_errs);
     }
 
     #[test]
@@ -213,7 +213,7 @@ fn check_test_coverage(f: &FnDef, declared_errors: &[ErrDecl], qn: &str, errors:
             if let Some(mismatch) = check_shape(&f.return_type, expected) {
                 errors.push(RuleError::new(
                     errors::TEST_SHAPE_MISMATCH,
-                    format!("test case {} expected {} but function returns {}", i, mismatch, type_name(&f.return_type)),
+                    format!("test case {} expected {} but function returns {}", i, mismatch, type_ref_to_name(&f.return_type)),
                     Some(qn.to_string()),
                 ));
             }
@@ -269,27 +269,18 @@ fn check_shape(return_type: &TypeRef, expected: &Expr) -> Option<String> {
         (_, Expr::FieldAccess { .. }) => None,
         (_, Expr::BinOp { .. }) => None,
         (_, Expr::Match { .. }) => None,
-        // Mismatches we can detect
+        // Null against non-nullable primitives
+        (TypeRef::Number, Expr::Null) => Some("null".into()),
+        (TypeRef::String, Expr::Null) => Some("null".into()),
+        (TypeRef::Bool, Expr::Null) => Some("null".into()),
+        // Literal type mismatches
         (TypeRef::Number, Expr::String(s)) => Some(format!("String \"{}\"", s)),
         (TypeRef::Number, Expr::Bool(b)) => Some(format!("Bool {}", b)),
         (TypeRef::String, Expr::Number(n)) => Some(format!("Number {}", n)),
         (TypeRef::String, Expr::Bool(b)) => Some(format!("Bool {}", b)),
         (TypeRef::Bool, Expr::Number(n)) => Some(format!("Number {}", n)),
         (TypeRef::Bool, Expr::String(s)) => Some(format!("String \"{}\"", s)),
-        _ => None, // can't determine — allow
-    }
-}
-
-fn type_name(ty: &TypeRef) -> &'static str {
-    match ty {
-        TypeRef::Number => "Number",
-        TypeRef::String => "String",
-        TypeRef::Bool => "Bool",
-        TypeRef::Ok => "Ok",
-        TypeRef::Named(_) => "Named",
-        TypeRef::Generic(_, _) => "Generic",
-        TypeRef::Nullable(_) => "Nullable",
-        TypeRef::Fn(_, _) => "Fn",
+        _ => None,
     }
 }
 
