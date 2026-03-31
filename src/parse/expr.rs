@@ -1,6 +1,6 @@
 //! Expression parser — literals, binary ops, calls, match, and the core `Parser` struct.
 
-use crate::ast::{Expr, BinOp, MatchArm, StringPart};
+use crate::ast::{Expr, BinOp, MatchArm, MatchPattern, StringPart};
 use crate::errors::ParseError;
 use super::tokenizer::Token;
 
@@ -383,7 +383,7 @@ impl Parser {
                         let result = self.parse_expr()?;
                         arms.push(MatchArm { pattern: None, value: result });
                     } else {
-                        let pattern = self.parse_expr()?;
+                        let pattern = self.parse_match_pattern()?;
                         self.expect(&Token::FatArrow)?;
                         let result = self.parse_expr()?;
                         arms.push(MatchArm { pattern: Some(pattern), value: result });
@@ -397,6 +397,35 @@ impl Parser {
             }
             other => Err(self.err(format!("unexpected token in expression: {:?}", other))),
         }
+    }
+
+    /// Parse a match pattern: value literal, or Enum.Variant(binding, ...)
+    fn parse_match_pattern(&mut self) -> ParseResult<MatchPattern> {
+        // Check for Enum.Variant(bindings) pattern
+        if let Token::Ident(_) = self.peek() {
+            let saved = self.pos;
+            let name = self.expect_ident()?;
+
+            if self.eat(&Token::Dot) {
+                // Enum.Variant or Enum.Variant(bindings)
+                let variant = self.expect_ident()?;
+                let mut bindings = Vec::new();
+                if self.eat(&Token::LParen) {
+                    if !self.at(&Token::RParen) {
+                        bindings.push(self.expect_ident()?);
+                        while self.eat(&Token::Comma) {
+                            bindings.push(self.expect_ident()?);
+                        }
+                    }
+                    self.expect(&Token::RParen)?;
+                }
+                return Ok(MatchPattern::Variant { enum_name: name, variant, bindings });
+            }
+            // Not a variant pattern — backtrack and parse as value
+            self.pos = saved;
+        }
+        let expr = self.parse_expr()?;
+        Ok(MatchPattern::Value(expr))
     }
 
     pub fn parse_args(&mut self) -> ParseResult<Vec<Expr>> {

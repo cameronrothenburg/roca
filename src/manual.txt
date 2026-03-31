@@ -263,10 +263,34 @@ Type casts:
 
 ENUMS
 -----
+Flat enums (constant values):
   enum Status { active = "active", suspended = "suspended" }
   enum HttpCode { ok = 200, not_found = 404 }
 
-Compiles to: const Status = { active: "active", suspended: "suspended" };
+  Compiles to: const Status = { active: "active", suspended: "suspended" };
+
+Algebraic enums (data variants):
+  enum Token {
+      Number(Number)
+      Str(String)
+      Plus
+      Minus
+  }
+
+  // Construct:
+  const t = Token.Number(42)    // { _tag: "Number", _0: 42 }
+  const p = Token.Plus          // { _tag: "Plus" }
+
+  // Pattern match:
+  const label = match token {
+      Token.Number(n) => "number: {n}"
+      Token.Plus => "+"
+      _ => "unknown"
+  }
+
+  Data variants carry typed fields. Unit variants have no data.
+  Each variant is tagged with _tag for pattern matching.
+  Compiles to constructor functions (data) or plain objects (unit).
 
 IMPORTS
 -------

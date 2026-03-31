@@ -186,7 +186,7 @@ pub(crate) fn build_stmt<'a>(
             let val = build_expr(ast, expr);
             // If expression is a match with err arms, it already produces tuples — don't double-wrap
             let already_tupled = if let roca::Expr::Match { arms, .. } = expr {
-                super::expressions::match_has_err_arms(arms)
+                super::shapes::match_has_err_arms(arms)
             } else {
                 false
             };

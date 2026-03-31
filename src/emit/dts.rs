@@ -181,16 +181,33 @@ fn emit_extern_contract_decl(c: &ContractDef) -> String {
 }
 
 fn emit_enum_decl(e: &EnumDef) -> String {
+    use super::ast_helpers::{TAG_FIELD, positional_field};
     let mut lines = Vec::new();
     lines.push(format!("export declare const {}: {{", e.name));
     for v in &e.variants {
-        let val = match &v.value {
-            EnumValue::String(s) => format!("\"{}\"", s),
+        match &v.value {
+            EnumValue::String(s) => {
+                lines.push(format!("  readonly {}: \"{}\";", v.name, s));
+            }
             EnumValue::Number(n) => {
-                if *n == (*n as i64) as f64 { format!("{}", *n as i64) } else { format!("{}", n) }
+                let val = if *n == (*n as i64) as f64 { format!("{}", *n as i64) } else { format!("{}", n) };
+                lines.push(format!("  readonly {}: {};", v.name, val));
+            }
+            EnumValue::Data(types) => {
+                let params: Vec<String> = types.iter().enumerate()
+                    .map(|(i, t)| format!("{}: {}", positional_field(i), type_to_ts(t)))
+                    .collect();
+                let fields: String = types.iter().enumerate()
+                    .map(|(i, t)| format!(", {}: {}", positional_field(i), type_to_ts(t)))
+                    .collect();
+                lines.push(format!("  {}({}): {{ {}: \"{}\"{} }};",
+                    v.name, params.join(", "), TAG_FIELD, v.name, fields,
+                ));
+            }
+            EnumValue::Unit => {
+                lines.push(format!("  readonly {}: {{ {}: \"{}\" }};", v.name, TAG_FIELD, v.name));
             }
         };
-        lines.push(format!("  readonly {}: {};", v.name, val));
     }
     lines.push("};".to_string());
     lines.join("\n")

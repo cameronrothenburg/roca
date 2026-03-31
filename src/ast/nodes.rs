@@ -41,13 +41,15 @@ pub struct ExternFnDef {
     pub mock: Option<MockDef>,
 }
 
-/// enum Name { key = value, ... }
+/// enum Name { key = value, ... } OR enum Name { Variant(Type) | Variant | ... }
 #[derive(Debug, Clone, PartialEq)]
 pub struct EnumDef {
     pub name: String,
     pub is_pub: bool,
     pub doc: Option<String>,
     pub variants: Vec<EnumVariant>,
+    /// True if this is an algebraic enum (data variants), false for flat key=value
+    pub is_algebraic: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -60,6 +62,10 @@ pub struct EnumVariant {
 pub enum EnumValue {
     String(String),
     Number(f64),
+    /// Data variant with typed fields: Variant(Type1, Type2)
+    Data(Vec<TypeRef>),
+    /// Unit variant (no data): Variant
+    Unit,
 }
 
 /// import { Name1, Name2 } from "./path" or from std::module

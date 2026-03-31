@@ -136,18 +136,37 @@ impl Parser {
         let mut variants = Vec::new();
         while !self.at(&Token::RBrace) && !self.at(&Token::EOF) {
             let vname = self.expect_ident()?;
-            self.expect(&Token::Assign)?;
-            let value = match self.advance() {
-                Token::StringLit(s) => EnumValue::String(s),
-                Token::NumberLit(n) => EnumValue::Number(n),
-                other => return Err(self.err(format!("expected string or number for enum value, got {:?}", other))),
+
+            let value = if self.eat(&Token::Assign) {
+                // Flat enum: key = "value" or key = 42
+                match self.advance() {
+                    Token::StringLit(s) => EnumValue::String(s),
+                    Token::NumberLit(n) => EnumValue::Number(n),
+                    other => return Err(self.err(format!("expected string or number for enum value, got {:?}", other))),
+                }
+            } else if self.eat(&Token::LParen) {
+                // Algebraic: Variant(Type, Type)
+                let mut types = Vec::new();
+                if !self.at(&Token::RParen) {
+                    types.push(self.parse_type_ref()?);
+                    while self.eat(&Token::Comma) {
+                        types.push(self.parse_type_ref()?);
+                    }
+                }
+                self.expect(&Token::RParen)?;
+                EnumValue::Data(types)
+            } else {
+                // Unit variant: just a name
+                EnumValue::Unit
             };
+
             variants.push(EnumVariant { name: vname, value });
             self.eat(&Token::Comma);
         }
         self.expect(&Token::RBrace)?;
 
-        Ok(EnumDef { name, is_pub, doc: None, variants })
+        let is_algebraic = variants.iter().any(|v| matches!(v.value, EnumValue::Data(_) | EnumValue::Unit));
+        Ok(EnumDef { name, is_pub, doc: None, variants, is_algebraic })
     }
 
     /// Parse: import { X } from "./path" or import { X } from std or import { X } from std::module
@@ -616,5 +635,65 @@ mod tests {
         } else {
             panic!("expected Enum");
         }
+    }
+
+    #[test]
+    fn parse_algebraic_enum() {
+        let file = parse(r#"
+            enum Token {
+                Number(Number)
+                Str(String)
+                Plus
+                Minus
+            }
+        "#);
+        assert_eq!(file.items.len(), 1);
+        if let Item::Enum(e) = &file.items[0] {
+            assert_eq!(e.name, "Token");
+            assert!(e.is_algebraic);
+            assert_eq!(e.variants.len(), 4);
+            assert!(matches!(&e.variants[0].value, EnumValue::Data(t) if t.len() == 1));
+            assert!(matches!(&e.variants[2].value, EnumValue::Unit));
+        } else {
+            panic!("expected Enum");
+        }
+    }
+
+    #[test]
+    fn parse_algebraic_enum_multi_field() {
+        let file = parse(r#"
+            enum Expr {
+                BinOp(String, Number, Number)
+                Literal(Number)
+                Empty
+            }
+        "#);
+        if let Item::Enum(e) = &file.items[0] {
+            assert!(e.is_algebraic);
+            if let EnumValue::Data(types) = &e.variants[0].value {
+                assert_eq!(types.len(), 3);
+            } else { panic!("expected Data variant"); }
+        } else { panic!("expected Enum"); }
+    }
+
+    #[test]
+    fn parse_match_variant_pattern() {
+        let file = parse(r#"
+            pub fn test_match(tag: String) -> String {
+                return match tag {
+                    Token.Number(n) => "num"
+                    Token.Plus => "plus"
+                    _ => "other"
+                }
+            }
+        "#);
+        if let Item::Function(f) = &file.items[0] {
+            if let Stmt::Return(Expr::Match { arms, .. }) = &f.body[0] {
+                assert_eq!(arms.len(), 3);
+                assert!(matches!(&arms[0].pattern, Some(MatchPattern::Variant { variant, bindings, .. }) if variant == "Number" && bindings.len() == 1));
+                assert!(matches!(&arms[1].pattern, Some(MatchPattern::Variant { variant, bindings, .. }) if variant == "Plus" && bindings.is_empty()));
+                assert!(arms[2].pattern.is_none());
+            } else { panic!("expected match"); }
+        } else { panic!("expected function"); }
     }
 }

@@ -7,7 +7,7 @@ use oxc_ast::NONE;
 use oxc_ast::AstBuilder;
 use oxc_span::SPAN;
 
-use super::ast_helpers::{param, formal_params, function_body, prop_key};
+use super::ast_helpers::{param, formal_params, function_body, prop_key, binary, if_stmt, throw_stmt, number_lit, string_lit, field_access, block, arg, ident};
 use super::statements::build_stmt;
 
 /// Build a struct as a class declaration, including satisfies methods
@@ -55,9 +55,14 @@ fn build_constructor<'a>(
     let ctor_formal = formal_params(ast, ctor_params);
 
     let mut stmts = ast.vec();
+
+    // Emit constraint validation guards before assignments
+    for field in fields {
+        emit_field_guards(ast, field, &mut stmts);
+    }
+
     for field in fields {
         let f = ast.str(&field.name);
-        // this.field = init.field
         let this_member = ast.member_expression_static(
             SPAN, ast.expression_this(SPAN), ast.identifier_name(SPAN, f), false,
         );
@@ -84,6 +89,96 @@ fn build_constructor<'a>(
         false, false, false, false, None,
     );
     elements.push(ctor);
+}
+
+/// Emit runtime validation guards for a field's constraints.
+/// Generates: if (init.field < min) { throw new Error("..."); }
+fn emit_field_guards<'a>(
+    ast: &AstBuilder<'a>,
+    field: &roca::Field,
+    stmts: &mut oxc_allocator::Vec<'a, Statement<'a>>,
+) {
+    if field.constraints.is_empty() {
+        return;
+    }
+
+    let is_string = matches!(field.type_ref, roca::TypeRef::String);
+    let fname = &field.name;
+
+    for constraint in &field.constraints {
+        let (test, msg) = match constraint {
+            roca::Constraint::Min(n) if !is_string => {
+                let val = init_field(ast, fname);
+                (binary(ast, val, BinaryOperator::LessThan, number_lit(ast, *n)),
+                 format!("{}: must be >= {}", fname, n))
+            }
+            roca::Constraint::Max(n) if !is_string => {
+                let val = init_field(ast, fname);
+                (binary(ast, val, BinaryOperator::GreaterThan, number_lit(ast, *n)),
+                 format!("{}: must be <= {}", fname, n))
+            }
+            roca::Constraint::Min(n) if is_string => {
+                let len = field_access(ast, init_field(ast, fname), ast.str("length"));
+                (binary(ast, len, BinaryOperator::LessThan, number_lit(ast, *n)),
+                 format!("{}: min length {}", fname, n))
+            }
+            roca::Constraint::Max(n) if is_string => {
+                let len = field_access(ast, init_field(ast, fname), ast.str("length"));
+                (binary(ast, len, BinaryOperator::GreaterThan, number_lit(ast, *n)),
+                 format!("{}: max length {}", fname, n))
+            }
+            roca::Constraint::MinLen(n) => {
+                let len = field_access(ast, init_field(ast, fname), ast.str("length"));
+                (binary(ast, len, BinaryOperator::LessThan, number_lit(ast, *n)),
+                 format!("{}: min length {}", fname, n))
+            }
+            roca::Constraint::MaxLen(n) => {
+                let len = field_access(ast, init_field(ast, fname), ast.str("length"));
+                (binary(ast, len, BinaryOperator::GreaterThan, number_lit(ast, *n)),
+                 format!("{}: max length {}", fname, n))
+            }
+            roca::Constraint::Contains(s) => {
+                let val = init_field(ast, fname);
+                let mut call_args = ast.vec();
+                call_args.push(arg(string_lit(ast, s)));
+                let includes = ast.expression_call(
+                    SPAN, field_access(ast, val, ast.str("includes")), NONE, call_args, false,
+                );
+                let not_includes = ast.expression_unary(SPAN, UnaryOperator::LogicalNot, includes);
+                (not_includes, format!("{}: must contain \"{}\"", fname, s))
+            }
+            roca::Constraint::Pattern(p) => {
+                let val = init_field(ast, fname);
+                let mut re_args = ast.vec();
+                re_args.push(arg(string_lit(ast, p)));
+                let regex = ast.expression_new(SPAN, ident(ast, "RegExp"), NONE, re_args);
+                let mut test_args = ast.vec();
+                test_args.push(arg(val));
+                let test_call = ast.expression_call(
+                    SPAN, field_access(ast, regex, ast.str("test")), NONE, test_args, false,
+                );
+                let not_match = ast.expression_unary(SPAN, UnaryOperator::LogicalNot, test_call);
+                (not_match, format!("{}: must match pattern /{}/", fname, p))
+            }
+            roca::Constraint::Default(_) => continue,
+            _ => continue,
+        };
+
+        let mut err_args = ast.vec();
+        err_args.push(arg(string_lit(ast, &msg)));
+        let err = ast.expression_new(SPAN, ident(ast, "Error"), NONE, err_args);
+        let throw = throw_stmt(ast, err);
+        let mut body = ast.vec();
+        body.push(throw);
+        stmts.push(if_stmt(ast, test, block(ast, body), None));
+    }
+}
+
+fn init_field<'a>(ast: &AstBuilder<'a>, name: &str) -> Expression<'a> {
+    let f = ast.str(name);
+    Expression::from(ast.member_expression_static(
+        SPAN, ast.expression_identifier(SPAN, "init"), ast.identifier_name(SPAN, f), false,
+    ))
 }
 
 fn build_class_method<'a>(
@@ -174,9 +269,13 @@ fn expr_uses_self(expr: &roca::Expr) -> bool {
         roca::Expr::Index { target, index } => expr_uses_self(target) || expr_uses_self(index),
         roca::Expr::Match { value, arms } => {
             expr_uses_self(value) || arms.iter().any(|a| {
-                a.pattern.as_ref().map_or(false, |p| expr_uses_self(p)) || expr_uses_self(&a.value)
+                a.pattern.as_ref().map_or(false, |p| match p {
+                    roca::MatchPattern::Value(e) => expr_uses_self(e),
+                    roca::MatchPattern::Variant { .. } => false,
+                }) || expr_uses_self(&a.value)
             })
         }
+        roca::Expr::EnumVariant { args, .. } => args.iter().any(|a| expr_uses_self(a)),
         _ => false,
     }
 }

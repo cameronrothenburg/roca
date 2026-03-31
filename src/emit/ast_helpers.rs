@@ -6,6 +6,14 @@ use oxc_ast::NONE;
 use oxc_ast::AstBuilder;
 use oxc_span::SPAN;
 
+/// Tag field name on algebraic enum variant objects
+pub(crate) const TAG_FIELD: &str = "_tag";
+
+/// Positional field name for algebraic enum variant data: _0, _1, _2, ...
+pub(crate) fn positional_field(i: usize) -> String {
+    format!("_{}", i)
+}
+
 // ─── Expressions ───────────────────────────────────────────
 
 pub(crate) fn ident<'a>(ast: &AstBuilder<'a>, name: &str) -> Expression<'a> {

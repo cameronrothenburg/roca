@@ -4,6 +4,7 @@
 
 pub(crate) mod ast_helpers;
 mod helpers;
+pub(crate) mod shapes;
 mod expressions;
 mod statements;
 mod contracts;
@@ -159,13 +160,34 @@ pub fn emit_dts(file: &ast::SourceFile) -> String {
 
 /// Emit enum as: const Name = { key: "value", ... };
 fn build_enum<'a>(ast: &AstBuilder<'a>, e: &ast::EnumDef) -> Statement<'a> {
-    use ast_helpers::{string_lit, number_lit, prop, object_expr, const_decl};
+    use ast_helpers::{string_lit, number_lit, prop, object_expr, const_decl, function_expr, formal_params, param, function_body, return_stmt, ident, TAG_FIELD, positional_field};
 
     let mut props = ast.vec();
     for v in &e.variants {
         let value = match &v.value {
             ast::EnumValue::String(s) => string_lit(ast, s),
             ast::EnumValue::Number(n) => number_lit(ast, *n),
+            ast::EnumValue::Unit => {
+                let mut obj_props = ast.vec();
+                obj_props.push(prop(ast, TAG_FIELD, string_lit(ast, &v.name)));
+                object_expr(ast, obj_props)
+            }
+            ast::EnumValue::Data(types) => {
+                let mut fn_params = ast.vec();
+                let mut obj_props = ast.vec();
+                obj_props.push(prop(ast, TAG_FIELD, string_lit(ast, &v.name)));
+                for (i, _) in types.iter().enumerate() {
+                    let pname = positional_field(i);
+                    fn_params.push(param(ast, &pname));
+                    obj_props.push(prop(ast, &pname, ident(ast, &pname)));
+                }
+                let obj = object_expr(ast, obj_props);
+                let mut stmts = ast.vec();
+                stmts.push(return_stmt(ast, obj));
+                let body = function_body(ast, stmts);
+                let params = formal_params(ast, fn_params);
+                function_expr(ast, params, body, false)
+            }
         };
         props.push(prop(ast, &v.name, value));
     }
@@ -252,5 +274,36 @@ mod tests {
         let js = emit(&file);
         assert!(js.contains("StatusCode"));
         assert!(js.contains("200"));
+    }
+
+    #[test]
+    fn emit_algebraic_enum() {
+        let file = parse::parse(r#"
+            pub enum Token {
+                Number(Number)
+                Str(String)
+                Plus
+            }
+        "#);
+        let js = emit(&file);
+        assert!(js.contains("_tag"), "should contain _tag: {}", js);
+        assert!(js.contains("\"Number\""), "should contain Number tag: {}", js);
+        assert!(js.contains("\"Plus\""), "should contain Plus tag: {}", js);
+        assert!(js.contains("function"), "data variants should be functions: {}", js);
+    }
+
+    #[test]
+    fn emit_algebraic_enum_usage() {
+        let file = parse::parse(r#"
+            pub enum Color { Red Green Blue }
+            pub fn is_red(c: String) -> String {
+                return match c {
+                    "Red" => "yes"
+                    _ => "no"
+                }
+            }
+        "#);
+        let js = emit(&file);
+        assert!(js.contains("Red"), "should contain Red: {}", js);
     }
 }

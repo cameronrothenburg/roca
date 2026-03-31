@@ -10,6 +10,7 @@ mod emit;
 mod errors;
 mod init;
 mod lsp;
+mod native;
 mod resolve;
 
 use std::env;
@@ -214,7 +215,7 @@ fn print_help() {
     println!("  satisfies            Link a struct to a contract");
     println!("  extern contract      Declare a JS runtime type shape");
     println!("  extern fn            Declare a JS runtime function");
-    println!("  enum                 Define named constants");
+    println!("  enum                 Named constants or algebraic data types");
     println!("  crash                Error handling: halt, retry, fallback, panic");
     println!("  crash chains         Compose strategies: log |> retry(3, 1000) |> halt");
     println!("  test                 Inline proof tests on every function");

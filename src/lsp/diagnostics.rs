@@ -163,7 +163,7 @@ mod tests {
 
             /// Greets a person by name
             pub fn greet(name: String) -> String {
-                let trimmed = name.trim()
+                const trimmed = name.trim()
                 return "Hello " + trimmed
                 test { self("cam") == "Hello cam" }
             }
