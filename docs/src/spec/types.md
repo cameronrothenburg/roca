@@ -408,28 +408,65 @@ Email satisfies Loggable {
 
 ---
 
-## 3.10 Nullable Types
+## 3.10 Optional Types
 
-A nullable type is written as `Type | null`, indicating the value MAY be `null`.
-
-```roca
-find(callback: fn(T) -> Bool) -> T | null
-```
-
-### 3.10.1 Rules
-
-- Any type MAY be made nullable: `String | null`, `Email | null`, `Array<Number> | null`.
-- Code that receives a nullable value MUST check for `null` before using the inner value.
-- A conforming compiler MUST reject code that uses a nullable value without a null check.
-- The null check MAY be performed with `if`, pattern matching, or other conditional constructs.
+Roca does not have `null`. Values that may be absent use `Optional<T>`.
 
 ```roca
-const result: String | null = items.find(fn(s) -> s == "target")
-if result != null {
-    Console.print(result)    // safe — null has been ruled out
+contract Optional<T> {
+    isPresent() -> Bool
+    unwrap() -> T, err {
+        err absent = "value is not present"
+    }
+    unwrapOr(fallback: T) -> T
 }
 ```
 
-### 3.10.2 Non-Nullable Default
+### 3.10.1 Usage
 
-All types are non-nullable by default. A `String` value MUST NOT be `null` unless the type is explicitly written as `String | null`.
+Optional is used for struct fields and contract return types where absence is meaningful:
+
+```roca
+// Contract method that may not find a result
+find(callback: fn(T) -> Bool) -> Optional<T>
+
+// Struct field that may be absent
+pub struct UserProfile {
+    bio: Optional<String>
+}
+```
+
+### 3.10.2 Accessing Optional Values
+
+Code that receives an `Optional<T>` MUST handle the absent case:
+
+```roca
+const result = items.find(fn(s) -> s == "target")
+if result.isPresent() {
+    const value = result.unwrap()
+    log(value)
+}
+
+// Or with a fallback
+const safe = result.unwrapOr("default")
+```
+
+### 3.10.3 Optional vs Error Returns
+
+- `Optional<T>` — value may be absent (no error, just missing)
+- `-> T, err` — operation can fail (error with name and message)
+
+Functions MUST NOT use `Optional` for failure cases. Use `-> T, err` with crash blocks instead.
+
+### 3.10.4 Null
+
+Roca does not use `null` in user code. The `null` value exists only to represent values returned by external APIs (JS globals, extern contracts). When an extern contract method returns a value that may be `null`, the contract SHOULD declare the return type as `Optional<T>`.
+
+```roca
+pub extern contract Http {
+    /// Response header — null if header not present
+    header(name: String) -> Optional<String>
+}
+```
+
+The compiler's internal type system has a `Nullable(Box<TypeRef>)` variant for interop, but user-facing Roca code models absence through `Optional<T>` and failure through `-> T, err`.
