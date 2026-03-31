@@ -211,51 +211,64 @@ fn eval_expr_native(input: &str, defs: &[String]) {
 
     let def_src = defs.join("\n");
 
-    // Wrap expression in a function that returns f64
-    let expr_src = format!(
-        "{}\npub fn __repl__() -> Number {{ return {} test {{ self() == 0 }} }}",
-        def_src, input
-    );
+    // Try as Number first, then String
+    for (ret_type, ret_cranelift, is_string) in &[
+        ("Number", cranelift_codegen::ir::types::F64, false),
+        ("String", cranelift_codegen::ir::types::I64, true),
+    ] {
+        let expr_src = format!(
+            "{}\npub fn __repl__() -> {} {{ return {} test {{ }} }}",
+            def_src, ret_type, input
+        );
 
-    let file = match crate::parse::try_parse(&expr_src) {
-        Ok(f) => f,
-        Err(e) => { println!("  parse error: {}", e); return; }
-    };
+        let file = match crate::parse::try_parse(&expr_src) {
+            Ok(f) => f,
+            Err(_) => continue,
+        };
 
-    let errors = crate::check::check(&file);
-    let real: Vec<_> = errors.iter()
-        .filter(|e| e.code != "missing-doc" && e.code != "missing-test" && e.code != "must-be-const")
-        .collect();
-    if !real.is_empty() {
-        for e in &real { println!("  {}", e); }
+        let errors = crate::check::check(&file);
+        let real: Vec<_> = errors.iter()
+            .filter(|e| e.code != "missing-doc" && e.code != "missing-test" && e.code != "must-be-const")
+            .collect();
+        if !real.is_empty() { continue; }
+
+        let mut module = crate::native::create_jit_module();
+        if crate::native::compile_all(&mut module, &file).is_err() { continue; }
+        if module.finalize_definitions().is_err() {
+            println!("  jit error (try running with execmem permissions)");
+            return;
+        }
+
+        let mut sig = module.make_signature();
+        sig.returns.push(cranelift_codegen::ir::AbiParam::new(*ret_cranelift));
+        let id = match module.declare_function("__repl__", cranelift_module::Linkage::Export, &sig) {
+            Ok(id) => id,
+            Err(_) => continue,
+        };
+        let ptr = module.get_finalized_function(id);
+
+        if *is_string {
+            let f: fn() -> *const u8 = unsafe { std::mem::transmute(ptr) };
+            let result = f();
+            if result.is_null() {
+                println!("null");
+            } else {
+                let s = unsafe { std::ffi::CStr::from_ptr(result as *const i8) }.to_str().unwrap_or("?");
+                println!("{}", s);
+            }
+        } else {
+            let f: fn() -> f64 = unsafe { std::mem::transmute(ptr) };
+            let result = f();
+            if result.fract() == 0.0 && result.abs() < 1e15 {
+                println!("{}", result as i64);
+            } else {
+                println!("{}", result);
+            }
+        }
         return;
     }
 
-    let mut module = crate::native::create_jit_module();
-    if let Err(e) = crate::native::compile_all(&mut module, &file) {
-        println!("  compile error: {}", e);
-        return;
-    }
-    if let Err(e) = module.finalize_definitions() {
-        println!("  jit error: {} (try running with execmem permissions)", e);
-        return;
-    }
-
-    let mut sig = module.make_signature();
-    sig.returns.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::F64));
-    let id = match module.declare_function("__repl__", cranelift_module::Linkage::Export, &sig) {
-        Ok(id) => id,
-        Err(e) => { println!("  lookup error: {}", e); return; }
-    };
-    let ptr = module.get_finalized_function(id);
-    let f: fn() -> f64 = unsafe { std::mem::transmute(ptr) };
-    let result = f();
-
-    if result.fract() == 0.0 && result.abs() < 1e15 {
-        println!("{}", result as i64);
-    } else {
-        println!("{}", result);
-    }
+    println!("  could not evaluate expression");
 }
 
 fn print_help() {
@@ -263,8 +276,15 @@ fn print_help() {
     println!("  :q        Exit");
     println!("  :clear    Clear definitions");
     println!("  :help     Show this help");
+    println!("  :mem      Show memory counters (native only)");
+    println!("  :mem reset  Reset memory counters (native only)");
+    println!("  :debug on/off  Toggle memory tracing (native only)");
     println!();
     println!("Type expressions:  1 + 2");
     println!("Define functions:  fn add(a: Number, b: Number) -> Number {{ ... }}");
     println!("Call functions:    add(1, 2)");
+    println!();
+    println!("Modes:");
+    println!("  roca repl           V8 engine (default)");
+    println!("  roca repl --native  Cranelift JIT engine");
 }

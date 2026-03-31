@@ -1,5 +1,7 @@
 contract Optional<T> {
     isPresent() -> Bool
-    unwrap() -> T
+    unwrap() -> T, err {
+        err absent = "value is not present"
+    }
     unwrapOr(value: T) -> T
 }

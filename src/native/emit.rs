@@ -22,6 +22,7 @@ impl CompiledFuncs {
     pub fn new() -> Self { Self { funcs: HashMap::new() } }
 }
 
+#[derive(Clone)]
 struct VarInfo {
     slot: ir::StackSlot,
     cranelift_type: ir::Type,
@@ -779,8 +780,10 @@ fn emit_stmt(b: &mut FunctionBuilder, stmt: &Stmt, ctx: &mut EmitCtx, returned: 
             let merge_block = b.create_block();
             b.ins().brif(cond, then_block, &[], else_block, &[]);
 
-            // Save heap vars before branches — branch-local vars must not leak
+            // Save full scope state — branch-local vars must not shadow outer bindings
             let heap_base = ctx.live_heap_vars.len();
+            let saved_vars = ctx.vars.clone();
+            let saved_struct_types = ctx.var_struct_type.clone();
 
             b.switch_to_block(then_block);
             b.seal_block(then_block);
@@ -788,8 +791,10 @@ fn emit_stmt(b: &mut FunctionBuilder, stmt: &Stmt, ctx: &mut EmitCtx, returned: 
             for s in then_body { if then_ret { break; } emit_stmt(b, s, ctx, &mut then_ret); }
             if !then_ret { b.ins().jump(merge_block, &[]); }
 
-            // Restore heap vars before else — then-branch vars are not live in else
+            // Restore before else — then-branch vars must not be visible
             ctx.live_heap_vars.truncate(heap_base);
+            ctx.vars = saved_vars.clone();
+            ctx.var_struct_type = saved_struct_types.clone();
 
             b.switch_to_block(else_block);
             b.seal_block(else_block);
@@ -799,8 +804,10 @@ fn emit_stmt(b: &mut FunctionBuilder, stmt: &Stmt, ctx: &mut EmitCtx, returned: 
             }
             if !else_ret { b.ins().jump(merge_block, &[]); }
 
-            // Restore after else — branch-local vars are not live after the if
+            // Restore after if/else — branch-local vars not live after merge
             ctx.live_heap_vars.truncate(heap_base);
+            ctx.vars = saved_vars;
+            ctx.var_struct_type = saved_struct_types;
 
             b.switch_to_block(merge_block);
             b.seal_block(merge_block);

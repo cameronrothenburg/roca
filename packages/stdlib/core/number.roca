@@ -4,7 +4,7 @@ contract Number {
 }
 
 Number satisfies Loggable {
-    fn to_log() -> String {
+    fn toLog() -> String {
         return self.toString()
     }
 }

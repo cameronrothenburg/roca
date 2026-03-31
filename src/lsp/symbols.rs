@@ -105,7 +105,7 @@ mod tests {
 
     #[test]
     fn contract_symbol() {
-        let syms = document_symbols("contract Loggable { to_log() -> String }");
+        let syms = document_symbols("contract Loggable { toLog() -> String }");
         assert_eq!(syms.len(), 1);
         assert_eq!(syms[0].name, "Loggable");
         assert_eq!(syms[0].kind, SymbolKind::INTERFACE);
@@ -130,7 +130,7 @@ mod tests {
 
     #[test]
     fn satisfies_symbol() {
-        let syms = document_symbols("pub struct Email { value: String }{}\nEmail satisfies Loggable { fn to_log() -> String { return self.value test {} } }");
+        let syms = document_symbols("pub struct Email { value: String }{}\nEmail satisfies Loggable { fn toLog() -> String { return self.value test {} } }");
         let sat = syms.iter().find(|s| s.kind == SymbolKind::METHOD).unwrap();
         assert!(sat.name.contains("satisfies"));
         assert!(sat.name.contains("Loggable"));

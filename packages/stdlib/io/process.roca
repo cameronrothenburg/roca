@@ -4,13 +4,12 @@
 pub extern contract Process {
     args() -> Array<String>
     env(key: String) -> String, err {
-        err not_set = "environment variable not set"
+        err notSet = "environment variable not set"
     }
     exit(code: Number) -> Ok
     cwd() -> String
     mock {
         args -> []
-        env -> ""
         exit -> Ok
         cwd -> "."
     }

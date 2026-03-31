@@ -7,13 +7,13 @@ contract Array<T> {
     push(item: T) -> Number
     pop() -> T
     concat(other: Array<T>) -> Array<T>
-    map(callback: T) -> Array
-    filter(callback: T) -> Array<T>
-    find(callback: T) -> T | null
+    map(callback: fn(T) -> T) -> Array<T>
+    filter(callback: fn(T) -> Bool) -> Array<T>
+    find(callback: fn(T) -> Bool) -> T | null
     slice(start: Number) -> Array<T>
-    forEach(callback: T) -> Ok
-    some(callback: T) -> Bool
-    every(callback: T) -> Bool
-    flat() -> Array
-    reduce(callback: T) -> T
+    forEach(callback: fn(T) -> Ok) -> Ok
+    some(callback: fn(T) -> Bool) -> Bool
+    every(callback: fn(T) -> Bool) -> Bool
+    flat() -> Array<T>
+    reduce(callback: fn(T, T) -> T) -> T
 }

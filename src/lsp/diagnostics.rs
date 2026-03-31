@@ -357,7 +357,7 @@ mod tests {
         "#);
         assert!(has_code(&diags, "not-loggable"));
         let d = get_with_code(&diags, "not-loggable").unwrap();
-        assert!(d.message.contains("to_log"));
+        assert!(d.message.contains("toLog"));
     }
 
     // ─── unhandled-call ─────────────────────────────────

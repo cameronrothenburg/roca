@@ -397,12 +397,12 @@ fn check_binop(left: &Expr, op: &BinOp, right: &Expr, ctx: &ExprContext, errors:
 fn check_loggable(expr: &Expr, ctx: &ExprContext, fn_name: &str, errors: &mut Vec<RuleError>) {
     if let Expr::Call { target, .. } = expr {
         if let Expr::FieldAccess { field, .. } = target.as_ref() {
-            if field == "to_log" { return; }
+            if field == "toLog" { return; }
         }
     }
     if let Some(type_name) = resolve_type(expr, ctx.scope) {
-        if !ctx.check.registry.has_method(&type_name, "to_log") {
-            errors.push(RuleError::new(errors::NOT_LOGGABLE, format!("{}() requires Loggable — '{}' has no to_log() method", fn_name, type_name), Some(ctx.func.qualified_name.clone())));
+        if !ctx.check.registry.has_method(&type_name, "toLog") {
+            errors.push(RuleError::new(errors::NOT_LOGGABLE, format!("{}() requires Loggable — '{}' has no toLog() method", fn_name, type_name), Some(ctx.func.qualified_name.clone())));
         }
     }
 }

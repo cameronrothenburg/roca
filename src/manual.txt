@@ -184,7 +184,7 @@ SATISFIES
 Links a struct to a contract. One block per contract.
 
   Email satisfies Loggable {
-      fn to_log() -> String {
+      fn toLog() -> String {
           return self.value
           test { self() == "test@example.com" }
       }
@@ -275,7 +275,7 @@ Functions can have type parameters:
 Constrained type parameters:
 
   pub fn log_item<T: Loggable>(item: T) -> Ok {
-      log(item.to_log())
+      log(item.toLog())
   }
 
 Function types as parameters:
@@ -427,17 +427,17 @@ STDLIB
 ------
 String:  trim, trimStart, trimEnd, toUpperCase, toLowerCase, replace,
          slice, repeat, includes, startsWith, endsWith, indexOf, split,
-         charAt, toString, to_log
-Number:  toString, toFixed, to_log
-Bool:    toString, to_log
+         charAt, toString, toLog
+Number:  toString, toFixed, toLog
+Bool:    toString, toLog
 Array:   length, includes, indexOf, join, reverse, push, pop, concat,
          map, filter, find, slice, forEach, some, every, flat, reduce
 Map:     get, set, has, delete, keys, values, size
-Bytes:   byteLength, at, slice, toString, to_log, toHex, toBase64, toArray
+Bytes:   byteLength, at, slice, toString, toLog, toHex, toBase64, toArray
 Buffer:  write, writeString, writeByte, toBytes, toString, byteLength, clear
 Optional: isPresent, unwrap, unwrapOr
 
-Loggable: contract requiring to_log() -> String.
+Loggable: contract requiring toLog() -> String.
 String, Number, Bool, Bytes all satisfy Loggable.
 log(), error(), warn() require Loggable arguments.
 
@@ -454,7 +454,7 @@ The compiler enforces:
   type-mismatch        Comparing different types
   struct-comparison    Cannot compare structs directly
   nullable-access      Calling method on nullable without null check
-  not-loggable         log/error/warn arg doesn't have to_log()
+  not-loggable         log/error/warn arg doesn't have toLog()
   generic-mismatch     Wrong type for generic parameter
   constraint-violation Type doesn't satisfy generic constraint
   return-type-mismatch Returning wrong type from function

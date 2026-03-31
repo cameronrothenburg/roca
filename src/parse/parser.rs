@@ -730,7 +730,7 @@ mod tests {
     fn parse_generic_with_constraint() {
         let file = parse(r#"
             pub fn log_item<T: Loggable>(item: T) -> Ok {
-                log(item.to_log())
+                log(item.toLog())
             test { self("hello") is Ok }}
         "#);
         if let Item::Function(f) = &file.items[0] {

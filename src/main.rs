@@ -201,7 +201,7 @@ fn print_help() {
     println!("  test [path]          Build + run proof tests, then clean output");
     println!("  run [path]           Build + execute via embedded V8");
     println!("  gen-extern <.d.ts>   Generate extern contracts from TypeScript declarations");
-    println!("  repl                 Interactive REPL");
+    println!("  repl [--native]      Interactive REPL (V8 default, --native for Cranelift)");
     println!("  search <query>       Search stdlib and project for types/functions");
     println!("  patterns             Show coding patterns and JS integration examples");
     println!("  lsp                  Start language server (stdio)");

@@ -1,5 +1,7 @@
 contract Map<K, V> {
-    get(key: K) -> V
+    get(key: K) -> V, err {
+        err not_found = "key not found"
+    }
     set(key: K, value: V) -> Map<K, V>
     has(key: K) -> Bool
     delete(key: K) -> Bool

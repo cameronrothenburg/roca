@@ -19,7 +19,16 @@ pub struct ContractRegistry {
     pub satisfies_map: HashMap<String, Vec<String>>,
 }
 
-const STDLIB_SOURCE: &str = include_str!("../../packages/stdlib/primitives.roca");
+const STDLIB_SOURCE: &str = concat!(
+    include_str!("../../packages/stdlib/core/traits.roca"),
+    include_str!("../../packages/stdlib/core/string.roca"),
+    include_str!("../../packages/stdlib/core/number.roca"),
+    include_str!("../../packages/stdlib/core/bool.roca"),
+    include_str!("../../packages/stdlib/core/array.roca"),
+    include_str!("../../packages/stdlib/core/map.roca"),
+    include_str!("../../packages/stdlib/core/optional.roca"),
+    include_str!("../../packages/stdlib/core/bytes.roca"),
+);
 
 /// Stdlib parsed once and cached for the lifetime of the process.
 static STDLIB_AST: LazyLock<SourceFile> = LazyLock::new(|| crate::parse::parse(STDLIB_SOURCE));
@@ -416,10 +425,10 @@ mod tests {
     #[test]
     fn satisfies_tracked() {
         let file = parse::parse(r#"
-            contract Loggable { to_log() -> String }
+            contract Loggable { toLog() -> String }
             pub struct Email { value: String }{}
             Email satisfies Loggable {
-                fn to_log() -> String { return self.value test {} }
+                fn toLog() -> String { return self.value test {} }
             }
         "#);
         let reg = ContractRegistry::build(&file);

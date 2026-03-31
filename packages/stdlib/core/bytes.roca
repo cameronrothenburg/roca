@@ -5,11 +5,11 @@ contract Bytes {
     toString() -> String
     toHex() -> String
     toBase64() -> String
-    toArray() -> Array
+    toArray() -> Array<Number>
 }
 
 Bytes satisfies Loggable {
-    fn to_log() -> String {
+    fn toLog() -> String {
         return self.toHex()
     }
 }

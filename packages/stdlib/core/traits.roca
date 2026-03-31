@@ -1,9 +1,9 @@
 contract Loggable {
-    to_log() -> String
+    toLog() -> String
 }
 
 contract Serializable {
-    toJSON() -> String
+    toJson() -> String
 }
 
 contract Deserializable<T> {

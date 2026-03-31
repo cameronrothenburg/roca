@@ -1,7 +1,7 @@
 //! Rule: use-after-move, move-in-loop, must-be-const, recursive-cycle
 //! Enforces Roca's ownership model: const borrows, let moves.
 
-use std::collections::HashSet;
+use std::collections::{HashSet, HashMap};
 use crate::ast::*;
 use crate::errors::{self, RuleError};
 use crate::check::rule::Rule;
@@ -38,13 +38,24 @@ impl Rule for OwnershipRule {
     fn check_item(&self, ctx: &ItemContext) -> Vec<RuleError> {
         let mut errors = Vec::new();
 
-        // recursive-cycle: check struct/enum type graphs
         if let Item::Struct(s) = ctx.item {
+            // Build a map of all struct definitions for graph traversal
+            let mut struct_map: HashMap<String, &[Field]> = HashMap::new();
+            for item in &ctx.check.file.items {
+                if let Item::Struct(def) = item {
+                    struct_map.insert(def.name.clone(), &def.fields);
+                }
+            }
+
+            // Check each field for direct or indirect cycles
             for field in &s.fields {
-                if references_type_directly(&field.type_ref, &s.name) {
+                let mut visited = HashSet::new();
+                visited.insert(s.name.clone());
+                if has_cycle(&field.type_ref, &struct_map, &mut visited) {
                     errors.push(RuleError::new(
                         errors::RECURSIVE_CYCLE,
-                        format!("struct '{}' contains field '{}' of its own type — use Optional<{}> for recursive types", s.name, field.name, s.name),
+                        format!("struct '{}' field '{}' creates a recursive cycle — use Optional<{}> to break it",
+                            s.name, field.name, type_ref_name(&field.type_ref)),
                         Some(format!("{}.{}", s.name, field.name)),
                     ));
                 }
@@ -55,11 +66,40 @@ impl Rule for OwnershipRule {
     }
 }
 
-/// Check if a type directly references a given type name (without Optional/Array indirection)
-fn references_type_directly(ty: &TypeRef, target: &str) -> bool {
-    // Only Named(T) is a direct reference — Optional<T>, Array<T>, and primitives
-    // break the cycle via heap-allocated pointer indirection.
-    matches!(ty, TypeRef::Named(name) if name == target)
+/// Walk the type graph checking for cycles. Returns true if a cycle is found.
+/// `visited` tracks which struct names we've already seen on this path.
+/// Optional<T>, Array<T>, and other Generic types break the cycle (heap indirection).
+fn has_cycle(ty: &TypeRef, structs: &HashMap<String, &[Field]>, visited: &mut HashSet<String>) -> bool {
+    match ty {
+        TypeRef::Named(name) => {
+            // If we've seen this struct before on this path, it's a cycle
+            if visited.contains(name) { return true; }
+            // If it's a known struct, walk its fields
+            if let Some(fields) = structs.get(name) {
+                visited.insert(name.clone());
+                for field in *fields {
+                    if has_cycle(&field.type_ref, structs, visited) {
+                        return true;
+                    }
+                }
+                visited.remove(name);
+            }
+            false
+        }
+        // Optional<T>, Array<T>, Generic — heap-allocated pointer breaks the cycle
+        TypeRef::Nullable(_) | TypeRef::Generic(_, _) => false,
+        // Primitives and function types can't create cycles
+        _ => false,
+    }
+}
+
+fn type_ref_name(ty: &TypeRef) -> String {
+    match ty {
+        TypeRef::Named(n) => n.clone(),
+        TypeRef::String => "String".into(),
+        TypeRef::Number => "Number".into(),
+        _ => "T".into(),
+    }
 }
 
 /// `outer_lets` = lets declared before the current loop. Only these trigger move-in-loop.
@@ -427,6 +467,51 @@ mod tests {
             pub struct Tree {
                 children: Array<Tree>
             }{}
+        "#, "recursive-cycle"));
+    }
+
+    #[test]
+    fn indirect_cycle_a_b_a() {
+        // A contains B, B contains A — indirect cycle
+        assert!(has_error(r#"
+            pub struct A { b: B }{}
+            pub struct B { a: A }{}
+        "#, "recursive-cycle"));
+    }
+
+    #[test]
+    fn indirect_cycle_three_way() {
+        // A → B → C → A
+        assert!(has_error(r#"
+            pub struct A { b: B }{}
+            pub struct B { c: C }{}
+            pub struct C { a: A }{}
+        "#, "recursive-cycle"));
+    }
+
+    #[test]
+    fn indirect_cycle_broken_by_optional() {
+        // A contains B, B contains Optional<A> — NOT a cycle
+        assert!(!has_error(r#"
+            pub struct A { b: B }{}
+            pub struct B { a: Optional<A> }{}
+        "#, "recursive-cycle"));
+    }
+
+    #[test]
+    fn primitives_not_flagged_as_cycle() {
+        assert!(!has_error(r#"
+            pub struct Point { x: Number y: Number }{}
+        "#, "recursive-cycle"));
+    }
+
+    #[test]
+    fn no_cycle_different_structs() {
+        // A contains B, B contains C — no cycle (C doesn't reference A)
+        assert!(!has_error(r#"
+            pub struct A { b: B }{}
+            pub struct B { c: C }{}
+            pub struct C { value: Number }{}
         "#, "recursive-cycle"));
     }
 

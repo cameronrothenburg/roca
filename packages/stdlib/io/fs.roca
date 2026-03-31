@@ -8,6 +8,7 @@ pub extern contract Fs {
         err io = "I/O error"
     }
     writeFile(path: String, content: String) -> Ok, err {
+        err not_found = "parent directory not found"
         err permission = "permission denied"
         err io = "I/O error"
     }

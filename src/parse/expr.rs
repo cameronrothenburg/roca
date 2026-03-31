@@ -502,7 +502,7 @@ fn has_interpolation(s: &str) -> bool {
             let first = trimmed.chars().next().unwrap();
             if !first.is_alphabetic() && first != '_' { continue; }
             // Only valid interpolation if content is an identifier path or method call
-            // Allows: {name}, {user.age}, {value.toString()}, {item.to_log()}
+            // Allows: {name}, {user.age}, {value.toString()}, {item.toLog()}
             if trimmed.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '.' || c == '(' || c == ')') {
                 return true;
             }

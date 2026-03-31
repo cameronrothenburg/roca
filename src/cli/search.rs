@@ -5,8 +5,14 @@ use crate::ast::*;
 use crate::check::walker::type_ref_to_name;
 
 const STDLIB_SOURCE: &str = concat!(
-    include_str!("../../packages/stdlib/primitives.roca"),
     include_str!("../../packages/stdlib/core/traits.roca"),
+    include_str!("../../packages/stdlib/core/string.roca"),
+    include_str!("../../packages/stdlib/core/number.roca"),
+    include_str!("../../packages/stdlib/core/bool.roca"),
+    include_str!("../../packages/stdlib/core/array.roca"),
+    include_str!("../../packages/stdlib/core/map.roca"),
+    include_str!("../../packages/stdlib/core/optional.roca"),
+    include_str!("../../packages/stdlib/core/bytes.roca"),
     include_str!("../../packages/stdlib/core/math.roca"),
     include_str!("../../packages/stdlib/core/path.roca"),
     include_str!("../../packages/stdlib/io/fs.roca"),

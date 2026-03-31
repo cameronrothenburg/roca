@@ -5,19 +5,19 @@ contract String {
     toUpperCase() -> String
     toLowerCase() -> String
     replace(search: String, replacement: String) -> String
-    slice(start: Number) -> String
+    slice(start: Number, end: Number) -> String
     repeat(count: Number) -> String
     includes(search: String) -> Bool
     startsWith(search: String) -> Bool
     endsWith(search: String) -> Bool
     indexOf(search: String) -> Number
-    split(separator: String) -> Array
+    split(separator: String) -> Array<String>
     charAt(index: Number) -> String
     toString() -> String
 }
 
 String satisfies Loggable {
-    fn to_log() -> String {
+    fn toLog() -> String {
         return self
     }
 }
