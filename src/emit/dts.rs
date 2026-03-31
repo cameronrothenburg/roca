@@ -86,6 +86,11 @@ fn type_to_ts(t: &TypeRef) -> String {
             format!("{}<{}>", name, ts_args.join(", "))
         }
         TypeRef::Nullable(inner) => format!("{} | null", type_to_ts(inner)),
+        TypeRef::Fn(params, ret) => {
+            let p: Vec<String> = params.iter().enumerate()
+                .map(|(i, t)| format!("arg{}: {}", i, type_to_ts(t))).collect();
+            format!("({}) => {}", p.join(", "), type_to_ts(ret))
+        }
     }
 }
 

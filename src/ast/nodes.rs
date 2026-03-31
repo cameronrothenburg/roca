@@ -188,6 +188,7 @@ pub struct FnDef {
     pub name: String,
     pub is_pub: bool,
     pub doc: Option<String>,
+    pub type_params: Vec<TypeParam>,
     pub params: Vec<Param>,
     pub return_type: TypeRef,
     pub returns_err: bool,

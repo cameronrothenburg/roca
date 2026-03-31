@@ -260,6 +260,32 @@ CONTROL FLOW
       _ => "unknown"
   }
 
+GENERIC FUNCTIONS
+-----------------
+Functions can have type parameters:
+
+  pub fn identity<T>(value: T) -> T {
+      return value
+  }
+
+  pub fn transform<A, B>(input: A, convert: fn(A) -> B) -> B {
+      return convert(input)
+  }
+
+Constrained type parameters:
+
+  pub fn log_item<T: Loggable>(item: T) -> Ok {
+      log(item.to_log())
+  }
+
+Function types as parameters:
+
+  fn(Number) -> String          takes Number, returns String
+  fn(A, B) -> C                 generic function type
+  fn() -> Ok                    no params, void return
+
+Compiles to plain JS — type parameters are erased at the output.
+
 CLOSURES
 --------
   items.map(fn(x) -> x * 2)

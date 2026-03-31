@@ -177,6 +177,7 @@ fn type_ref_base_name(t: &TypeRef) -> String {
         TypeRef::Named(n) => n.clone(),
         TypeRef::Generic(n, _) => n.clone(),
         TypeRef::Nullable(inner) => type_ref_base_name(inner),
+        TypeRef::Fn(_, ret) => type_ref_base_name(ret),
     }
 }
 

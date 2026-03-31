@@ -14,6 +14,7 @@ pub fn roca_to_cranelift(ty: &TypeRef) -> Type {
         TypeRef::Named(_) => types::I64,
         TypeRef::Generic(_, _) => types::I64,
         TypeRef::Nullable(_) => types::I64,
+        TypeRef::Fn(_, _) => types::I64, // function pointer
     }
 }
 

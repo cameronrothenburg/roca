@@ -696,4 +696,59 @@ mod tests {
             } else { panic!("expected match"); }
         } else { panic!("expected function"); }
     }
+
+    #[test]
+    fn parse_generic_function() {
+        let file = parse(r#"
+            pub fn identity<T>(value: T) -> T {
+                return value
+            test { self(42) == 42 }}
+        "#);
+        if let Item::Function(f) = &file.items[0] {
+            assert_eq!(f.name, "identity");
+            assert_eq!(f.type_params.len(), 1);
+            assert_eq!(f.type_params[0].name, "T");
+            assert_eq!(f.type_params[0].constraint, None);
+        } else { panic!("expected function"); }
+    }
+
+    #[test]
+    fn parse_generic_function_multi_params() {
+        let file = parse(r#"
+            pub fn pair<A, B>(first: A, second: B) -> Array<A> {
+                return [first]
+            test { self(1, "x") == [1] }}
+        "#);
+        if let Item::Function(f) = &file.items[0] {
+            assert_eq!(f.type_params.len(), 2);
+            assert_eq!(f.type_params[0].name, "A");
+            assert_eq!(f.type_params[1].name, "B");
+        } else { panic!("expected function"); }
+    }
+
+    #[test]
+    fn parse_generic_with_constraint() {
+        let file = parse(r#"
+            pub fn log_item<T: Loggable>(item: T) -> Ok {
+                log(item.to_log())
+            test { self("hello") is Ok }}
+        "#);
+        if let Item::Function(f) = &file.items[0] {
+            assert_eq!(f.type_params.len(), 1);
+            assert_eq!(f.type_params[0].name, "T");
+            assert_eq!(f.type_params[0].constraint, Some("Loggable".to_string()));
+        } else { panic!("expected function"); }
+    }
+
+    #[test]
+    fn parse_non_generic_function_unchanged() {
+        let file = parse(r#"
+            pub fn add(a: Number, b: Number) -> Number {
+                return a + b
+            test { self(1, 2) == 3 }}
+        "#);
+        if let Item::Function(f) = &file.items[0] {
+            assert!(f.type_params.is_empty());
+        } else { panic!("expected function"); }
+    }
 }

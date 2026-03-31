@@ -294,6 +294,7 @@ fn type_ref_to_kind(ty: &roca::TypeRef) -> ValKind {
             _ => ValKind::Struct,
         },
         roca::TypeRef::Nullable(_) => ValKind::Other,
+        roca::TypeRef::Fn(_, _) => ValKind::Other, // function pointers
     }
 }
 

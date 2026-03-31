@@ -9,6 +9,14 @@ impl Parser {
     pub fn parse_function(&mut self, is_pub: bool) -> ParseResult<FnDef> {
         self.expect(&Token::Fn)?;
         let name = self.expect_ident()?;
+
+        // Optional type parameters: fn name<T, U: Constraint>(...)
+        let type_params = if self.at(&Token::Lt) {
+            self.parse_type_params()?
+        } else {
+            Vec::new()
+        };
+
         self.expect(&Token::LParen)?;
         let params = self.parse_params()?;
         self.expect(&Token::RParen)?;
@@ -51,6 +59,7 @@ impl Parser {
             name,
             is_pub,
             doc: None,
+            type_params,
             params,
             return_type,
             returns_err,

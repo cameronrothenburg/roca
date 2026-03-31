@@ -19,6 +19,10 @@ pub fn type_ref_to_name(t: &TypeRef) -> String {
             format!("{}<{}>", name, arg_names.join(", "))
         }
         TypeRef::Nullable(inner) => format!("{}?", type_ref_to_name(inner)),
+        TypeRef::Fn(params, ret) => {
+            let p: Vec<String> = params.iter().map(|t| type_ref_to_name(t)).collect();
+            format!("fn({}) -> {}", p.join(", "), type_ref_to_name(ret))
+        }
         TypeRef::Ok => "Ok".to_string(),
     }
 }
