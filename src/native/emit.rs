@@ -193,7 +193,13 @@ fn emit_expr(b: &mut FunctionBuilder, expr: &Expr, vars: &HashMap<String, VarInf
     match expr {
         Expr::Number(n) => b.ins().f64const(*n),
         Expr::Bool(v) => b.ins().iconst(types::I64, if *v { 1 } else { 0 }),
-        Expr::String(_) => b.ins().iconst(types::I64, 0), // TODO
+        Expr::String(s) => {
+            // Leak a heap-allocated string and return the pointer
+            // TODO: proper refcounting/GC
+            let leaked = Box::leak(format!("{}\0", s).into_boxed_str());
+            let ptr = leaked.as_ptr() as i64;
+            b.ins().iconst(types::I64, ptr)
+        }
         Expr::Ident(name) => {
             if let Some(var) = vars.get(name) {
                 b.ins().stack_load(var.cranelift_type, var.slot, 0)

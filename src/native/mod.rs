@@ -209,6 +209,37 @@ mod tests {
     }
 
     #[test]
+    fn compile_roca_string_literal() {
+        // Test that string literals compile — returns a pointer (non-zero)
+        let file = crate::parse::parse(r#"
+            pub fn greeting() -> String {
+                return "hello"
+            }
+        "#);
+
+        let mut module = JITModule::new(
+            cranelift_jit::JITBuilder::new(cranelift_module::default_libcall_names())
+                .expect("jit builder failed")
+        );
+
+        if let crate::ast::Item::Function(f) = &file.items[0] {
+            emit::compile_function_bare(&mut module, f).unwrap();
+        }
+        module.finalize_definitions().unwrap();
+
+        let mut sig = module.make_signature();
+        sig.returns.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I64));
+        let func_id = module.declare_function("greeting", cranelift_module::Linkage::Export, &sig).unwrap();
+        let ptr = module.get_finalized_function(func_id);
+        let greeting_fn = unsafe { std::mem::transmute::<_, fn() -> *const u8>(ptr) };
+
+        let result = greeting_fn();
+        assert!(!result.is_null(), "string should return non-null pointer");
+        let cstr = unsafe { std::ffi::CStr::from_ptr(result as *const i8) };
+        assert_eq!(cstr.to_str().unwrap(), "hello");
+    }
+
+    #[test]
     fn compile_raw_cranelift() {
         // Test Cranelift directly — no Roca AST involved
         use cranelift_codegen::ir::{types, AbiParam};
