@@ -3,34 +3,20 @@
 - [Introduction](./introduction.md)
 - [Getting Started](./getting-started.md)
 
-# Philosophy
+# Language Specification
 
-- [Safety by Compilation](./philosophy/safety.md)
-- [Happy Path](./philosophy/happy-path.md)
-- [No Null](./philosophy/no-null.md)
-- [Crash Blocks](./philosophy/crash-blocks.md)
-
-# Syntax
-
-- [Functions](./syntax/functions.md)
-- [Structs](./syntax/structs.md)
-- [Contracts](./syntax/contracts.md)
-- [Types](./syntax/types.md)
-- [Control Flow](./syntax/control-flow.md)
-- [Closures](./syntax/closures.md)
-- [Async](./syntax/async.md)
-
-# Integration
-
-- [Using Roca in Your Project](./integration/using-in-projects.md)
-- [Extern Contracts](./integration/extern-contracts.md)
-- [JS Wiring](./integration/js-wiring.md)
-- [TypeScript](./integration/typescript.md)
-- [Stdlib Modules](./integration/stdlib-modules.md)
+- [Overview](./spec/overview.md)
+- [1. Lexical Grammar](./spec/lexical.md)
+- [2. Syntax](./spec/syntax.md)
+- [3. Type System](./spec/types.md)
+- [4. Module System](./spec/modules.md)
+- [5. Error Model](./spec/errors.md)
+- [6. Test Model](./spec/testing.md)
+- [7. Compilation](./spec/compilation.md)
+- [8. Runtime](./spec/runtime.md)
 
 # Reference
 
 - [Compiler Rules](./reference/compiler-rules.md)
 - [CLI](./reference/cli.md)
 - [Stdlib](./reference/stdlib.md)
-- [Telemetry](./reference/telemetry.md)
