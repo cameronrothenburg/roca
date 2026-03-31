@@ -8,9 +8,12 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "S
 
 ## 6.1 Test Blocks
 
-Every `pub fn` declaration MUST contain a `test` block as the last item inside its function body. The test block lives inside the function's braces, not after them. A conforming compiler MUST reject any `pub fn` that lacks a test block with diagnostic `missing-test-block`.
+Every function that takes parameters and transforms them MUST contain a `test` block. This applies to all `pub fn` declarations. A conforming compiler MUST reject any `pub fn` that lacks a test block with diagnostic `missing-test`.
+
+Functions that are non-deterministic (e.g., calling extern contracts with no params, returning random values) are exempt from mandatory testing — the compiler cannot verify their output.
 
 ```roca
+/// Takes params, transforms them — MUST have tests
 pub fn add(a: Number, b: Number) -> Number {
     return a + b
 test {
@@ -19,8 +22,6 @@ test {
     self(-1, 1) == 0
 }}
 ```
-
-Non-public functions (those without the `pub` keyword) MUST NOT contain test blocks. A conforming compiler MUST reject test blocks on private functions with diagnostic `test-on-private-fn`.
 
 ### 6.1.1 The `self` Keyword
 
@@ -44,7 +45,11 @@ The test block MUST appear after all executable statements in the function body.
 
 ## 6.2 Assertion Types
 
-Test blocks support three assertion forms. Each assertion occupies one line. A test block MUST contain at least one assertion.
+Test blocks support three assertion forms. Each assertion occupies one line.
+
+A test block MUST contain:
+- At least one **happy path** assertion (`== value` or `is Ok`) proving the function works with valid input
+- One **error path** assertion (`is err.name`) for EVERY declared error, proving each failure case is reachable
 
 | Syntax | Meaning | Usage |
 |--------|---------|-------|
@@ -119,7 +124,7 @@ Shape checking rules:
 - **Struct**: Expected value MUST be a struct literal with all required fields matching their declared types.
 - **Array**: Expected value MUST be an array literal where each element matches the array's element type.
 - **Enum**: Expected value MUST be a valid enum variant (e.g., `Color.Red`).
-- **Union types** (`T | null`): Expected value MUST be either a valid `T` value or `null`.
+- **Optional**: Expected value for `Optional<T>` return types is implementation-defined.
 
 ```roca
 pub struct Point {
@@ -138,11 +143,11 @@ test {
 
 ## 6.4 Error Test Coverage
 
-If a function declares one or more errors, the following rules MUST be enforced by the compiler:
+If a function returns errors, the compiler MUST enforce complete coverage:
 
-1. **Every declared error MUST be tested.** For each `err name = "message"` declaration in the function body, there MUST be at least one `self(args) is err.name` assertion in the test block. A missing error test MUST produce diagnostic `untested-error`.
+1. **Every declared error MUST be tested.** For each error the function can return, there MUST be at least one `self(args) is err.name` assertion proving that error path is reachable. A missing error test MUST produce diagnostic `untested-error`.
 
-2. **At least one success case MUST exist.** A function with error declarations MUST have at least one assertion that is either `self(args) == value` or `self(args) is Ok`. A test block with only error assertions MUST produce diagnostic `no-success-case`.
+2. **At least one success case MUST exist.** A function with error declarations MUST have at least one assertion that proves the happy path works (`self(args) == value` or `self(args) is Ok`). A test block with only error assertions MUST produce diagnostic `no-success-test`.
 
 ```roca
 // COMPILE ERROR: untested-error (missing test for err.too_long)
@@ -223,7 +228,7 @@ The compiler MUST generate stubs using the following default values:
 | `Bool` | `false` |
 | `[T]` | `[]` |
 | `Struct` | Struct with all fields set to their type defaults |
-| `T \| null` | `null` |
+| `Optional<T>` | `null` |
 | `Ok` (no return value) | `null` |
 
 ### 6.6.2 Stub Behavior

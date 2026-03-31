@@ -110,10 +110,10 @@ contract Comparable<T: Orderable> {
 An extern contract declares a type provided by the runtime environment. It MUST NOT be emitted as generated code.
 
 ```
-ExternContract = 'pub' 'extern' 'contract' Ident TypeParams? '{' (FnSignature | Field)* '}'
+ExternContract = 'pub'? 'extern' 'contract' Ident TypeParams? '{' (FnSignature | Field)* '}'
 ```
 
-Extern contracts MUST use the `pub` modifier.
+Extern contracts SHOULD use the `pub` modifier. The parser accepts non-pub extern contracts.
 
 ```roca
 pub extern contract Console {
@@ -130,7 +130,7 @@ An enum defines a type with a fixed set of named variants. Enums come in two for
 Enum = 'pub'? 'enum' Ident '{' EnumVariants '}'
 EnumVariants = FlatVariants | AlgebraicVariants
 FlatVariants = Ident '=' (StringLit | NumberLit) (',' Ident '=' (StringLit | NumberLit))*
-AlgebraicVariants = AlgebraicVariant ('|' AlgebraicVariant)*
+AlgebraicVariants = AlgebraicVariant (',' AlgebraicVariant)* | AlgebraicVariant+
 AlgebraicVariant = Ident ('(' TypeRef (',' TypeRef)* ')')?
 ```
 
@@ -154,8 +154,8 @@ enum Priority {
 // Algebraic enum with data variants
 pub enum Result {
     Ok(String)
-    | Err(String)
-    | Loading
+    Err(String)
+    Loading
 }
 ```
 
@@ -240,10 +240,10 @@ A function is the primary unit of computation. See section 2.3 for the full defi
 An extern function declares a function provided by the runtime. The body contains only error declarations.
 
 ```
-ExternFn = 'pub' 'extern' 'fn' Ident '(' Params ')' '->' TypeRef (',' 'err')? '{' ErrDecl* '}'
+ExternFn = 'pub'? 'extern' 'fn' Ident '(' Params ')' '->' TypeRef (',' 'err')? '{' ErrDecl* '}'
 ```
 
-Extern functions MUST use the `pub` modifier. They MUST NOT have a body, crash block, or test block — only error declarations.
+Extern functions SHOULD use the `pub` modifier. They MUST NOT have a body, crash block, or test block — only error declarations. The parser also accepts `mock` blocks inside extern functions, but they are parsed and ignored (legacy).
 
 ```roca
 pub extern fn fetch(url: String) -> String, err {
@@ -314,7 +314,7 @@ pub fn clamp(
 
 ### 2.3.3 Return Type
 
-Every function MUST declare a return type with `->`. If the function can return errors, the return type MUST be followed by `, err`.
+Every function SHOULD declare a return type with `->`. If omitted, the return type defaults to `Ok`. If the function can return errors, the return type MUST be followed by `, err`.
 
 ```roca
 // Returns a value only
@@ -334,19 +334,33 @@ pub fn divide(a: Number, b: Number) -> Number, err {
 
 ### 2.3.4 Error Declarations
 
-Error declarations MUST appear at the top of the function body, before any statements. Each declares a named error with a message.
+Error declarations name the errors a function can return, with a human-readable message.
 
 ```
 ErrDecl = 'err' Ident '=' StringLit
 ```
 
-```roca
-pub fn parse(input: String) -> Number, err {
-    err empty_input = "input must not be empty"
-    err not_a_number = "input is not numeric"
+Error declarations MAY appear in:
+- Function bodies (at the top, before statements)
+- Contract function signatures
+- Extern fn blocks
 
-    // body follows error declarations
-    return 0
+In the function body, errors are returned via `return err.name` or `return err.name("custom message")`. The declared names define the complete set of errors the function can produce.
+
+```roca
+// Error declarations in an extern fn
+pub extern fn fetch(url: String) -> String, err {
+    err network_error = "failed to reach server"
+    err timeout = "request timed out"
+}
+
+// In function bodies, errors are returned — not declared
+pub fn divide(a: Number, b: Number) -> Number, err {
+    err division_by_zero = "cannot divide by zero"
+    if b == 0 {
+        return err.division_by_zero
+    }
+    return a / b
 }
 ```
 
@@ -360,11 +374,25 @@ The crash block declares error-handling strategies for dependencies that can fai
 
 ```
 CrashBlock = 'crash' '{' CrashHandler* '}'
-CrashHandler = DottedName '->' CrashStrategy ('|>' CrashStrategy)*
-CrashStrategy = ('retry' | 'skip' | 'halt' | 'fallback' | 'panic' | 'default') '(' Args ')'
+CrashHandler = DottedName '->' CrashChain
+CrashChain = CrashStep ('|>' CrashStep)*
+CrashStep = 'retry' '(' Number ',' Number ')'
+          | 'skip'
+          | 'halt'
+          | 'panic'
+          | 'log'
+          | 'fallback' '(' Expr ')'
+          | 'default' '(' Expr ')'
+          | 'call' '{' (('err' '.' Ident | 'default') '->' CrashChain)+ '}'
 ```
 
-Crash strategies MUST be one of: `retry`, `skip`, `halt`, `fallback`, `panic`, `default`.
+Crash strategies MUST be one of: `retry`, `skip`, `halt`, `fallback`, `panic`, `default`, `log`, `call`.
+
+- `retry(attempts, delay_ms)` takes exactly 2 arguments: the number of attempts and the delay in milliseconds.
+- `skip`, `halt`, `panic` are bare keywords with NO parentheses.
+- `log` is a non-terminal step that logs the error and passes to the next step in the chain.
+- `fallback(expr)` and `default(expr)` take a single expression argument.
+- `call { ... }` provides detailed error handlers that match specific error names or a `default` case.
 
 ```roca
 pub fn fetchUser(id: String) -> User, err {
@@ -373,7 +401,11 @@ pub fn fetchUser(id: String) -> User, err {
     return User { name: response.name }
 crash {
     http.get -> retry(3, 1000)
-    http.get -> retry(3) |> fallback(defaultUser)
+    http.get -> retry(3, 500) |> log |> fallback(defaultUser)
+    db.query -> call {
+        err.not_found -> skip
+        default -> halt
+    }
 }
 test {
     self("abc") == User { name: "test" }
@@ -386,10 +418,11 @@ The test block contains proof assertions for the function. It appears after the 
 
 ```
 TestBlock = 'test' '{' TestCase* '}'
-TestCase = 'self' '(' Args ')' ('==' Expr | 'is' 'err' '.' Ident)
+TestCase = 'self' '(' Args ')' ('==' Expr | 'is' 'err' '.' Ident | 'is' 'Ok')
+         | Ident '(' Args ')' 'is' StatusMock
 ```
 
-Test cases call the function using `self` and assert either value equality (`==`) or error identity (`is`).
+Test cases call the function using `self` and assert value equality (`==`), error identity (`is err.name`), or success (`is Ok`). The `StatusMock` pattern allows asserting on mock status.
 
 ```roca
 pub fn add(a: Number, b: Number) -> Number {
@@ -410,6 +443,7 @@ test {
     self(10, 2) == 5
     self(0, 1) == 0
     self(1, 0) is err.division_by_zero
+    self(10, 5) is Ok
 }}
 ```
 
@@ -419,10 +453,9 @@ Within a function's braces, elements MUST appear in this order:
 
 1. Error declarations (`err name = "message"`)
 2. Body statements
-3. Crash block (OPTIONAL)
-4. Test block (OPTIONAL)
+3. Crash and test blocks (OPTIONAL, in any order)
 
-A function MUST NOT have a test block before a crash block.
+Crash and test blocks MAY appear in any order after the function body.
 
 ---
 
@@ -440,12 +473,14 @@ Stmt = ConstDecl | LetDecl | Assignment | Return | If | While | For | Break | Co
 An immutable binding. The value MUST NOT be reassigned after declaration.
 
 ```
-ConstDecl = 'const' Ident '=' Expr
+ConstDecl = 'const' Ident (':' TypeRef)? '=' Expr
 ```
+
+The type annotation is OPTIONAL. If provided, it follows the binding name after a colon.
 
 ```roca
 const name = "roca"
-const count = items.length
+const count: Number = items.length
 const result = add(1, 2)
 ```
 
@@ -454,12 +489,18 @@ const result = add(1, 2)
 A mutable binding. The value MAY be reassigned.
 
 ```
-LetDecl = 'let' Ident '=' Expr
+LetDecl = 'let' Ident (':' TypeRef)? '=' Expr
+        | 'let' Ident ',' Ident '=' Expr
 ```
+
+The type annotation is OPTIONAL. If provided, it follows the binding name after a colon.
+
+The destructuring form `let name, err_name = expr` binds both the success value and the error from an error-returning call. This is the idiomatic way to handle calls that return `, err`.
 
 ```roca
 let count = 0
-let message = "initial"
+let message: String = "initial"
+let result, parseErr = parse(input)
 ```
 
 ### 2.4.3 Assignment
@@ -482,20 +523,22 @@ Returns a value from the enclosing function. A function body MUST contain at lea
 
 ```
 Return = 'return' Expr
+       | 'return' 'err' '.' Ident ('(' StringLit ')')?
 ```
 
-The expression MAY be a value or an error reference:
+The expression MAY be a value or an error reference. Error returns MAY include an optional custom message argument.
 
 ```roca
 return 42
 return "hello"
 return err.not_found
+return err.not_found("user 123 was not found")
 return Ok(result)
 ```
 
 ### 2.4.5 If / Else
 
-Conditional execution. The condition MUST be an expression. The `else` branch is OPTIONAL. `else if` chaining is permitted.
+Conditional execution. The condition MUST be an expression. The `else` branch is OPTIONAL. The parser requires `{` after `else` — `else if` chaining is NOT supported. To express multi-branch conditions, use `match` or nest `if` inside `else`.
 
 ```
 If = 'if' Expr '{' Stmt* '}' ('else' '{' Stmt* '}')?
@@ -563,7 +606,7 @@ Break = 'break'
 Continue = 'continue'
 ```
 
-These statements MUST only appear inside a `while` or `for` loop body.
+These statements SHOULD only appear inside a `while` or `for` loop body. The parser does not enforce this constraint.
 
 ```roca
 for item in items {
@@ -581,8 +624,10 @@ for item in items {
 Assigns a value to a field on a struct instance.
 
 ```
-FieldAssignment = Expr '.' Ident '=' Expr
+FieldAssignment = ('self' | Ident) '.' Ident '=' Expr
 ```
+
+Only `self.field = expr` and `ident.field = expr` are supported. Nested field assignment (e.g., `a.b.c = expr`) is NOT supported.
 
 ```roca
 self.count = self.count + 1
@@ -595,26 +640,28 @@ Async operations for concurrent execution.
 
 ```
 Wait = 'wait' Expr
-WaitAll = 'waitAll' '{' Stmt* '}'
-WaitFirst = 'waitFirst' '{' Stmt* '}'
+WaitAllDestructure = 'let' Ident (',' Ident)* ',' Ident '=' 'waitAll' '{' Expr+ '}'
+WaitFirstDestructure = 'let' Ident (',' Ident)* ',' Ident '=' 'waitFirst' '{' Expr+ '}'
 ```
 
-`wait` suspends until a single async operation completes. `waitAll` runs all operations concurrently and waits for all to complete. `waitFirst` runs all operations concurrently and returns when the first completes.
+`wait` is an expression-level construct that suspends until a single async operation completes.
+
+`waitAll` and `waitFirst` are NOT standalone block statements. They MUST appear in a destructuring `let` binding. Each result is bound to a name, and the final name in the binding captures failures.
 
 ```roca
-// Single await
+// Single await (expression-level)
 const response = wait http.get("/api/users")
 
-// Concurrent — wait for all
-waitAll {
-    const users = http.get("/api/users")
-    const posts = http.get("/api/posts")
+// Concurrent — wait for all (destructuring let only)
+let users, posts, failed = waitAll {
+    http.get("/api/users")
+    http.get("/api/posts")
 }
 
-// Concurrent — first to resolve wins
-waitFirst {
-    const primary = db.query("SELECT * FROM cache")
-    const fallback = http.get("/api/data")
+// Concurrent — first to resolve wins (destructuring let only)
+let primary, fallback, failed = waitFirst {
+    db.query("SELECT * FROM cache")
+    http.get("/api/data")
 }
 ```
 
@@ -731,31 +778,31 @@ const nested = matrix[row][col]
 A match expression selects a branch based on a value. Every match MUST include a wildcard (`_`) arm or be exhaustive over all enum variants.
 
 ```
-Match = 'match' Expr '{' MatchArm (',' MatchArm)* '}'
+Match = 'match' Expr '{' MatchArm+ '}'
 MatchArm = MatchPattern '=>' Expr
 MatchPattern = Literal | Ident '.' Ident ('(' Ident ')')? | '_'
 ```
 
 ```roca
 const label = match status {
-    "active" => "Currently active",
-    "inactive" => "Not active",
+    "active" => "Currently active"
+    "inactive" => "Not active"
     _ => "Unknown"
 }
 
 const message = match result {
-    Result.Ok(value) => "Got: {value}",
-    Result.Err(msg) => "Failed: {msg}",
+    Result.Ok(value) => "Got: {value}"
+    Result.Err(msg) => "Failed: {msg}"
     Result.Loading => "Please wait..."
 }
 ```
 
 ### 2.5.9 Struct Literal
 
-Creates an instance of a struct with field values.
+Creates an instance of a struct with field values. The struct name MUST start with an uppercase letter. Empty struct literals (`Name {}`) are NOT supported; at least one field is required.
 
 ```
-StructLit = Ident '{' (Ident ':' Expr (',' Ident ':' Expr)*)? '}'
+StructLit = UpperIdent '{' Ident ':' Expr (',' Ident ':' Expr)* '}'
 ```
 
 ```roca
@@ -766,26 +813,26 @@ const email = Email { value: "test@example.com" }
 
 ### 2.5.10 Closure
 
-An anonymous function expression. Closures use the `fn` keyword with an arrow expression body.
+An anonymous function expression. Closures use the `fn` keyword with an arrow expression body. Closure parameters are untyped — they do NOT have type annotations.
 
 ```
-Closure = 'fn' '(' Params ')' '->' Expr
+Closure = 'fn' '(' Ident (',' Ident)* ')' '->' Expr
 ```
 
 ```roca
-const double = fn(x: Number) -> x * 2
-const greet = fn(name: String) -> "hello {name}"
-const items = list.map(fn(x: Number) -> x + 1)
+const double = fn(x) -> x * 2
+const greet = fn(name) -> "hello {name}"
+const items = list.map(fn(x) -> x + 1)
 ```
 
 ### 2.5.11 String Interpolation
 
-String literals containing `{expr}` are interpolated expressions. The parser MUST decompose them into a sequence of string parts and expression parts.
+String literals containing `{ident}` or `{ident.field}` are interpolated. The parser MUST decompose them into a sequence of string parts and expression parts. Interpolation supports identifiers and field access only. Arbitrary expressions (e.g., `{1 + 2}`, `{compute(x, y)}`) are NOT supported.
 
 ```roca
 const greeting = "hello {name}, you are {age} years old"
 const path = "/users/{id}/posts/{postId}"
-const debug = "result: {compute(x, y)}"
+const detail = "value: {obj.field}"
 ```
 
 ### 2.5.12 Enum Variant Access
