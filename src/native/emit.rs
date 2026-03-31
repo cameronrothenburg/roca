@@ -1016,6 +1016,56 @@ fn emit_stmt(b: &mut FunctionBuilder, stmt: &Stmt, ctx: &mut EmitCtx, returned: 
                 *returned = true;
             }
         }
+        Stmt::Wait { names, failed_name, kind } => {
+            match kind {
+                roca::WaitKind::Single(expr) => {
+                    // wait call() — evaluate synchronously, store result
+                    let val = emit_expr(b, expr, ctx);
+                    let cl_type = b.func.dfg.value_type(val);
+                    if !names.is_empty() {
+                        let slot = alloc_slot(b, val);
+                        let kind = infer_kind(expr, ctx);
+                        ctx.set_var_kind(names[0].clone(), slot, cl_type, kind);
+                    }
+                    // failed_name is always false for sync execution
+                    let false_val = b.ins().iconst(types::I8, 0);
+                    let err_slot = alloc_slot(b, false_val);
+                    ctx.set_var_kind(failed_name.clone(), err_slot, types::I8, ValKind::Bool);
+                }
+                roca::WaitKind::All(exprs) => {
+                    // waitAll: build array of function pointers, call roca_wait_all
+                    // For now, execute sequentially — parallel needs function pointer extraction
+                    for (i, expr) in exprs.iter().enumerate() {
+                        let val = emit_expr(b, expr, ctx);
+                        let cl_type = b.func.dfg.value_type(val);
+                        if i < names.len() {
+                            let slot = alloc_slot(b, val);
+                            let kind = infer_kind(expr, ctx);
+                            ctx.set_var_kind(names[i].clone(), slot, cl_type, kind);
+                        }
+                    }
+                    let false_val = b.ins().iconst(types::I8, 0);
+                    let err_slot = alloc_slot(b, false_val);
+                    ctx.set_var_kind(failed_name.clone(), err_slot, types::I8, ValKind::Bool);
+                }
+                roca::WaitKind::First(exprs) => {
+                    // waitFirst: execute first expression only (simplification)
+                    // Full implementation needs thread racing
+                    if let Some(first) = exprs.first() {
+                        let val = emit_expr(b, first, ctx);
+                        let cl_type = b.func.dfg.value_type(val);
+                        if !names.is_empty() {
+                            let slot = alloc_slot(b, val);
+                            let kind = infer_kind(first, ctx);
+                            ctx.set_var_kind(names[0].clone(), slot, cl_type, kind);
+                        }
+                    }
+                    let false_val = b.ins().iconst(types::I8, 0);
+                    let err_slot = alloc_slot(b, false_val);
+                    ctx.set_var_kind(failed_name.clone(), err_slot, types::I8, ValKind::Bool);
+                }
+            }
+        }
         _ => {}
     }
 }
@@ -1122,6 +1172,10 @@ fn emit_expr(b: &mut FunctionBuilder, expr: &Expr, ctx: &mut EmitCtx) -> Value {
         Expr::FieldAccess { target, field } => emit_field_access(b, target, field, ctx),
         Expr::EnumVariant { enum_name: _, variant, args } => {
             emit_enum_variant(b, variant, args, ctx)
+        }
+        Expr::Await(inner) => {
+            // In native, wait is synchronous — just evaluate the expression
+            emit_expr(b, inner, ctx)
         }
         _ => b.ins().iconst(types::I64, 0),
     }

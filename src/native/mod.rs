@@ -119,6 +119,16 @@ mod tests {
         m.get_finalized_function(id)
     }
 
+    macro_rules! mem_test {
+        ($name:ident, $body:block) => {
+            #[test]
+            fn $name() {
+                runtime::MEM.reset();
+                $body
+            }
+        };
+    }
+
     // ─── Tests ─────────────────────────────────────────
 
     #[test]
@@ -1605,18 +1615,6 @@ mod tests {
     }
 
     // ─── Memory Tests ──────────────────────────────────
-    // Thread-local counters — no lock needed, tests run in parallel safely.
-    // Pattern: reset → compile → run → assert exact counts.
-
-    macro_rules! mem_test {
-        ($name:ident, $body:block) => {
-            #[test]
-            fn $name() {
-                runtime::MEM.reset();
-                $body
-            }
-        };
-    }
 
     mem_test!(rc_alloc_and_release, {
         let ptr = runtime::roca_rc_alloc(32);
@@ -2281,5 +2279,70 @@ mod tests {
         assert!(!runtime::constraint_violated(), "valid string should pass");
         let (allocs, _, _, _, _) = runtime::MEM.stats();
         assert!(allocs >= 2, "should allocate struct + string, got {}", allocs);
+    });
+
+    // ─── Async / Wait Tests ─────────────────────────────
+
+    #[test]
+    fn wait_single() {
+        let mut m = jit(r#"
+            pub fn add(a: Number, b: Number) -> Number {
+                return a + b
+            }
+            pub fn test_wait() -> Number {
+                let result, failed = wait add(3, 4)
+                if failed { return 0 }
+                return result
+            }
+        "#);
+        let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "test_wait", 0)) };
+        assert_eq!(f(), 7.0);
+    }
+
+    #[test]
+    fn wait_expr_await() {
+        let mut m = jit(r#"
+            pub fn double(n: Number) -> Number {
+                return n * 2
+            }
+            pub fn test_await() -> Number {
+                const result = wait double(21)
+                return result
+            }
+        "#);
+        let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "test_await", 0)) };
+        assert_eq!(f(), 42.0);
+    }
+
+    #[test]
+    fn sleep_timing() {
+        let start = std::time::Instant::now();
+        runtime::roca_sleep(50.0);
+        let elapsed = start.elapsed().as_millis();
+        assert!(elapsed >= 45, "sleep too short: {}ms", elapsed);
+        assert!(elapsed < 200, "sleep too long: {}ms", elapsed);
+    }
+
+    #[test]
+    fn time_now_epoch() {
+        let now = runtime::roca_time_now();
+        assert!(now > 1_700_000_000_000.0, "should be epoch ms, got {}", now);
+    }
+
+    mem_test!(mem_wait_no_leak, {
+        let mut m = jit(r#"
+            pub fn make() -> String {
+                return "created"
+            }
+            pub fn test_wait_mem() -> Number {
+                let result, failed = wait make()
+                return result.length
+            }
+        "#);
+        runtime::MEM.reset();
+        let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "test_wait_mem", 0)) };
+        assert_eq!(f(), 7.0);
+        let (allocs, frees, _, _, _) = runtime::MEM.stats();
+        assert_eq!(allocs, frees, "wait no leak: {} allocs, {} frees", allocs, frees);
     });
 }

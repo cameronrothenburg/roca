@@ -99,6 +99,12 @@ runtime_funcs! {
     // Constraint validation
     (constraint_panic, "roca_constraint_panic", roca_constraint_panic, [types::I64], []),
 
+    // Async / timing / concurrency
+    (sleep,             "roca_sleep",             roca_sleep,             [types::F64],                                []),
+    (time_now,          "roca_time_now",          roca_time_now,          [],                                          [types::F64]),
+    (wait_all,          "roca_wait_all",          roca_wait_all,          [types::I64, types::I64],                    [types::I64]),
+    (wait_first,        "roca_wait_first",        roca_wait_first,        [types::I64, types::I64],                    [types::F64]),
+
     // File I/O
     (fs_read_file,      "roca_fs_read_file",      roca_fs_read_file,      [types::I64],                                [types::I64, types::I8]),
     (fs_write_file,     "roca_fs_write_file",     roca_fs_write_file,     [types::I64, types::I64],                    [types::I8]),
@@ -403,6 +409,77 @@ pub extern "C" fn roca_constraint_panic(msg: i64) {
     let s = read_cstr(msg);
     eprintln!("constraint violation: {}", s);
     TL_CONSTRAINT_VIOLATED.with(|c| c.set(true));
+}
+
+// ─── Async / Timing ──────────────────────────────────
+
+/// Sleep for the given number of milliseconds. Blocks the current thread.
+pub extern "C" fn roca_sleep(ms: f64) {
+    std::thread::sleep(std::time::Duration::from_millis(ms as u64));
+}
+
+/// Get current time in milliseconds since epoch.
+pub extern "C" fn roca_time_now() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as f64)
+        .unwrap_or(0.0)
+}
+
+/// Call a function pointer on a new thread and return the f64 result.
+/// Used by waitAll/waitFirst to run JIT functions in parallel.
+/// fn_ptr is a JIT function pointer (extern "C" fn() -> f64).
+pub extern "C" fn roca_thread_call_f64(fn_ptr: i64) -> f64 {
+    if fn_ptr == 0 { return 0.0; }
+    let fp: extern "C" fn() -> f64 = unsafe { std::mem::transmute(fn_ptr) };
+    fp()
+}
+
+/// Spawn N function pointers as threads, wait for all to complete.
+/// fn_ptrs is an array of I64 function pointers. Returns array of f64 results.
+pub extern "C" fn roca_wait_all(fn_ptrs: i64, count: i64) -> i64 {
+    let arr = roca_array_new();
+    if fn_ptrs == 0 || count <= 0 { return arr; }
+
+    let ptrs: Vec<i64> = (0..count as usize)
+        .map(|i| roca_array_get_str(fn_ptrs, i as i64))
+        .collect();
+
+    let handles: Vec<_> = ptrs.into_iter().map(|fp| {
+        std::thread::spawn(move || {
+            if fp == 0 { return 0.0; }
+            let f: extern "C" fn() -> f64 = unsafe { std::mem::transmute(fp) };
+            f()
+        })
+    }).collect();
+
+    for handle in handles {
+        let result = handle.join().unwrap_or(0.0);
+        roca_array_push_f64(arr, result);
+    }
+    arr
+}
+
+/// Spawn N function pointers as threads, return first result.
+pub extern "C" fn roca_wait_first(fn_ptrs: i64, count: i64) -> f64 {
+    if fn_ptrs == 0 || count <= 0 { return 0.0; }
+
+    let ptrs: Vec<i64> = (0..count as usize)
+        .map(|i| roca_array_get_str(fn_ptrs, i as i64))
+        .collect();
+
+    let (tx, rx) = std::sync::mpsc::channel();
+
+    for fp in ptrs {
+        let tx = tx.clone();
+        std::thread::spawn(move || {
+            if fp == 0 { let _ = tx.send(0.0); return; }
+            let f: extern "C" fn() -> f64 = unsafe { std::mem::transmute(fp) };
+            let _ = tx.send(f());
+        });
+    }
+
+    rx.recv().unwrap_or(0.0)
 }
 
 // ─── File I/O ─────────────────────────────────────────
