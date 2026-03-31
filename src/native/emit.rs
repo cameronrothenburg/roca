@@ -1051,6 +1051,12 @@ fn emit_match(b: &mut FunctionBuilder, value: &Expr, arms: &[roca::MatchArm], ct
     let result_type = if let Some(arm) = default_arm {
         let kind = infer_kind(&arm.value, ctx);
         if kind == ValKind::Number { types::F64 } else { types::I64 }
+    } else if let Some(first) = arms.first() {
+        // No default arm — infer from the first arm's value expression.
+        // This handles variant matches where scrutinee is I64 (enum ptr)
+        // but arm results are F64 (numbers).
+        let kind = infer_kind(&first.value, ctx);
+        if kind == ValKind::Number { types::F64 } else { types::I64 }
     } else if is_float {
         types::F64
     } else {
@@ -1104,20 +1110,13 @@ fn emit_match(b: &mut FunctionBuilder, value: &Expr, arms: &[roca::MatchArm], ct
                     call_rt(b, f, &[scr, zero_idx])
                 } else { b.ins().iconst(types::I64, 0) };
 
-                let variant_str = leak_cstr(b, variant);
-                let variant_rc = if let Some(&f) = ctx.get_func("__string_new") {
-                    call_rt(b, f, &[variant_str])
-                } else { variant_str };
-
+                // Compare tag directly with static C string — roca_string_eq
+                // reads raw CStr pointers, so no RC allocation needed.
+                let variant_cstr = leak_cstr(b, variant);
                 let cond = if let Some(&f) = ctx.get_func("__string_eq") {
-                    let eq = call_rt(b, f, &[tag_ptr, variant_rc]);
+                    let eq = call_rt(b, f, &[tag_ptr, variant_cstr]);
                     b.ins().uextend(types::I64, eq)
                 } else { b.ins().iconst(types::I64, 0) };
-
-                // Free the temporary variant name string
-                if let Some(&f) = ctx.get_func("__rc_release") {
-                    call_void(b, f, &[variant_rc]);
-                }
 
                 let then_block = b.create_block();
                 let next_block = b.create_block();
@@ -1127,10 +1126,12 @@ fn emit_match(b: &mut FunctionBuilder, value: &Expr, arms: &[roca::MatchArm], ct
                 b.seal_block(then_block);
 
                 // Bind destructured fields: bindings[i] = struct_get(scrutinee, i+1)
+                // TODO: all bindings are assumed f64/Number. Variants with String
+                // data fields will read garbage (f64 bits of a pointer). Fix requires
+                // carrying variant field types from the AST through to emission.
                 let scr2 = load_slot(b, scrutinee_slot, types::I64);
                 for (i, binding) in bindings.iter().enumerate() {
                     let field_idx = b.ins().iconst(types::I64, (i + 1) as i64);
-                    // Default to f64 for numeric fields
                     let val = if let Some(&f) = ctx.get_func("__struct_get_f64") {
                         call_rt(b, f, &[scr2, field_idx])
                     } else { b.ins().f64const(0.0) };
@@ -1437,24 +1438,13 @@ fn emit_enum_variant(b: &mut FunctionBuilder, variant: &str, args: &[Expr], ctx:
         call_rt(b, f, &[tag])
     } else { tag };
     let zero = b.ins().iconst(types::I64, 0);
-    if let Some(&f) = ctx.get_func("__struct_set_ptr") {
-        call_void(b, f, &[ptr, zero, tag_str]);
-    }
+    emit_struct_set(b, ptr, zero, tag_str, ctx);
 
     // Slots 1..N: data fields
     for (i, arg) in args.iter().enumerate() {
         let val = emit_expr(b, arg, ctx);
         let idx = b.ins().iconst(types::I64, (i + 1) as i64);
-        let ty = b.func.dfg.value_type(val);
-        if ty == types::F64 {
-            if let Some(&f) = ctx.get_func("__struct_set_f64") {
-                call_void(b, f, &[ptr, idx, val]);
-            }
-        } else {
-            if let Some(&f) = ctx.get_func("__struct_set_ptr") {
-                call_void(b, f, &[ptr, idx, val]);
-            }
-        }
+        emit_struct_set(b, ptr, idx, val, ctx);
     }
     ptr
 }
