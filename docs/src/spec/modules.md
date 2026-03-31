@@ -9,29 +9,34 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "S
 ## 4.1 Import Syntax
 
 ```
-Import = 'import' '{' Ident (',' Ident)* '}' 'from' ImportSource
-ImportSource = StringLit | 'std' '::' Ident
+Import = 'import' '{' Ident (',' Ident)* '}' 'from' StringLit
 ```
 
-### 4.1.1 Stdlib Imports
+### 4.1.1 Standard Library
+
+Stdlib contracts (Math, Fs, Http, JSON, etc.) are NOT imported. They are built into the compiler. The compiler recognizes stdlib contract names and emits the correct runtime calls automatically.
 
 ```roca
-import { Math } from std::math
-import { Fs } from std::fs
-import { Http } from std::http
-import { JSON } from std::json
+/// No import needed — Math is a known stdlib contract
+pub fn process(n: Number) -> Number {
+    return Math.floor(n)
+test {
+    self(3.7) == 3
+}}
 ```
 
-Stdlib imports reference contracts defined in the standard library. The module name after `std::` maps directly to a stdlib module. The compiler resolves the contract definition for type checking and the runtime implementation for execution.
+The compiler MUST know all stdlib contract names and their method signatures at compile time. Stdlib contracts are defined in `packages/stdlib/**/*.roca` and embedded in the compiler binary.
 
-### 4.1.2 Relative File Imports
+### 4.1.2 File Imports
+
+The `import` statement brings names from other `.roca` files into scope:
 
 ```roca
 import { UserProfile } from "./types.roca"
 import { DatabaseClient } from "./db/client.roca"
 ```
 
-Relative imports reference other `.roca` files in the same project. The path MUST be relative (starting with `./` or `../`) and MUST use the `.roca` extension. The compiler resolves the path relative to the importing file's directory.
+Import paths MUST be relative (starting with `./` or `../`) and MUST use the `.roca` extension. The compiler resolves paths relative to the importing file's directory.
 
 ### 4.1.3 User Extern Contracts
 
@@ -149,9 +154,6 @@ This is how users bridge existing JS code into Roca's error protocol without rew
 When a Roca file uses stdlib contracts, the compiled JS MUST import the runtime and access stdlib via the `roca` map:
 
 ```roca
-import { Math } from std::math
-import { Fs } from std::fs
-
 pub fn process() -> Number {
     const data = Fs.readFile("config.json")
     return Math.floor(data.length)

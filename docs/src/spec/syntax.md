@@ -47,14 +47,13 @@ Item = Import
 
 ### 2.2.1 Import
 
-An import brings names from another module into scope.
+An import brings names from another `.roca` file into scope.
 
 ```
-Import = 'import' '{' Ident (',' Ident)* '}' 'from' ImportSource
-ImportSource = StringLit | 'std' ('::' Ident)?
+Import = 'import' '{' Ident (',' Ident)* '}' 'from' StringLit
 ```
 
-The import list MUST contain at least one name. The source MUST be either a string literal (relative path) or `std` with an optional module path.
+The import list MUST contain at least one name. The source MUST be a string literal with a relative path.
 
 ```roca
 // Import from a relative .roca file in the same project
@@ -62,20 +61,17 @@ import { UserProfile, Permissions } from "./types.roca"
 
 // Import from a subdirectory
 import { DatabaseClient } from "./db/client.roca"
-
-// Import from the standard library
-import { Math } from std::math
-import { Fs } from std::fs
-import { Http } from std::http
 ```
 
-Path imports MUST use relative paths with a `.roca` extension. The compiler resolves them relative to the importing file's directory. The compiled JS output replaces `.roca` with `.js`:
+Paths MUST be relative (starting with `./` or `../`) and MUST use the `.roca` extension. The compiled JS output replaces `.roca` with `.js`:
 
 ```javascript
 // Compiled output
 import { UserProfile, Permissions } from "./types.js";
 import { DatabaseClient } from "./db/client.js";
 ```
+
+Standard library contracts (Math, Fs, Http, JSON, etc.) are NOT imported. They are built into the compiler and available in all Roca files automatically. See [Section 4](./modules.md) for details.
 
 ### 2.2.2 Contract
 
