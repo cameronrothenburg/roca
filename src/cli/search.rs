@@ -248,19 +248,29 @@ fn load_stdlib_modules() -> Vec<String> {
     ];
 
     for base in &search_dirs {
-        if let Ok(entries) = std::fs::read_dir(base) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.extension().map_or(false, |e| e == "roca")
-                    && path.file_name().map_or(false, |n| n != "primitives.roca")
-                {
-                    if let Ok(source) = std::fs::read_to_string(&path) {
-                        sources.push(source);
-                    }
-                }
+        if base.exists() {
+            load_roca_files(base, &mut sources);
+            for subdir in &["core", "io", "net", "data", "security", "time"] {
+                let sub = base.join(subdir);
+                if sub.exists() { load_roca_files(&sub, &mut sources); }
             }
-            break; // found the stdlib dir, don't check other locations
+            break;
         }
     }
     sources
+}
+
+fn load_roca_files(dir: &std::path::Path, sources: &mut Vec<String>) {
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().map_or(false, |e| e == "roca")
+                && path.file_name().map_or(false, |n| n != "primitives.roca")
+            {
+                if let Ok(source) = std::fs::read_to_string(&path) {
+                    sources.push(source);
+                }
+            }
+        }
+    }
 }
