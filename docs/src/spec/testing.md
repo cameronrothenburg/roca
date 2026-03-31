@@ -266,32 +266,26 @@ A conforming implementation MAY support explicit stub overrides in test blocks f
 
 ## 6.7 Test Execution
 
-### 6.7.1 JavaScript Target
+### 6.7.1 Native Test Engine
 
-On the JavaScript target, tests MUST be executed in a V8 isolate. Tests MAY be triggered by:
+Tests run natively via the Cranelift JIT compiler. The compiler IS the test runner — there is no separate JS test harness.
 
-- `roca build` -- runs all tests as part of compilation. Build MUST fail if any test fails.
-- `roca test` -- runs all tests without producing output artifacts.
-- `roca test path/to/file.roca` -- runs tests for a specific file.
+```bash
+roca build              # compile + test natively → emit JS if pass
+roca test               # test only, no JS output
+roca test path/file.roca  # test a specific file
+```
 
-The test runner MUST report each assertion result with the function name, input arguments, expected value, and actual value on failure.
+The test engine MUST:
+- Compile all functions to native code via Cranelift JIT
+- Execute each test block assertion
+- Execute battle tests with generated inputs
+- Report pass/fail with function name, input arguments, expected vs actual on failure
+- Block JS emission if any test fails
 
-### 6.7.2 Native Target
+### 6.7.2 Test-Then-Emit Guarantee
 
-On the native target, tests MUST be executed via Cranelift JIT compilation. Tests MAY be triggered by:
-
-- `roca build --target native` -- runs all tests as part of native compilation.
-- `cargo test` -- when Roca is embedded in a Rust project, tests integrate with the Cargo test harness.
-
-### 6.7.3 Target Equivalence
-
-Both targets MUST produce the same pass/fail results for the same test cases. A test that passes on one target and fails on the other is a conformance bug in the compiler. This rule applies to:
-
-- All equality assertions.
-- All `is Ok` and `is err.name` assertions.
-- All battle test outcomes.
-
-Number precision differences due to IEEE 754 rounding MUST NOT cause divergent test results. Both targets MUST use 64-bit floating point for all numeric operations.
+The compiler proves code correctness natively before emitting JS. If all tests pass on the native engine, the emitted JS is guaranteed correct by construction. The JS output is never tested directly — the native engine is the single source of truth.
 
 ### 6.7.4 Test Isolation
 

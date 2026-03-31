@@ -12,7 +12,7 @@ Roca programs depend on a target-specific runtime for stdlib implementations and
 
 | Target | Runtime Form | Distribution |
 |--------|-------------|-------------|
-| JavaScript | `@roca/runtime` npm package | Installed as a dependency |
+| JavaScript | `rocalang` npm package | Installed as dependency in output project |
 | Native | Linked extern "C" functions | Registered with Cranelift JIT at compile time |
 
 The runtime is not user-authored code. It is provided by the Roca toolchain and MUST NOT be modified by application developers.

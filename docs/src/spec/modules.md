@@ -71,44 +71,68 @@ The caller provides the real implementation at runtime. In tests, the compiler a
 The stdlib runtime is published as an npm package:
 
 ```
-Package name: rocalang
+Package name: @rocalang/runtime
 ```
 
 Compiled Roca programs import from this package:
 
 ```javascript
-import { RocaMath, RocaFs, RocaHttp } from "rocalang";
+import { RocaMath, RocaFs, RocaHttp } from "@rocalang/runtime";
 ```
 
 ### 4.2.2 Naming Convention
 
-All stdlib exports use the `Roca` prefix to avoid collisions with JS globals:
+Stdlib exports use the same names as the Roca contracts. ES module imports are lexically scoped, so there are no global collisions:
 
-| Roca Contract | JS Export Name |
-|---------------|---------------|
-| `Math` | `RocaMath` |
-| `JSON` | `RocaJSON` |
-| `Map` | `RocaMap` |
-| `Fs` | `RocaFs` |
-| `Http` | `RocaHttp` |
-| `Url` | `RocaUrl` |
-| `Crypto` | `RocaCrypto` |
-| `Encoding` | `RocaEncoding` |
-| `Time` | `RocaTime` |
-| `Path` | `RocaPath` |
-| `Char` | `RocaChar` |
-| `NumberParse` | `RocaNumberParse` |
-| `Process` | `RocaProcess` |
+```javascript
+// @rocalang/runtime exports Math, JSON, Map, etc.
+// These shadow globals within the importing module — no conflict
+import { Math, JSON, Fs } from "@rocalang/runtime";
 
-The compiler MUST emit `RocaMath.floor(n)` when the Roca source says `Math.floor(n)`. The user writes clean contract names; the `Roca` prefix is a compilation detail.
+Math.floor(3.7);   // Calls @rocalang/runtime's Math, not globalThis.Math
+JSON.parse(text);  // Calls @rocalang/runtime's JSON, not globalThis.JSON
+```
+
+The compiler emits `Math.floor(n)` exactly as written in Roca source. No prefixing or renaming needed.
 
 ### 4.2.3 Installation
 
-The compiler SHOULD auto-install `rocalang` in the output directory's `package.json` during `roca build`. Alternatively, users MAY install it manually:
+The compiler MUST add `@rocalang/runtime` as a dependency in the output `package.json` during `roca build`:
 
-```bash
-npm install rocalang
+```json
+{
+  "dependencies": {
+    "@rocalang/runtime": "^0.3.0"
+  }
+}
 ```
+
+### 4.2.4 The `wrap` Utility
+
+The runtime MUST export a `wrap` function that converts plain JS functions to Roca's error protocol:
+
+```javascript
+import { wrap } from "@rocalang/runtime";
+
+// Plain JS function — throws on error
+function fetchUser(id) {
+    if (!id) throw new Error("missing id");
+    return { name: "cam" };
+}
+
+// Wrapped — returns { value, err } protocol
+export const getUser = wrap(fetchUser);
+// Success: { value: { name: "cam" }, err: null }
+// Error:   { value: null, err: { name: "Error", message: "missing id" } }
+```
+
+The `wrap` function MUST:
+1. Call the wrapped function inside a try/catch
+2. On success: return `{ value: result, err: null }`
+3. On exception: return `{ value: null, err: { name: e.name || "Error", message: e.message } }`
+4. Support async functions: if the wrapped function returns a Promise, `wrap` MUST return an async function that awaits the Promise before wrapping
+
+This is how users bridge existing JS code into Roca's error protocol without rewriting it.
 
 ---
 
@@ -116,7 +140,7 @@ npm install rocalang
 
 ### 4.3.1 Stdlib Imports
 
-When a Roca file imports from `std::`, the compiled JS MUST emit a single import from `rocalang`:
+When a Roca file imports from `std::`, the compiled JS MUST emit an import from `@rocalang/runtime`:
 
 ```roca
 import { Math } from std::math
@@ -126,8 +150,10 @@ import { Fs } from std::fs
 Compiles to:
 
 ```javascript
-import { RocaMath, RocaFs } from "rocalang";
+import { Math, Fs } from "@rocalang/runtime";
 ```
+
+All stdlib imports MUST be consolidated into a single `import` statement from `@rocalang/runtime`.
 
 ### 4.3.2 Relative Imports
 
@@ -143,9 +169,9 @@ Compiles to:
 import { User } from "./types.js";
 ```
 
-### 4.3.3 Identifier Mapping
+### 4.3.3 No Identifier Mapping
 
-The compiler MUST replace stdlib contract names with their `Roca`-prefixed equivalents in all emitted JS:
+Contract names are emitted as-is. No renaming or prefixing:
 
 ```roca
 const result = Math.floor(3.7)
@@ -154,51 +180,65 @@ const result = Math.floor(3.7)
 Compiles to:
 
 ```javascript
-const result = RocaMath.floor(3.7);
+const result = Math.floor(3.7);
 ```
 
-This mapping applies ONLY to stdlib contracts imported via `std::`. User-defined extern contracts keep their original names.
+ES module scoping ensures the imported `Math` shadows `globalThis.Math` within the module. No `Roca` prefix needed.
 
 ---
 
-## 4.4 Polyfill Strategy
+## 4.4 Runtime Environments
 
-The `rocalang` package MUST provide implementations that work across environments:
+The `@rocalang/runtime` package MUST work in two environments: Node.js/Bun and browsers.
 
 ### 4.4.1 Node.js / Bun
 
-All modules available. Uses native APIs:
-- `fs` → `node:fs`
-- `crypto` → `node:crypto`
-- `fetch` → native fetch
-- `URL` → native URL
-- `process` → native process
+All modules available. The runtime uses native APIs:
+
+| Stdlib | Implementation |
+|--------|---------------|
+| Fs | `node:fs` (readFileSync, writeFileSync, etc.) |
+| Process | `process` global |
+| Crypto | `node:crypto` |
+| Http | native `fetch` |
+| URL | native `URL` |
+| Math, Path, Char, etc. | Pure JS (no platform dependency) |
 
 ### 4.4.2 Browser
 
-Most modules available. Exceptions:
-- `Fs` — NOT available (no filesystem). Compiler SHOULD warn on import.
-- `Process` — NOT available (no process control). Compiler SHOULD warn on import.
-- `Http` → native `fetch`
-- `Crypto` → `crypto.subtle`
-- `URL` → native `URL`
+Most modules available. The runtime detects the environment and adapts:
 
-### 4.4.3 Embedded V8 (roca build tests)
+| Stdlib | Implementation |
+|--------|---------------|
+| Http | native `fetch` |
+| Crypto | `crypto.subtle` |
+| URL | native `URL` |
+| Math, Path, Char, etc. | Pure JS |
+| Fs | **NOT available** — compiler SHOULD warn |
+| Process | **NOT available** — compiler SHOULD warn |
 
-Limited environment. The compiler injects polyfills before test execution:
+### 4.4.3 Test Execution
 
-| API | Source |
-|-----|--------|
-| `console` | Polyfill (captures output for test parsing) |
-| `TextEncoder/Decoder` | Polyfill |
-| `atob/btoa` | Polyfill |
-| `URL` | Rust bridge via `deno_core` ops |
-| `crypto` | Rust bridge via `deno_core` ops |
-| `setTimeout` | Polyfill |
-| `fetch` | Not available — tests use auto-stubs |
-| `fs` | Not available — tests use auto-stubs |
+Testing runs **natively** via the Cranelift JIT compiler. There is no JS test runner.
 
-For embedded test mode, the compiler MUST inline the `rocalang` runtime (with `export` stripped) before the test code, rather than using an `import` statement.
+```bash
+roca build    # tests run natively via Cranelift JIT → if pass, emits JS
+roca test     # tests only, no JS output
+```
+
+The compiler IS the test engine:
+
+1. Parse and check `.roca` source
+2. Compile to Cranelift IR via JIT
+3. Execute test blocks and battle tests natively
+4. If all pass → emit JS output with `@rocalang/runtime` imports
+5. If any fail → no JS emitted, report failures
+
+This means:
+- No `deno_core`, no V8, no polyfills, no Rust bridges
+- Tests run at native speed
+- The compiler guarantees JS output is correct because it proved the logic natively
+- `@rocalang/runtime` is a production dependency only — never used during testing
 
 ---
 
