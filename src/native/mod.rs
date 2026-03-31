@@ -116,6 +116,99 @@ mod tests {
     }
 
     #[test]
+    fn compile_roca_if_else() {
+        let file = crate::parse::parse(r#"
+            pub fn clamp(n: Number) -> Number {
+                if n > 100 { return 100 }
+                if n < 0 { return 0 }
+                return n
+            }
+        "#);
+
+        let mut module = JITModule::new(
+            cranelift_jit::JITBuilder::new(cranelift_module::default_libcall_names())
+                .expect("jit builder failed")
+        );
+
+        if let crate::ast::Item::Function(f) = &file.items[0] {
+            emit::compile_function_bare(&mut module, f).unwrap();
+        }
+        module.finalize_definitions().unwrap();
+
+        let mut sig = module.make_signature();
+        sig.params.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::F64));
+        sig.returns.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::F64));
+        let func_id = module.declare_function("clamp", cranelift_module::Linkage::Export, &sig).unwrap();
+        let ptr = module.get_finalized_function(func_id);
+        let clamp_fn = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(ptr) };
+
+        assert_eq!(clamp_fn(50.0), 50.0, "50 should pass through");
+        assert_eq!(clamp_fn(150.0), 100.0, "150 should clamp to 100");
+        assert_eq!(clamp_fn(-10.0), 0.0, "-10 should clamp to 0");
+    }
+
+    #[test]
+    fn compile_roca_mul() {
+        let file = crate::parse::parse(r#"
+            pub fn square(n: Number) -> Number {
+                return n * n
+            }
+        "#);
+
+        let mut module = JITModule::new(
+            cranelift_jit::JITBuilder::new(cranelift_module::default_libcall_names())
+                .expect("jit builder failed")
+        );
+
+        if let crate::ast::Item::Function(f) = &file.items[0] {
+            emit::compile_function_bare(&mut module, f).unwrap();
+        }
+        module.finalize_definitions().unwrap();
+
+        let mut sig = module.make_signature();
+        sig.params.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::F64));
+        sig.returns.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::F64));
+        let func_id = module.declare_function("square", cranelift_module::Linkage::Export, &sig).unwrap();
+        let ptr = module.get_finalized_function(func_id);
+        let square_fn = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(ptr) };
+
+        assert_eq!(square_fn(5.0), 25.0);
+        assert_eq!(square_fn(0.0), 0.0);
+        assert_eq!(square_fn(-3.0), 9.0);
+    }
+
+    #[test]
+    fn compile_roca_const_binding() {
+        let file = crate::parse::parse(r#"
+            pub fn double_add(a: Number, b: Number) -> Number {
+                const sum = a + b
+                return sum + sum
+            }
+        "#);
+
+        let mut module = JITModule::new(
+            cranelift_jit::JITBuilder::new(cranelift_module::default_libcall_names())
+                .expect("jit builder failed")
+        );
+
+        if let crate::ast::Item::Function(f) = &file.items[0] {
+            emit::compile_function_bare(&mut module, f).unwrap();
+        }
+        module.finalize_definitions().unwrap();
+
+        let mut sig = module.make_signature();
+        sig.params.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::F64));
+        sig.params.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::F64));
+        sig.returns.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::F64));
+        let func_id = module.declare_function("double_add", cranelift_module::Linkage::Export, &sig).unwrap();
+        let ptr = module.get_finalized_function(func_id);
+        let fn_ptr = unsafe { std::mem::transmute::<_, fn(f64, f64) -> f64>(ptr) };
+
+        assert_eq!(fn_ptr(3.0, 4.0), 14.0); // (3+4) + (3+4) = 14
+        assert_eq!(fn_ptr(0.0, 5.0), 10.0);
+    }
+
+    #[test]
     fn compile_raw_cranelift() {
         // Test Cranelift directly — no Roca AST involved
         use cranelift_codegen::ir::{types, AbiParam};
