@@ -31,6 +31,7 @@ pub fn compile_all<M: Module>(
     // Build metadata maps from source
     let func_return_kinds = emit::build_return_kind_map(source);
     let enum_variants = emit::build_enum_variant_map(source);
+    let struct_defs = emit::build_struct_def_map(source);
 
     // Pass 1: Declare all functions (signatures only) for forward references
     emit::declare_all_functions(module, source, &mut compiled)?;
@@ -51,16 +52,16 @@ pub fn compile_all<M: Module>(
     for item in &source.items {
         match item {
             crate::ast::Item::Function(f) => {
-                emit::compile_function(module, f, &rt, &mut compiled, &func_return_kinds, &enum_variants)?;
+                emit::compile_function(module, f, &rt, &mut compiled, &func_return_kinds, &enum_variants, &struct_defs)?;
             }
             crate::ast::Item::Struct(s) => {
                 for method in &s.methods {
-                    emit::compile_struct_method(module, method, &s.name, &s.fields, &rt, &mut compiled, &func_return_kinds, &enum_variants)?;
+                    emit::compile_struct_method(module, method, &s.name, &s.fields, &rt, &mut compiled, &func_return_kinds, &enum_variants, &struct_defs)?;
                 }
             }
             crate::ast::Item::Satisfies(sat) => {
                 for method in &sat.methods {
-                    emit::compile_struct_method(module, method, &sat.struct_name, &[], &rt, &mut compiled, &func_return_kinds, &enum_variants)?;
+                    emit::compile_struct_method(module, method, &sat.struct_name, &[], &rt, &mut compiled, &func_return_kinds, &enum_variants, &struct_defs)?;
                 }
             }
             _ => {}
@@ -1169,6 +1170,110 @@ mod tests {
         let path = "/tmp/roca_nonexistent_dir_12345\0";
         let (_, err) = runtime::roca_fs_read_dir(path.as_ptr() as i64);
         assert_eq!(err, 1, "should return not_found");
+    }
+
+    // ─── Constraint Validation Tests ──────────────────
+
+    #[test]
+    fn constraint_number_valid() {
+        // Valid number within constraints — should not trap
+        let mut m = jit(r#"
+            pub struct Config {
+                port: Number { min: 1, max: 65535, default: 8080 }
+            }{}
+            pub fn make() -> Number {
+                const c = Config { port: 8080 }
+                return c.port
+            }
+        "#);
+        let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make", 0)) };
+        assert_eq!(f(), 8080.0);
+    }
+
+    #[test]
+    fn constraint_string_minlen_valid() {
+        // Valid string within length constraint
+        let mut m = jit(r#"
+            pub struct User {
+                name: String { minLen: 1, maxLen: 64, default: "anon" }
+            }{}
+            pub fn make() -> Number {
+                const u = User { name: "cameron" }
+                return 1
+            }
+        "#);
+        let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make", 0)) };
+        assert_eq!(f(), 1.0);
+    }
+
+    #[test]
+    fn constraint_contains_valid() {
+        // String contains "@" — valid
+        let mut m = jit(r#"
+            pub struct Email {
+                value: String { contains: "@", default: "a@b.com" }
+            }{}
+            pub fn make() -> Number {
+                const e = Email { value: "test@example.com" }
+                return 1
+            }
+        "#);
+        let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make", 0)) };
+        assert_eq!(f(), 1.0);
+    }
+
+    #[test]
+    fn constraint_number_min_violated() {
+        runtime::CONSTRAINT_VIOLATED.store(false, std::sync::atomic::Ordering::SeqCst);
+        let mut m = jit(r#"
+            pub struct Config {
+                port: Number { min: 1, max: 65535, default: 8080 }
+            }{}
+            pub fn make() -> Number {
+                const c = Config { port: 0 }
+                return c.port
+            }
+        "#);
+        let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make", 0)) };
+        f();
+        assert!(runtime::CONSTRAINT_VIOLATED.load(std::sync::atomic::Ordering::SeqCst),
+            "port: 0 should violate min: 1");
+    }
+
+    #[test]
+    fn constraint_number_max_violated() {
+        runtime::CONSTRAINT_VIOLATED.store(false, std::sync::atomic::Ordering::SeqCst);
+        let mut m = jit(r#"
+            pub struct Config {
+                port: Number { min: 1, max: 65535, default: 8080 }
+            }{}
+            pub fn make() -> Number {
+                const c = Config { port: 99999 }
+                return c.port
+            }
+        "#);
+        let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make", 0)) };
+        f();
+        assert!(runtime::CONSTRAINT_VIOLATED.load(std::sync::atomic::Ordering::SeqCst),
+            "port: 99999 should violate max: 65535");
+    }
+
+    #[test]
+    fn constraint_contains_violated() {
+        runtime::CONSTRAINT_VIOLATED.store(false, std::sync::atomic::Ordering::SeqCst);
+        let mut m = jit(r#"
+            pub struct Email {
+                value: String { contains: "@", default: "a@b.com" }
+            }{}
+            pub fn make() -> Number {
+                const e = Email { value: "no-at-sign" }
+                return 1
+            }
+        "#);
+        let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make", 0)) };
+        f();
+        assert!(runtime::CONSTRAINT_VIOLATED.load(std::sync::atomic::Ordering::SeqCst),
+            "value without @ should violate contains: @");
     }
 
     #[test]

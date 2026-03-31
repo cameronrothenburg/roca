@@ -69,6 +69,8 @@ struct EmitCtx {
     func_return_kinds: HashMap<String, ValKind>,
     /// Enum name → set of variant names (for recognizing Token.Plus as enum construction)
     enum_variants: HashMap<String, Vec<String>>,
+    /// Struct name → field definitions (for constraint validation)
+    struct_defs: HashMap<String, Vec<roca::Field>>,
     live_heap_vars: Vec<String>,
     loop_heap_base: usize,
     loop_exit: Option<ir::Block>,
@@ -134,6 +136,17 @@ pub fn build_enum_variant_map(source: &roca::SourceFile) -> HashMap<String, Vec<
                 let variants = e.variants.iter().map(|v| v.name.clone()).collect();
                 map.insert(e.name.clone(), variants);
             }
+        }
+    }
+    map
+}
+
+/// Build a map of struct name → field definitions from the source file.
+pub fn build_struct_def_map(source: &roca::SourceFile) -> HashMap<String, Vec<roca::Field>> {
+    let mut map = HashMap::new();
+    for item in &source.items {
+        if let roca::Item::Struct(s) = item {
+            map.insert(s.name.clone(), s.fields.clone());
         }
     }
     map
@@ -231,6 +244,7 @@ pub fn compile_closures<M: Module>(
             crash_handlers: HashMap::new(),
             func_return_kinds: func_return_kinds.clone(),
             enum_variants: HashMap::new(),
+        struct_defs: HashMap::new(),
             live_heap_vars: Vec::new(),
             loop_heap_base: 0,
             loop_exit: None,
@@ -309,6 +323,7 @@ pub fn compile_function<M: Module>(
     compiled: &mut CompiledFuncs,
     func_return_kinds: &HashMap<String, ValKind>,
     enum_variants: &HashMap<String, Vec<String>>,
+    struct_defs: &HashMap<String, Vec<roca::Field>>,
 ) -> Result<FuncId, String> {
     // Build signature
     let mut sig = module.make_signature();
@@ -352,6 +367,7 @@ pub fn compile_function<M: Module>(
         crash_handlers,
         func_return_kinds: func_return_kinds.clone(),
         enum_variants: enum_variants.clone(),
+        struct_defs: struct_defs.clone(),
         live_heap_vars: Vec::new(),
         loop_heap_base: 0,
         loop_exit: None,
@@ -403,6 +419,7 @@ pub fn compile_struct_method<M: Module>(
     compiled: &mut CompiledFuncs,
     func_return_kinds: &HashMap<String, ValKind>,
     enum_variants: &HashMap<String, Vec<String>>,
+    struct_defs: &HashMap<String, Vec<roca::Field>>,
 ) -> Result<FuncId, String> {
     let qualified = format!("{}.{}", struct_name, func.name);
 
@@ -448,6 +465,7 @@ pub fn compile_struct_method<M: Module>(
         crash_handlers,
         func_return_kinds: func_return_kinds.clone(),
         enum_variants: enum_variants.clone(),
+        struct_defs: struct_defs.clone(),
         live_heap_vars: Vec::new(),
         loop_heap_base: 0,
         loop_exit: None,
@@ -547,6 +565,7 @@ pub fn compile_mock_stub<M: Module>(
         crash_handlers: HashMap::new(),
         func_return_kinds: HashMap::new(),
         enum_variants: HashMap::new(),
+        struct_defs: HashMap::new(),
         live_heap_vars: Vec::new(),
         loop_heap_base: 0,
         loop_exit: None,
@@ -1567,7 +1586,108 @@ fn emit_struct_lit(b: &mut FunctionBuilder, name: &str, fields: &[(String, Expr)
         let idx_val = b.ins().iconst(types::I64, indices[i] as i64);
         emit_struct_set(b, ptr, idx_val, val, ctx);
     }
+
+    // Emit constraint validation guards if struct has constraints
+    if let Some(field_defs) = ctx.struct_defs.get(name).cloned() {
+        for field_def in &field_defs {
+            if field_def.constraints.is_empty() { continue; }
+            if let Some(idx) = fields.iter().position(|(n, _)| n == &field_def.name) {
+                let is_string = matches!(field_def.type_ref, roca::TypeRef::String);
+                let field_idx = b.ins().iconst(types::I64, idx as i64);
+
+                for constraint in &field_def.constraints {
+                    match constraint {
+                        roca::Constraint::Min(n) if !is_string => {
+                            // Number min: if field < n → trap
+                            if let Some(&get) = ctx.get_func("__struct_get_f64") {
+                                let val = call_rt(b, get, &[ptr, field_idx]);
+                                let min_val = b.ins().f64const(*n);
+                                let cmp = b.ins().fcmp(ir::condcodes::FloatCC::LessThan, val, min_val);
+                                let cmp_ext = b.ins().uextend(types::I64, cmp);
+                                emit_constraint_trap(b, cmp_ext, &field_def.name, &format!("must be >= {}", n), ctx);
+                            }
+                        }
+                        roca::Constraint::Max(n) if !is_string => {
+                            if let Some(&get) = ctx.get_func("__struct_get_f64") {
+                                let val = call_rt(b, get, &[ptr, field_idx]);
+                                let max_val = b.ins().f64const(*n);
+                                let cmp = b.ins().fcmp(ir::condcodes::FloatCC::GreaterThan, val, max_val);
+                                let cmp_ext = b.ins().uextend(types::I64, cmp);
+                                emit_constraint_trap(b, cmp_ext, &field_def.name, &format!("must be <= {}", n), ctx);
+                            }
+                        }
+                        roca::Constraint::Min(n) | roca::Constraint::MinLen(n) if is_string => {
+                            if let Some(&get) = ctx.get_func("__struct_get_ptr") {
+                                let val = call_rt(b, get, &[ptr, field_idx]);
+                                if let Some(&len_fn) = ctx.get_func("__string_len") {
+                                    let len = call_rt(b, len_fn, &[val]);
+                                    let min_val = b.ins().iconst(types::I64, *n as i64);
+                                    let cmp = b.ins().icmp(ir::condcodes::IntCC::SignedLessThan, len, min_val);
+                                    let cmp_ext = b.ins().uextend(types::I64, cmp);
+                                    emit_constraint_trap(b, cmp_ext, &field_def.name, &format!("min length {}", n), ctx);
+                                }
+                            }
+                        }
+                        roca::Constraint::Max(n) | roca::Constraint::MaxLen(n) if is_string => {
+                            if let Some(&get) = ctx.get_func("__struct_get_ptr") {
+                                let val = call_rt(b, get, &[ptr, field_idx]);
+                                if let Some(&len_fn) = ctx.get_func("__string_len") {
+                                    let len = call_rt(b, len_fn, &[val]);
+                                    let max_val = b.ins().iconst(types::I64, *n as i64);
+                                    let cmp = b.ins().icmp(ir::condcodes::IntCC::SignedGreaterThan, len, max_val);
+                                    let cmp_ext = b.ins().uextend(types::I64, cmp);
+                                    emit_constraint_trap(b, cmp_ext, &field_def.name, &format!("max length {}", n), ctx);
+                                }
+                            }
+                        }
+                        roca::Constraint::Contains(s) => {
+                            if let Some(&get) = ctx.get_func("__struct_get_ptr") {
+                                let val = call_rt(b, get, &[ptr, field_idx]);
+                                let needle = leak_cstr(b, s);
+                                if let Some(&includes) = ctx.get_func("__string_includes") {
+                                    let result = call_rt(b, includes, &[val, needle]);
+                                    let not_result = {
+                                        let ext = b.ins().uextend(types::I64, result);
+                                        let one = b.ins().iconst(types::I64, 1);
+                                        b.ins().isub(one, ext)
+                                    };
+                                    emit_constraint_trap(b, not_result, &field_def.name, &format!("must contain \"{}\"", s), ctx);
+                                }
+                            }
+                        }
+                        _ => {} // Default, Pattern (needs regex), non-matching guards
+                    }
+                }
+            }
+        }
+    }
+
     ptr
+}
+
+/// Emit a constraint violation trap: if cond is non-zero, print error and trap.
+fn emit_constraint_trap(b: &mut FunctionBuilder, cond: Value, field: &str, msg: &str, ctx: &EmitCtx) {
+    let trap_block = b.create_block();
+    let ok_block = b.create_block();
+    b.ins().brif(cond, trap_block, &[], ok_block, &[]);
+
+    b.switch_to_block(trap_block);
+    b.seal_block(trap_block);
+    let err_msg = leak_cstr(b, &format!("{}: {}", field, msg));
+    if let Some(&panic_fn) = ctx.get_func("__constraint_panic") {
+        call_void(b, panic_fn, &[err_msg]);
+    }
+    // Return default value after constraint violation (flag is set)
+    let default = default_for_ir_type(b, ctx.return_type);
+    if ctx.returns_err {
+        let err_tag = b.ins().iconst(types::I8, 1);
+        b.ins().return_(&[default, err_tag]);
+    } else {
+        b.ins().return_(&[default]);
+    }
+
+    b.switch_to_block(ok_block);
+    b.seal_block(ok_block);
 }
 
 /// Construct an enum variant as a tagged struct.

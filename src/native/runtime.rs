@@ -96,6 +96,9 @@ runtime_funcs! {
     // Conversion
     (f64_to_bool,       "roca_f64_to_bool",       roca_f64_to_bool,       [types::F64],                                [types::I8]),
 
+    // Constraint validation
+    (constraint_panic, "roca_constraint_panic", roca_constraint_panic, [types::I64], []),
+
     // File I/O
     (fs_read_file,      "roca_fs_read_file",      roca_fs_read_file,      [types::I64],                                [types::I64, types::I8]),
     (fs_write_file,     "roca_fs_write_file",     roca_fs_write_file,     [types::I64, types::I64],                    [types::I8]),
@@ -377,6 +380,16 @@ const RC_HEADER_SIZE: usize = 16;
 /// Get header pointer from payload pointer
 fn rc_header(payload_ptr: i64) -> *mut i64 {
     unsafe { (payload_ptr as *mut u8).sub(RC_HEADER_SIZE) as *mut i64 }
+}
+
+/// Report a constraint violation. Prints the message and sets a flag.
+/// In production, this would abort. In tests, check CONSTRAINT_VIOLATED.
+pub static CONSTRAINT_VIOLATED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub extern "C" fn roca_constraint_panic(msg: i64) {
+    let s = read_cstr(msg);
+    eprintln!("constraint violation: {}", s);
+    CONSTRAINT_VIOLATED.store(true, Ordering::SeqCst);
 }
 
 // ─── File I/O ─────────────────────────────────────────
