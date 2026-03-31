@@ -4,13 +4,13 @@
 /** Contract for types that can be logged via log(), error(), warn() */
 contract Loggable {
     /// Convert the value to a loggable string representation
-    to_log() -> String
+    toLog() -> String
 }
 
 /** Contract for types that can be serialized to a JSON string */
 contract Serializable {
     /// Convert to a JSON string representation
-    toJSON() -> String
+    toJson() -> String
 }
 
 /** Contract for types that can be constructed from a JSON string */
@@ -54,7 +54,7 @@ contract String {
     /// Convert to string (identity for String)
     toString() -> String
     /// Convert to loggable string
-    to_log() -> String
+    toLog() -> String
 }
 
 String satisfies Loggable {}
@@ -66,7 +66,7 @@ contract Number {
     /// Format with a fixed number of decimal places
     toFixed(digits: Number) -> String
     /// Convert to loggable string
-    to_log() -> String
+    toLog() -> String
 }
 
 Number satisfies Loggable {}
@@ -76,7 +76,7 @@ contract Bool {
     /// Convert the boolean to "true" or "false"
     toString() -> String
     /// Convert to loggable string
-    to_log() -> String
+    toLog() -> String
 }
 
 Bool satisfies Loggable {}
@@ -130,7 +130,7 @@ contract Bytes {
     /// Decode bytes to a UTF-8 string
     toString() -> String
     /// Convert to loggable string
-    to_log() -> String
+    toLog() -> String
     /// Encode bytes as a hex string
     toHex() -> String
     /// Encode bytes as a base64 string

@@ -13,3 +13,4 @@ pub mod unhandled;
 pub mod manual_err;
 pub mod docs;
 pub mod fn_errors;
+pub mod ownership;

@@ -223,6 +223,7 @@ fn type_ref_base_name(t: &TypeRef) -> String {
         TypeRef::Named(n) => n.clone(),
         TypeRef::Generic(n, _) => n.clone(),
         TypeRef::Nullable(inner) => type_ref_base_name(inner),
+        TypeRef::Fn(_, ret) => type_ref_base_name(ret),
     }
 }
 
@@ -244,7 +245,6 @@ mod tests {
         let e = errors(r#"
             extern fn fetch(url: String) -> String, err {
                 err net = "network error"
-                mock { fetch -> "ok" }
             }
             pub fn go(url: String) -> String, err {
                 let r, e = wait fetch(url)
@@ -264,7 +264,6 @@ mod tests {
         let e = errors(r#"
             extern fn fetch(url: String) -> String, err {
                 err net = "network error"
-                mock { fetch -> "ok" }
             }
             pub fn go(url: String) -> String {
                 let r, e = wait fetch(url)
@@ -283,7 +282,6 @@ mod tests {
         let e = errors(r#"
             extern fn fetch(url: String) -> String, err {
                 err net = "network error"
-                mock { fetch -> "ok" }
             }
             pub fn go(url: String) -> String {
                 let r, e = wait fetch(url)
@@ -302,7 +300,6 @@ mod tests {
         let e = errors(r#"
             extern fn fetch(url: String) -> String, err {
                 err net = "network error"
-                mock { fetch -> "ok" }
             }
             pub fn go(url: String) -> String {
                 let r, e = wait fetch(url)
@@ -321,7 +318,6 @@ mod tests {
         let e = errors(r#"
             extern fn fetch(url: String) -> String, err {
                 err net = "network error"
-                mock { fetch -> "ok" }
             }
             pub fn go(url: String) -> String {
                 let r, e = wait fetch(url)
@@ -340,7 +336,6 @@ mod tests {
         let e = errors(r#"
             extern fn fetch(url: String) -> String, err {
                 err net = "network error"
-                mock { fetch -> "ok" }
             }
             pub struct Api {
                 fetch(url: String) -> String {

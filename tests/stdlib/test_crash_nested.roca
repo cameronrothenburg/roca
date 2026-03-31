@@ -1,0 +1,73 @@
+// Deep tests: nested crash blocks — error propagation through 3 levels
+// In embedded V8, Fs calls fail with err.io. Tests verify crash chains handle this.
+
+import { Fs } from std::fs
+
+/// Test: level C halts — propagates I/O error
+pub fn level_c(path: String) -> String, err {
+    const content = Fs.readFile(path)
+    return content
+crash {
+    Fs.readFile -> halt
+}
+    test {
+        self("/any") is err.io
+    }
+}
+
+/// Test: level B catches C's error with fallback
+pub fn level_b(path: String) -> String {
+    const result = level_c(path)
+    return result
+crash {
+    level_c -> fallback("b-default")
+}
+    test {
+        self("/any") == "b-default"
+    }
+}
+
+/// Test: level A calls B which always recovers
+pub fn level_a(path: String) -> String {
+    const text = level_b(path)
+    return text.toUpperCase()
+    test {
+        self("/any") == "B-DEFAULT"
+    }
+}
+
+/// Test: strict C halts
+pub fn strict_c(path: String) -> String, err {
+    const content = Fs.readFile(path)
+    return content
+crash {
+    Fs.readFile -> halt
+}
+    test {
+        self("/any") is err.io
+    }
+}
+
+/// Test: strict B halts from C
+pub fn strict_b(path: String) -> String, err {
+    const result = strict_c(path)
+    return result
+crash {
+    strict_c -> halt
+}
+    test {
+        self("/any") is err.io
+    }
+}
+
+/// Test: strict A halts from B — error bubbles up 3 levels
+pub fn strict_a(path: String) -> String, err {
+    const text = strict_b(path)
+    return text
+crash {
+    strict_b -> halt
+}
+    test {
+        self("/any") is err.io
+    }
+}

@@ -1,0 +1,24 @@
+/**
+ * JSON parsing and serialization.
+ * Import with: import { JSON } from std::json
+ */
+pub extern contract JSON {
+    /// Parse a JSON string into a JSON value
+    parse(text: String) -> JSON, err {
+        err parse_failed = "invalid JSON"
+    }
+    /// Convert a value to a JSON string
+    stringify(value: JSON) -> String
+    /// Get a nested value by key — returns null if key missing
+    get(key: String) -> Optional<JSON>
+    /// Get a string value by key
+    getString(key: String) -> Optional<String>
+    /// Get a number value by key
+    getNumber(key: String) -> Optional<Number>
+    /// Get a boolean value by key
+    getBool(key: String) -> Optional<Bool>
+    /// Get an array value by key
+    getArray(key: String) -> Optional<Array<JSON>>
+    /// Convert this JSON value to a string representation
+    toString() -> String
+}

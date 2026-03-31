@@ -40,7 +40,7 @@ pub fn run_with_tests(source: &str, test_script: &str) -> String {
         panic!("checker errors:\n{}", real.iter().map(|e| format!("  {}", e)).collect::<Vec<_>>().join("\n"));
     }
 
-    if let Some((harness_js, _)) = roca::emit::test_harness::emit_tests(&file, "__embed__") {
+    if let Some((harness_js, _)) = roca::emit::test_harness::emit_tests(&file, "__embed__", None) {
         let full = format!("{}\n{}", harness_js, test_script);
 
         let (stdout, success) = roca::cli::runtime::run_tests(&full);

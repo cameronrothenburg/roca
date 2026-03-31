@@ -1,0 +1,10 @@
+contract Number {
+    toString() -> String
+    toFixed(digits: Number) -> String
+}
+
+Number satisfies Loggable {
+    fn toLog() -> String {
+        return self.toString()
+    }
+}

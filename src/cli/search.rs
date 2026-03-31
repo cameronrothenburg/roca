@@ -4,7 +4,20 @@ use std::path::Path;
 use crate::ast::*;
 use crate::check::walker::type_ref_to_name;
 
-const STDLIB_SOURCE: &str = include_str!("../../packages/stdlib/primitives.roca");
+const STDLIB_SOURCE: &str = concat!(
+    include_str!("../../packages/stdlib/core/traits.roca"),
+    include_str!("../../packages/stdlib/core/string.roca"),
+    include_str!("../../packages/stdlib/core/number.roca"),
+    include_str!("../../packages/stdlib/core/bool.roca"),
+    include_str!("../../packages/stdlib/core/array.roca"),
+    include_str!("../../packages/stdlib/core/map.roca"),
+    include_str!("../../packages/stdlib/core/optional.roca"),
+    include_str!("../../packages/stdlib/core/bytes.roca"),
+    include_str!("../../packages/stdlib/core/math.roca"),
+    include_str!("../../packages/stdlib/core/path.roca"),
+    include_str!("../../packages/stdlib/io/fs.roca"),
+    include_str!("../../packages/stdlib/io/process.roca"),
+);
 
 /// A search match with display info
 struct Match {
@@ -235,19 +248,29 @@ fn load_stdlib_modules() -> Vec<String> {
     ];
 
     for base in &search_dirs {
-        if let Ok(entries) = std::fs::read_dir(base) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.extension().map_or(false, |e| e == "roca")
-                    && path.file_name().map_or(false, |n| n != "primitives.roca")
-                {
-                    if let Ok(source) = std::fs::read_to_string(&path) {
-                        sources.push(source);
-                    }
-                }
+        if base.exists() {
+            load_roca_files(base, &mut sources);
+            for subdir in &["core", "io", "net", "data", "security", "time"] {
+                let sub = base.join(subdir);
+                if sub.exists() { load_roca_files(&sub, &mut sources); }
             }
-            break; // found the stdlib dir, don't check other locations
+            break;
         }
     }
     sources
+}
+
+fn load_roca_files(dir: &std::path::Path, sources: &mut Vec<String>) {
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().map_or(false, |e| e == "roca")
+                && path.file_name().map_or(false, |n| n != "primitives.roca")
+            {
+                if let Ok(source) = std::fs::read_to_string(&path) {
+                    sources.push(source);
+                }
+            }
+        }
+    }
 }

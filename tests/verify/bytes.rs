@@ -109,7 +109,7 @@ fn bytes_has_methods() {
     assert!(reg.has_method("Bytes", "toBase64"));
     assert!(reg.has_method("Bytes", "toArray"));
     assert!(reg.has_method("Bytes", "byteLength"));
-    assert!(reg.has_method("Bytes", "to_log"));
+    assert!(reg.has_method("Bytes", "toLog"));
 }
 
 #[test]

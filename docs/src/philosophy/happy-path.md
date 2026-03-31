@@ -30,12 +30,12 @@ pub fn get_users(db: Database) -> String, err {
         db.query -> halt
     }
     test {
-        self(__mock_Database) is Ok
+        self(Database) is Ok
     }
 }
 ```
 
-The body reads top-to-bottom as pure success logic. The crash block is a separate declaration of error policy. The test block proves both paths.
+The body reads top-to-bottom as pure success logic. The crash block is a separate declaration of error policy. The test block proves both paths. Extern contracts are auto-stubbed from their type signatures -- no user-written mocks needed.
 
 ## Anti-patterns the compiler rejects
 

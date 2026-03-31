@@ -1,0 +1,13 @@
+/**
+ * Time and date utilities.
+ * Import with: import { Time } from std::time
+ */
+pub extern contract Time {
+    /// Current timestamp in milliseconds since Unix epoch
+    now() -> Number
+    /// Parse an ISO 8601 or date string into a timestamp (ms).
+    /// Returns parse_failed if the string is not a valid date.
+    parse(input: String) -> Number, err {
+        err parse_failed = "invalid date string"
+    }
+}

@@ -4,6 +4,7 @@
 
 pub(crate) mod ast_helpers;
 mod helpers;
+pub(crate) mod shapes;
 mod expressions;
 mod statements;
 mod contracts;
@@ -27,9 +28,17 @@ fn stdlib_runtime(module: &str) -> Option<String> {
         exe_dir.join("../../packages/stdlib"),
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("packages/stdlib"),
     ] {
-        let path = base.join(format!("{}.js", module));
-        if let Ok(source) = std::fs::read_to_string(&path) {
+        // Check flat: stdlib/{name}.js (legacy)
+        let flat = base.join(format!("{}.js", module));
+        if let Ok(source) = std::fs::read_to_string(&flat) {
             return Some(source);
+        }
+        // Check subdirectories: stdlib/{subdir}/{name}.js
+        for subdir in &["core", "io", "net", "data", "security", "time"] {
+            let nested = base.join(subdir).join(format!("{}.js", module));
+            if let Ok(source) = std::fs::read_to_string(&nested) {
+                return Some(source);
+            }
         }
     }
     None
@@ -137,7 +146,7 @@ pub fn emit(file: &ast::SourceFile) -> String {
                 // Handled in pre-pass — methods merged into struct class
             }
             Item::ExternContract(_) | Item::ExternFn(_) => {
-                // Extern declarations produce no JS — they exist at runtime
+                // Stubs appended after OXC output below
             }
         }
     }
@@ -145,11 +154,42 @@ pub fn emit(file: &ast::SourceFile) -> String {
     let program = ast.program(SPAN, SourceType::mjs(), source_text, ast.vec(), None, ast.vec(), body);
     let code = Codegen::new().build(&program).code;
 
-    if import_lines.is_empty() {
-        code
-    } else {
-        format!("{}\n{}", import_lines.join("\n"), code)
+    // Generate stub exports for extern contracts that have no JS wrapper.
+    // Contracts imported via std:: get real JS wrappers from stdlib_runtime().
+    // User-defined extern contracts (no stdlib wrapper) need default stubs.
+    let imported_contracts: std::collections::HashSet<&str> = file.items.iter().filter_map(|item| {
+        if let Item::Import(imp) = item {
+            if matches!(&imp.source, ast::ImportSource::Std(Some(_))) {
+                return Some(imp.names.iter().map(|n| n.as_str()).collect::<Vec<_>>());
+            }
+        }
+        None
+    }).flatten().collect();
+
+    let mut extern_stubs = Vec::new();
+    for item in &file.items {
+        if let Item::ExternContract(c) = item {
+            if imported_contracts.contains(c.name.as_str()) { continue; }
+            let methods: Vec<String> = c.functions.iter().map(|sig| {
+                let default = test_harness::values::emit_expr_js(
+                    &test_harness::values::default_expr_for_type(&sig.return_type)
+                );
+                let ret = if sig.returns_err {
+                    format!("{{ value: {}, err: null }}", default)
+                } else {
+                    default
+                };
+                format!("{}() {{ return {}; }}", sig.name, ret)
+            }).collect();
+            extern_stubs.push(format!("export const {} = {{ {} }};", c.name, methods.join(", ")));
+        }
     }
+
+    let mut parts = Vec::new();
+    if !import_lines.is_empty() { parts.push(import_lines.join("\n")); }
+    if !code.is_empty() { parts.push(code); }
+    if !extern_stubs.is_empty() { parts.push(extern_stubs.join("\n")); }
+    parts.join("\n")
 }
 
 /// Generate TypeScript declaration file (.d.ts) content
@@ -159,13 +199,34 @@ pub fn emit_dts(file: &ast::SourceFile) -> String {
 
 /// Emit enum as: const Name = { key: "value", ... };
 fn build_enum<'a>(ast: &AstBuilder<'a>, e: &ast::EnumDef) -> Statement<'a> {
-    use ast_helpers::{string_lit, number_lit, prop, object_expr, const_decl};
+    use ast_helpers::{string_lit, number_lit, prop, object_expr, const_decl, function_expr, formal_params, param, function_body, return_stmt, ident, TAG_FIELD, positional_field};
 
     let mut props = ast.vec();
     for v in &e.variants {
         let value = match &v.value {
             ast::EnumValue::String(s) => string_lit(ast, s),
             ast::EnumValue::Number(n) => number_lit(ast, *n),
+            ast::EnumValue::Unit => {
+                let mut obj_props = ast.vec();
+                obj_props.push(prop(ast, TAG_FIELD, string_lit(ast, &v.name)));
+                object_expr(ast, obj_props)
+            }
+            ast::EnumValue::Data(types) => {
+                let mut fn_params = ast.vec();
+                let mut obj_props = ast.vec();
+                obj_props.push(prop(ast, TAG_FIELD, string_lit(ast, &v.name)));
+                for (i, _) in types.iter().enumerate() {
+                    let pname = positional_field(i);
+                    fn_params.push(param(ast, &pname));
+                    obj_props.push(prop(ast, &pname, ident(ast, &pname)));
+                }
+                let obj = object_expr(ast, obj_props);
+                let mut stmts = ast.vec();
+                stmts.push(return_stmt(ast, obj));
+                let body = function_body(ast, stmts);
+                let params = formal_params(ast, fn_params);
+                function_expr(ast, params, body, false)
+            }
         };
         props.push(prop(ast, &v.name, value));
     }
@@ -252,5 +313,36 @@ mod tests {
         let js = emit(&file);
         assert!(js.contains("StatusCode"));
         assert!(js.contains("200"));
+    }
+
+    #[test]
+    fn emit_algebraic_enum() {
+        let file = parse::parse(r#"
+            pub enum Token {
+                Number(Number)
+                Str(String)
+                Plus
+            }
+        "#);
+        let js = emit(&file);
+        assert!(js.contains("_tag"), "should contain _tag: {}", js);
+        assert!(js.contains("\"Number\""), "should contain Number tag: {}", js);
+        assert!(js.contains("\"Plus\""), "should contain Plus tag: {}", js);
+        assert!(js.contains("function"), "data variants should be functions: {}", js);
+    }
+
+    #[test]
+    fn emit_algebraic_enum_usage() {
+        let file = parse::parse(r#"
+            pub enum Color { Red Green Blue }
+            pub fn is_red(c: String) -> String {
+                return match c {
+                    "Red" => "yes"
+                    _ => "no"
+                }
+            }
+        "#);
+        let js = emit(&file);
+        assert!(js.contains("Red"), "should contain Red: {}", js);
     }
 }

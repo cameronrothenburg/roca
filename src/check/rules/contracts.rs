@@ -1,5 +1,5 @@
-//! Rule: duplicate-err, err-no-errors, mock-null
-//! Validates contract error declarations and mock blocks.
+//! Rule: duplicate-err, err-no-errors
+//! Validates contract error declarations.
 
 use std::collections::HashSet;
 use crate::ast::*;
@@ -27,21 +27,10 @@ impl Rule for ContractsRule {
                         errors.push(RuleError::new(errors::ERR_NO_ERRORS, format!("function '{}' returns err but declares no error names", func.name), Some(format!("in contract '{}'", c.name))));
                     }
                 }
-                if let Some(mock) = &c.mock {
-                    check_mock_values(&c.name, mock, &mut errors);
-                }
             }
             _ => {}
         }
         errors
-    }
-}
-
-fn check_mock_values(contract_name: &str, mock: &MockDef, errors: &mut Vec<RuleError>) {
-    for entry in &mock.entries {
-        if matches!(entry.value, Expr::Null) {
-            errors.push(RuleError::new(errors::MOCK_NULL, format!("mock for '{}.{}' cannot return null — provide a valid mock value", contract_name, entry.method), Some(format!("in {} mock block", contract_name))));
-        }
     }
 }
 
@@ -87,23 +76,9 @@ mod tests {
     }
 
     #[test]
-    fn mock_null_blocked() {
-        let errors = check(r#"contract Bad { get() -> String mock { get -> null } }"#);
-        assert!(errors.iter().any(|e| e.code == "mock-null"),
-            "expected mock-null, got: {:?}", errors);
-    }
-
-    #[test]
-    fn mock_valid_value_allowed() {
-        let errors = check(r#"contract Good { get() -> String mock { get -> "test" } }"#);
-        assert!(!errors.iter().any(|e| e.code == "mock-null"),
-            "valid mock should pass, got: {:?}", errors);
-    }
-
-    #[test]
-    fn extern_contract_mock_null_blocked() {
-        let errors = check(r#"extern contract Bad { get() -> String mock { get -> null } }"#);
-        assert!(errors.iter().any(|e| e.code == "mock-null"),
-            "expected mock-null on extern contract, got: {:?}", errors);
+    fn extern_contract_no_mock_needed() {
+        // mock blocks are auto-generated — no user mock block required
+        let errors = check(r#"extern contract Good { get() -> String }"#);
+        assert!(errors.is_empty(), "extern contract should not require mock: {:?}", errors);
     }
 }

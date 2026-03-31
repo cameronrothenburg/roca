@@ -10,13 +10,10 @@ contract HttpClient {
         err timeout = "request timed out"
         err not_found = "404 not found"
     }
-    mock {
-        get -> "mock response"
-    }
 }
 ```
 
-Methods list their error names. The `mock` block provides test doubles used during proof tests.
+Methods list their error names. During proof tests, the compiler auto-stubs extern contracts with default return values derived from their type signatures -- no user-written mocks needed.
 
 ## Generic contracts
 

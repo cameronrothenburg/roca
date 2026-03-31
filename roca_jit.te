@@ -1,0 +1,12 @@
+
+module roca_jit 1.0;
+
+require {
+	type unconfined_t;
+	class process execheap;
+}
+
+#============= unconfined_t ==============
+
+#!!!! This avc is allowed in the current policy
+allow unconfined_t self:process execheap;

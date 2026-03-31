@@ -100,7 +100,6 @@ mod tests {
         let e = errors(r#"
             extern fn fetch(url: String) -> String, err {
                 err net = "net"
-                mock { fetch -> "ok" }
             }
             fn go() -> String, err {
                 let r, e = wait fetch("x")
@@ -117,7 +116,6 @@ mod tests {
         let e = errors(r#"
             extern fn fetch(url: String) -> String, err {
                 err net = "net"
-                mock { fetch -> "ok" }
             }
             fn go() -> String, err {
                 let r, e = wait fetch("x")
@@ -412,7 +410,7 @@ fn collect_calls_in_expr(expr: &Expr, calls: &mut Vec<String>) {
         Expr::Match { value, arms } => {
             collect_calls_in_expr(value, calls);
             for arm in arms {
-                if let Some(p) = &arm.pattern { collect_calls_in_expr(p, calls); }
+                if let Some(crate::ast::MatchPattern::Value(p)) = &arm.pattern { collect_calls_in_expr(p, calls); }
                 collect_calls_in_expr(&arm.value, calls);
             }
         }

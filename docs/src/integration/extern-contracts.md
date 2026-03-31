@@ -9,12 +9,11 @@ extern contract Database {
     query(sql: String) -> String, err {
         err query_failed = "database query failed"
     }
-    mock { query -> "[]" }
 }
 ```
 
 - Methods can declare errors with `-> Type, err`.
-- The `mock` block provides test doubles for proof tests.
+- The compiler auto-stubs extern contracts during proof tests using default return values derived from their type signatures.
 
 ## Extern functions
 
@@ -38,24 +37,24 @@ pub fn get_users(db: Database) -> String, err {
         db.query -> halt
     }
     test {
-        self(__mock_Database) is Ok
+        self(Database) is Ok
     }
 }
 ```
 
 The function signature declares exactly what it needs. The caller provides the real implementation at runtime.
 
-## Mock references in tests
+## Auto-stubs in tests
 
-Use `__mock_ContractName` to reference the mock from a contract's `mock` block:
+In test blocks, pass the contract name directly. The compiler generates a stub with default return values derived from the contract's type signatures:
 
 ```roca
 test {
-    self(__mock_Database) is Ok
+    self(Database) is Ok
 }
 ```
 
-The compiler enforces **`invalid-mock-ref`** if `__mock_X` is used but contract `X` has no `mock` block.
+For methods returning `String`, the stub returns `""`. For `Number`, `0`. For structs, a default instance. For error-returning methods, the stub returns the success case.
 
 ## Generating from TypeScript
 
@@ -69,7 +68,6 @@ This parses the TypeScript interfaces and generates a `.roca` file with:
 - Type mapping (`string` → `String`, `Promise<T>` → async, `T | null` → `Optional<T>`)
 - Error inference from method names (`get` → `not_found`, `put` → `failed`)
 - Cross-references between interfaces resolved
-- Mock blocks with sensible defaults
 
 Works with Cloudflare `wrangler types` output and any `.d.ts` file.
 

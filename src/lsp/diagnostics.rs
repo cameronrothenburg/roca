@@ -163,7 +163,7 @@ mod tests {
 
             /// Greets a person by name
             pub fn greet(name: String) -> String {
-                let trimmed = name.trim()
+                const trimmed = name.trim()
                 return "Hello " + trimmed
                 test { self("cam") == "Hello cam" }
             }
@@ -357,7 +357,7 @@ mod tests {
         "#);
         assert!(has_code(&diags, "not-loggable"));
         let d = get_with_code(&diags, "not-loggable").unwrap();
-        assert!(d.message.contains("to_log"));
+        assert!(d.message.contains("toLog"));
     }
 
     // ─── unhandled-call ─────────────────────────────────

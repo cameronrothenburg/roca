@@ -1,0 +1,24 @@
+contract String {
+    trim() -> String
+    trimStart() -> String
+    trimEnd() -> String
+    toUpperCase() -> String
+    toLowerCase() -> String
+    replace(search: String, replacement: String) -> String
+    slice(start: Number, end: Number) -> String
+    repeat(count: Number) -> String
+    includes(search: String) -> Bool
+    startsWith(search: String) -> Bool
+    endsWith(search: String) -> Bool
+    indexOf(search: String) -> Number
+    split(separator: String) -> Array<String>
+    charAt(index: Number) -> String
+    charCodeAt(index: Number) -> Number
+    toString() -> String
+}
+
+String satisfies Loggable {
+    fn toLog() -> String {
+        return self
+    }
+}

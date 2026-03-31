@@ -275,6 +275,21 @@ mod tests {
 
 pub struct MethodsRule;
 
+/// If type_name is a function type parameter (e.g., "T" from fn<T: Loggable>),
+/// resolve it to the constraint contract name. Otherwise return as-is.
+fn resolve_type_param(type_name: &str, ctx: &ExprContext) -> String {
+    for tp in &ctx.func.def.type_params {
+        if tp.name == type_name {
+            if let Some(constraint) = &tp.constraint {
+                return constraint.clone();
+            }
+            // Unconstrained type param — no methods available
+            return type_name.to_string();
+        }
+    }
+    type_name.to_string()
+}
+
 impl Rule for MethodsRule {
     fn name(&self) -> &'static str { "methods" }
 
@@ -302,7 +317,9 @@ impl Rule for MethodsRule {
                         None
                     });
                     if let Some(type_name) = type_name {
-                        check_method_call(&type_name, field, args, ctx, &mut errors);
+                        // Resolve type params to their constraint contract
+                        let resolved = resolve_type_param(&type_name, ctx);
+                        check_method_call(&resolved, field, args, ctx, &mut errors);
                     }
                 }
             }
@@ -324,7 +341,8 @@ fn check_method_call(type_name: &str, field: &str, args: &[Expr], ctx: &ExprCont
         errors.push(RuleError::new(errors::NULLABLE_ACCESS, format!("cannot call .{}() on nullable type '{}'", field, type_name.trim_end_matches('?')), Some(qn.clone())));
     }
 
-    let lookup_type = type_name.trim_end_matches('?');
+    let trimmed = type_name.trim_end_matches('?');
+    let lookup_type = trimmed.strip_prefix("__mock_").unwrap_or(trimmed);
     if !registry.has_method(lookup_type, field) {
         let available = registry.available_methods(lookup_type);
         let hint = if available.is_empty() { String::new() }
@@ -380,12 +398,12 @@ fn check_binop(left: &Expr, op: &BinOp, right: &Expr, ctx: &ExprContext, errors:
 fn check_loggable(expr: &Expr, ctx: &ExprContext, fn_name: &str, errors: &mut Vec<RuleError>) {
     if let Expr::Call { target, .. } = expr {
         if let Expr::FieldAccess { field, .. } = target.as_ref() {
-            if field == "to_log" { return; }
+            if field == "toLog" { return; }
         }
     }
     if let Some(type_name) = resolve_type(expr, ctx.scope) {
-        if !ctx.check.registry.has_method(&type_name, "to_log") {
-            errors.push(RuleError::new(errors::NOT_LOGGABLE, format!("{}() requires Loggable — '{}' has no to_log() method", fn_name, type_name), Some(ctx.func.qualified_name.clone())));
+        if !ctx.check.registry.has_method(&type_name, "toLog") {
+            errors.push(RuleError::new(errors::NOT_LOGGABLE, format!("{}() requires Loggable — '{}' has no toLog() method", fn_name, type_name), Some(ctx.func.qualified_name.clone())));
         }
     }
 }

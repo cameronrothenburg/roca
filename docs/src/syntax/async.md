@@ -38,7 +38,7 @@ pub fn get_user(db: Database) -> String, err {
     return data
     crash { db.query -> halt }
     test {
-        self(__mock_Database) is Ok
+        self(Database) is Ok
     }
 }
 ```

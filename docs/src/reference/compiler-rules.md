@@ -77,12 +77,6 @@ All rules are hard errors unless noted. Code that violates them does not compile
 | `missing-default` | Constrained field has no default value |
 | `invalid-constraint` | Bad field constraint (e.g., `min > max`) |
 
-## Mock rules
-
-| Code | Description |
-|------|-------------|
-| `invalid-mock-ref` | `__mock_X` used but `X` has no mock block |
-
 ## Access rules
 
 | Code | Description |

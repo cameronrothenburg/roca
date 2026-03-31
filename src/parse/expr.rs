@@ -1,8 +1,9 @@
 //! Expression parser — literals, binary ops, calls, match, and the core `Parser` struct.
 
-use crate::ast::{Expr, BinOp, MatchArm, StringPart};
+use crate::ast::{Expr, BinOp, MatchArm, MatchPattern};
 use crate::errors::ParseError;
 use super::tokenizer::Token;
+use super::string_interp::{has_interpolation, strip_escapes, parse_string_interp};
 
 pub type ParseResult<T> = Result<T, ParseError>;
 
@@ -23,6 +24,20 @@ impl Parser {
 
     pub fn peek_ahead(&self, n: usize) -> &Token {
         self.tokens.get(self.pos + n).unwrap_or(&Token::EOF)
+    }
+
+    /// Skip a `{ ... }` block, handling nested braces. Assumes `{` is next.
+    pub fn skip_braced_block(&mut self) {
+        if !self.at(&Token::LBrace) { return; }
+        self.advance();
+        let mut depth = 1;
+        while depth > 0 && !self.at(&Token::EOF) {
+            match self.advance() {
+                Token::LBrace => depth += 1,
+                Token::RBrace => depth -= 1,
+                _ => {}
+            }
+        }
     }
 
     pub fn advance(&mut self) -> Token {
@@ -383,7 +398,7 @@ impl Parser {
                         let result = self.parse_expr()?;
                         arms.push(MatchArm { pattern: None, value: result });
                     } else {
-                        let pattern = self.parse_expr()?;
+                        let pattern = self.parse_match_pattern()?;
                         self.expect(&Token::FatArrow)?;
                         let result = self.parse_expr()?;
                         arms.push(MatchArm { pattern: Some(pattern), value: result });
@@ -399,6 +414,35 @@ impl Parser {
         }
     }
 
+    /// Parse a match pattern: value literal, or Enum.Variant(binding, ...)
+    fn parse_match_pattern(&mut self) -> ParseResult<MatchPattern> {
+        // Check for Enum.Variant(bindings) pattern
+        if let Token::Ident(_) = self.peek() {
+            let saved = self.pos;
+            let name = self.expect_ident()?;
+
+            if self.eat(&Token::Dot) {
+                // Enum.Variant or Enum.Variant(bindings)
+                let variant = self.expect_ident()?;
+                let mut bindings = Vec::new();
+                if self.eat(&Token::LParen) {
+                    if !self.at(&Token::RParen) {
+                        bindings.push(self.expect_ident()?);
+                        while self.eat(&Token::Comma) {
+                            bindings.push(self.expect_ident()?);
+                        }
+                    }
+                    self.expect(&Token::RParen)?;
+                }
+                return Ok(MatchPattern::Variant { enum_name: name, variant, bindings });
+            }
+            // Not a variant pattern — backtrack and parse as value
+            self.pos = saved;
+        }
+        let expr = self.parse_expr()?;
+        Ok(MatchPattern::Value(expr))
+    }
+
     pub fn parse_args(&mut self) -> ParseResult<Vec<Expr>> {
         let mut args = Vec::new();
         if !self.at(&Token::RParen) {
@@ -411,307 +455,6 @@ impl Parser {
     }
 }
 
-/// Strip escape sequences for braces: `\{` → `{`, `\}` → `}`, `\\` → `\`.
-fn strip_escapes(s: &str) -> String {
-    let mut result = String::with_capacity(s.len());
-    let mut chars = s.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c == '\\' {
-            match chars.peek() {
-                Some(&'{') | Some(&'}') | Some(&'\\') => {
-                    result.push(chars.next().unwrap());
-                }
-                _ => result.push(c),
-            }
-        } else {
-            result.push(c);
-        }
-    }
-    result
-}
-
-/// Count consecutive backslashes immediately before position `pos` in a char slice.
-fn count_preceding_backslashes(chars: &[char], pos: usize) -> usize {
-    let mut count = 0;
-    let mut i = pos;
-    while i > 0 {
-        i -= 1;
-        if chars[i] == '\\' {
-            count += 1;
-        } else {
-            break;
-        }
-    }
-    count
-}
-
-/// Check if a string contains interpolation expressions like {name} or {obj.field}.
-/// Empty braces {} are NOT interpolation.
-/// Content with non-identifier characters (colons, commas, spaces) is NOT interpolation.
-/// Only {identifier} and {obj.field} patterns count as interpolation.
-fn has_interpolation(s: &str) -> bool {
-    let chars: Vec<char> = s.chars().collect();
-    let mut i = 0;
-    while i < chars.len() {
-        if chars[i] == '{' && count_preceding_backslashes(&chars, i) % 2 == 0 {
-            let start = i + 1;
-            i += 1;
-            let mut found_close = false;
-            while i < chars.len() {
-                if chars[i] == '}' {
-                    found_close = true;
-                    break;
-                }
-                i += 1;
-            }
-            if !found_close { continue; }
-            let content: String = chars[start..i].iter().collect();
-            i += 1; // skip '}'
-            let trimmed = content.trim();
-            if trimmed.is_empty() { continue; }
-            // Must start with a letter or underscore (not a digit)
-            let first = trimmed.chars().next().unwrap();
-            if !first.is_alphabetic() && first != '_' { continue; }
-            // Only valid interpolation if content is an identifier path or method call
-            // Allows: {name}, {user.age}, {value.toString()}, {item.to_log()}
-            if trimmed.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '.' || c == '(' || c == ')') {
-                return true;
-            }
-        } else {
-            i += 1;
-        }
-    }
-    false
-}
-
-/// Parse "hello {name}, age {age}" into StringInterp parts.
-/// Escaped braces `\{` and `\}` are treated as literal `{` and `}`.
-/// `\\` before a brace is a literal backslash (the brace starts interpolation).
-fn parse_string_interp(s: &str) -> Expr {
-    let chars: Vec<char> = s.chars().collect();
-    let mut parts = Vec::new();
-    let mut current = String::new();
-    let mut i = 0;
-
-    while i < chars.len() {
-        if chars[i] == '\\' && i + 1 < chars.len() {
-            let next = chars[i + 1];
-            if next == '{' || next == '}' {
-                // \{ or \} → literal brace
-                current.push(next);
-                i += 2;
-                continue;
-            }
-            if next == '\\' {
-                // \\ → literal backslash
-                current.push('\\');
-                i += 2;
-                continue;
-            }
-            current.push(chars[i]);
-            i += 1;
-            continue;
-        }
-        if chars[i] == '{' {
-            if !current.is_empty() {
-                parts.push(StringPart::Literal(current.clone()));
-                current.clear();
-            }
-            i += 1; // skip '{'
-            let mut expr_str = String::new();
-            while i < chars.len() && chars[i] != '}' {
-                expr_str.push(chars[i]);
-                i += 1;
-            }
-            if i < chars.len() { i += 1; } // skip '}'
-
-            let trimmed = expr_str.trim();
-            if trimmed.contains('.') {
-                let tokens = super::tokenize(trimmed);
-                let mut p = Parser::new(tokens);
-                parts.push(StringPart::Expr(p.parse_expr().unwrap()));
-            } else {
-                parts.push(StringPart::Expr(Expr::Ident(trimmed.to_string())));
-            }
-        } else {
-            current.push(chars[i]);
-            i += 1;
-        }
-    }
-    if !current.is_empty() {
-        parts.push(StringPart::Literal(current));
-    }
-
-    Expr::StringInterp(parts)
-}
-
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::parse::tokenize;
-
-    #[test]
-    fn parse_simple_string() {
-        let mut p = Parser::new(tokenize("\"hello\""));
-        assert_eq!(p.parse_expr().unwrap(), Expr::String("hello".into()));
-    }
-
-    #[test]
-    fn parse_binop() {
-        let mut p = Parser::new(tokenize("1 + 2"));
-        let expr = p.parse_expr().unwrap();
-        assert!(matches!(expr, Expr::BinOp { op: BinOp::Add, .. }));
-    }
-
-    #[test]
-    fn parse_field_access() {
-        let mut p = Parser::new(tokenize("user.name"));
-        let expr = p.parse_expr().unwrap();
-        assert!(matches!(expr, Expr::FieldAccess { field, .. } if field == "name"));
-    }
-
-    #[test]
-    fn parse_method_call() {
-        let mut p = Parser::new(tokenize("name.trim()"));
-        let expr = p.parse_expr().unwrap();
-        assert!(matches!(expr, Expr::Call { .. }));
-    }
-
-    #[test]
-    fn parse_err_as_ident() {
-        // err.X is now parsed as field access on the err variable
-        // ErrRef is only used via ReturnErr in statement parser
-        let mut p = Parser::new(tokenize("err.timeout"));
-        let expr = p.parse_expr().unwrap();
-        assert!(matches!(expr, Expr::FieldAccess { field, .. } if field == "timeout"));
-    }
-
-    #[test]
-    fn parse_struct_literal() {
-        let mut p = Parser::new(tokenize("Email { value: \"test\" }"));
-        let expr = p.parse_expr().unwrap();
-        assert!(matches!(expr, Expr::StructLit { name, .. } if name == "Email"));
-    }
-
-    #[test]
-    fn parse_function_call() {
-        let mut p = Parser::new(tokenize("greet(\"cam\")"));
-        let expr = p.parse_expr().unwrap();
-        assert!(matches!(expr, Expr::Call { .. }));
-    }
-
-    #[test]
-    fn parse_chained_method() {
-        let mut p = Parser::new(tokenize("raw.trim().to_upper()"));
-        let expr = p.parse_expr().unwrap();
-        // Should be Call(FieldAccess(Call(FieldAccess(Ident(raw), trim)), to_upper))
-        assert!(matches!(expr, Expr::Call { .. }));
-    }
-
-    #[test]
-    fn parse_error_on_bad_token() {
-        let mut p = Parser::new(tokenize("->"));
-        let result = p.parse_expr();
-        assert!(result.is_err());
-    }
-
-    // ─── String interpolation edge cases ─────
-
-    #[test]
-    fn json_string_not_interpolated() {
-        // "{key: value}" should be a plain string, not interpolation
-        let mut p = Parser::new(tokenize(r#""{key: value}""#));
-        let expr = p.parse_expr().unwrap();
-        assert!(matches!(&expr, Expr::String(s) if s == "{key: value}"),
-            "JSON-like string should not be interpolated, got: {:?}", expr);
-    }
-
-    #[test]
-    fn json_object_string_not_interpolated() {
-        let mut p = Parser::new(tokenize(r#""{"name":"cam"}""#));
-        let expr = p.parse_expr().unwrap();
-        assert!(matches!(expr, Expr::String(_)),
-            "JSON object string should not be interpolated, got: {:?}", expr);
-    }
-
-    #[test]
-    fn empty_braces_not_interpolated() {
-        let mut p = Parser::new(tokenize(r#""{}""#));
-        let expr = p.parse_expr().unwrap();
-        assert!(matches!(&expr, Expr::String(s) if s == "{}"),
-            "empty braces should not be interpolated, got: {:?}", expr);
-    }
-
-    #[test]
-    fn valid_interpolation_works() {
-        let mut p = Parser::new(tokenize(r#""hello {name}""#));
-        let expr = p.parse_expr().unwrap();
-        assert!(matches!(expr, Expr::StringInterp(_)),
-            "valid interpolation should work, got: {:?}", expr);
-    }
-
-    #[test]
-    fn dotted_interpolation_works() {
-        let mut p = Parser::new(tokenize(r#""age is {user.age}""#));
-        let expr = p.parse_expr().unwrap();
-        assert!(matches!(expr, Expr::StringInterp(_)),
-            "dotted interpolation should work, got: {:?}", expr);
-    }
-
-    #[test]
-    fn braces_with_spaces_not_interpolated() {
-        let mut p = Parser::new(tokenize(r#""{ not valid }""#));
-        let expr = p.parse_expr().unwrap();
-        assert!(matches!(expr, Expr::String(_)),
-            "braces with spaces around content should not interpolate, got: {:?}", expr);
-    }
-
-    #[test]
-    fn numeric_braces_not_interpolated() {
-        let mut p = Parser::new(tokenize(r#""{123}""#));
-        let expr = p.parse_expr().unwrap();
-        assert!(matches!(expr, Expr::String(_)),
-            "numeric braces should not be interpolated, got: {:?}", expr);
-    }
-
-    // ─── Escaped braces ─────
-
-    #[test]
-    fn escaped_braces_literal() {
-        let mut p = Parser::new(tokenize(r#""\{name\}""#));
-        let expr = p.parse_expr().unwrap();
-        assert!(matches!(&expr, Expr::String(s) if s == "{name}"),
-            "escaped braces should produce literal string, got: {:?}", expr);
-    }
-
-    #[test]
-    fn escaped_brace_in_interpolated_string() {
-        // \{literal\} followed by real {interp}
-        let mut p = Parser::new(tokenize(r#""price: \{10\} for {name}""#));
-        let expr = p.parse_expr().unwrap();
-        assert!(matches!(expr, Expr::StringInterp(_)),
-            "mixed escaped + real interpolation should work, got: {:?}", expr);
-        if let Expr::StringInterp(parts) = expr {
-            // First part should be literal "price: {10} for "
-            if let StringPart::Literal(s) = &parts[0] {
-                assert!(s.contains("{10}"), "escaped brace should be literal, got: {}", s);
-            }
-        }
-    }
-
-    #[test]
-    fn only_escaped_braces_no_interpolation() {
-        let mut p = Parser::new(tokenize(r#""\{hello\}""#));
-        let expr = p.parse_expr().unwrap();
-        assert!(matches!(&expr, Expr::String(s) if s == "{hello}"),
-            "all-escaped braces should be plain string, got: {:?}", expr);
-    }
-
-    #[test]
-    fn css_string_not_interpolated() {
-        let mut p = Parser::new(tokenize(r#"".class { color: red; }""#));
-        let expr = p.parse_expr().unwrap();
-        assert!(matches!(expr, Expr::String(_)),
-            "CSS-like string should not be interpolated, got: {:?}", expr);
-    }
-}
+#[path = "expr_tests.rs"]
+mod tests;

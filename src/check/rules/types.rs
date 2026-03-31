@@ -202,6 +202,13 @@ fn types_compatible(expected: &str, actual: &str) -> bool {
     if exp_base == act_base { return true; }
     // Null is compatible with nullable types
     if expected.ends_with('?') && actual == "null" { return true; }
+    // Auto-stub objects (__mock_X) are compatible with contract type X in both directions
+    if let Some(stub_name) = actual.strip_prefix("__mock_") {
+        if stub_name == exp_base { return true; }
+    }
+    if let Some(stub_name) = expected.strip_prefix("__mock_") {
+        if stub_name == act_base { return true; }
+    }
     false
 }
 

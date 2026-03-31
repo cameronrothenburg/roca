@@ -55,9 +55,14 @@ fn build_constructor<'a>(
     let ctor_formal = formal_params(ast, ctor_params);
 
     let mut stmts = ast.vec();
+
+    // Emit constraint validation guards before assignments
+    for field in fields {
+        emit_field_guards(ast, field, &mut stmts);
+    }
+
     for field in fields {
         let f = ast.str(&field.name);
-        // this.field = init.field
         let this_member = ast.member_expression_static(
             SPAN, ast.expression_this(SPAN), ast.identifier_name(SPAN, f), false,
         );
@@ -84,6 +89,27 @@ fn build_constructor<'a>(
         false, false, false, false, None,
     );
     elements.push(ctor);
+}
+
+fn emit_field_guards<'a>(
+    ast: &AstBuilder<'a>,
+    field: &roca::Field,
+    stmts: &mut oxc_allocator::Vec<'a, Statement<'a>>,
+) {
+    if field.constraints.is_empty() { return; }
+    let is_string = matches!(field.type_ref, roca::TypeRef::String);
+    let fname = field.name.clone();
+    super::functions::emit_constraint_guards(
+        ast, &field.name, is_string, &field.constraints,
+        &move |a| init_field(a, &fname), stmts,
+    );
+}
+
+fn init_field<'a>(ast: &AstBuilder<'a>, name: &str) -> Expression<'a> {
+    let f = ast.str(name);
+    Expression::from(ast.member_expression_static(
+        SPAN, ast.expression_identifier(SPAN, "init"), ast.identifier_name(SPAN, f), false,
+    ))
 }
 
 fn build_class_method<'a>(
@@ -174,9 +200,13 @@ fn expr_uses_self(expr: &roca::Expr) -> bool {
         roca::Expr::Index { target, index } => expr_uses_self(target) || expr_uses_self(index),
         roca::Expr::Match { value, arms } => {
             expr_uses_self(value) || arms.iter().any(|a| {
-                a.pattern.as_ref().map_or(false, |p| expr_uses_self(p)) || expr_uses_self(&a.value)
+                a.pattern.as_ref().map_or(false, |p| match p {
+                    roca::MatchPattern::Value(e) => expr_uses_self(e),
+                    roca::MatchPattern::Variant { .. } => false,
+                }) || expr_uses_self(&a.value)
             })
         }
+        roca::Expr::EnumVariant { args, .. } => args.iter().any(|a| expr_uses_self(a)),
         _ => false,
     }
 }

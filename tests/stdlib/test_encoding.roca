@@ -1,0 +1,36 @@
+// Deep stdlib tests: Encoding contract
+
+import { Encoding } from std::encoding
+
+/// Test
+pub fn test_btoa(input: String) -> String {
+    return Encoding.btoa(input)
+crash {
+    Encoding.btoa -> fallback("")
+}
+    test {
+        self("hello") == "aGVsbG8="
+    }
+}
+
+/// Test
+pub fn test_atob(input: String) -> String, err {
+    return Encoding.atob(input)
+crash {
+    Encoding.atob -> halt
+}
+    test {
+        self("aGVsbG8=") == "hello"
+    }
+}
+
+/// Test
+pub fn test_atob_fallback(input: String) -> String {
+    return Encoding.atob(input)
+crash {
+    Encoding.atob -> fallback("")
+}
+    test {
+        self("aGVsbG8=") == "hello"
+    }
+}

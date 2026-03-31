@@ -1,6 +1,7 @@
 //! Parser for Roca source code — tokenizes and builds an AST.
 
 pub mod tokenizer;
+pub mod string_interp;
 pub mod expr;
 pub mod contract;
 pub mod struct_def;

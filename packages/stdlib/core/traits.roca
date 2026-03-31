@@ -1,0 +1,13 @@
+contract Loggable {
+    toLog() -> String
+}
+
+contract Serializable {
+    toJson() -> String
+}
+
+contract Deserializable<T> {
+    parse(data: String) -> T, err {
+        err invalid = "data does not match expected shape"
+    }
+}

@@ -1,0 +1,12 @@
+/**
+ * Cryptographic operations.
+ * Import with: import { Crypto } from std::crypto
+ */
+pub extern contract Crypto {
+    /// Generate a v4 UUID string
+    randomUUID() -> String
+    /// Hash data with SHA-256, returns hex string
+    sha256(data: String) -> String
+    /// Hash data with SHA-512, returns hex string
+    sha512(data: String) -> String
+}

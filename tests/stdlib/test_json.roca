@@ -1,0 +1,52 @@
+// Deep stdlib tests: JSON contract — parse errors, crash strategies
+
+import { JSON } from std::json
+
+/// Test: valid JSON parses and round-trips
+pub fn test_parse_roundtrip(text: String) -> String {
+    const parsed = JSON.parse(text)
+    return JSON.stringify(parsed)
+crash {
+    JSON.parse -> fallback("{}")
+}
+    test {
+        self("{\"a\":1}") == "{\"a\":1}"
+    }
+}
+
+/// Test: skip strategy — continue on parse failure
+pub fn test_parse_skip(text: String) -> String {
+    const parsed = JSON.parse(text)
+    return "done"
+crash {
+    JSON.parse -> skip
+}
+    test {
+        self("{\"a\":1}") == "done"
+        self("bad") == "done"
+    }
+}
+
+/// Test: halt propagates parse error to caller
+pub fn test_parse_halt(text: String) -> String, err {
+    const parsed = JSON.parse(text)
+    return JSON.stringify(parsed)
+crash {
+    JSON.parse -> halt
+}
+    test {
+        self("{\"x\":1}") is Ok
+    }
+}
+
+/// Test: log then halt
+pub fn test_parse_log_halt(text: String) -> String, err {
+    const parsed = JSON.parse(text)
+    return JSON.stringify(parsed)
+crash {
+    JSON.parse -> log |> halt
+}
+    test {
+        self("{\"x\":1}") is Ok
+    }
+}

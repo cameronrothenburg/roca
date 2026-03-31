@@ -21,15 +21,10 @@ impl Parser {
 
         let mut functions = Vec::new();
         let mut fields = Vec::new();
-        let mut mock = None;
         let mut values = Vec::new();
 
         while !self.at(&Token::RBrace) && !self.at(&Token::EOF) {
             match self.peek() {
-                // Mock block
-                Token::Mock => {
-                    mock = Some(self.parse_mock_block()?);
-                }
                 // Error declaration on contract-level (shouldn't happen at top level)
                 Token::Err => {
                     return Err(self.err("err declarations must be inside function signatures"));
@@ -68,6 +63,11 @@ impl Parser {
                         functions.push(self.parse_fn_signature()?);
                     }
                 }
+                // Legacy mock block — skip entirely
+                Token::Mock => {
+                    self.advance();
+                    self.skip_braced_block();
+                }
                 // Identifier — could be a field or function signature
                 Token::Ident(_) => {
                     if matches!(self.peek_ahead(1), Token::Colon) {
@@ -94,7 +94,6 @@ impl Parser {
             type_params,
             functions,
             fields,
-            mock,
             values,
         })
     }
@@ -164,13 +163,15 @@ impl Parser {
             let name = self.expect_ident()?;
             self.expect(&Token::Colon)?;
             let type_ref = self.parse_type_ref()?;
-            params.push(Param { name, type_ref });
+            let constraints = self.parse_constraints()?;
+            params.push(Param { name, type_ref, constraints });
 
             while self.eat(&Token::Comma) {
                 let name = self.expect_ident()?;
                 self.expect(&Token::Colon)?;
                 let type_ref = self.parse_type_ref()?;
-                params.push(Param { name, type_ref });
+                let constraints = self.parse_constraints()?;
+                params.push(Param { name, type_ref, constraints });
             }
         }
         Ok(params)
@@ -178,25 +179,44 @@ impl Parser {
 
     /// Parse a type reference: String, Number, Bool, Named, Self, or Type | null
     pub fn parse_type_ref(&mut self) -> ParseResult<TypeRef> {
-        let base = match self.advance() {
-            Token::Ident(s) => {
-                let name = s.clone();
-                // Check for generic: Type<T, U>
-                if self.at(&Token::Lt) {
-                    self.advance();
-                    let mut type_args = vec![self.parse_type_ref()?];
+        let base = match self.peek() {
+            Token::Fn => {
+                self.advance(); // consume fn
+                self.expect(&Token::LParen)?;
+                let mut params = Vec::new();
+                if !self.at(&Token::RParen) {
+                    params.push(self.parse_type_ref()?);
                     while self.eat(&Token::Comma) {
-                        type_args.push(self.parse_type_ref()?);
+                        params.push(self.parse_type_ref()?);
                     }
-                    self.expect(&Token::Gt)?;
-                    TypeRef::Generic(name, type_args)
-                } else {
-                    TypeRef::from_str(&name)
                 }
+                self.expect(&Token::RParen)?;
+                let ret = if self.eat(&Token::Arrow) {
+                    self.parse_type_ref()?
+                } else {
+                    TypeRef::Ok
+                };
+                TypeRef::Fn(params, Box::new(ret))
             }
-            Token::SelfKw => TypeRef::Named("Self".to_string()),
-            Token::Ok => TypeRef::Ok,
-            other => return Err(self.err(format!("expected type, got {:?}", other))),
+            _ => match self.advance() {
+                Token::Ident(s) => {
+                    let name = s.clone();
+                    if self.at(&Token::Lt) {
+                        self.advance();
+                        let mut type_args = vec![self.parse_type_ref()?];
+                        while self.eat(&Token::Comma) {
+                            type_args.push(self.parse_type_ref()?);
+                        }
+                        self.expect(&Token::Gt)?;
+                        TypeRef::Generic(name, type_args)
+                    } else {
+                        TypeRef::from_str(&name)
+                    }
+                }
+                Token::SelfKw => TypeRef::Named("Self".to_string()),
+                Token::Ok => TypeRef::Ok,
+                other => return Err(self.err(format!("expected type, got {:?}", other))),
+            }
         };
 
         // Check for | null

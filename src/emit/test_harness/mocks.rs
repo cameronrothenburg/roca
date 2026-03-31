@@ -64,64 +64,73 @@ pub(crate) fn emit_mock_object<'a>(
 }
 
 /// Generate JS code that patches struct/extern fn mocks for test isolation.
-pub(crate) fn generate_mock_patches(file: &roca::SourceFile, is_embed: bool) -> String {
+pub(crate) fn generate_mock_patches(files: &[&roca::SourceFile], is_embed: bool) -> String {
     let mut patches = Vec::new();
 
     if !is_embed {
-        let mut structs: Vec<(&str, &[roca::Field], &[roca::FnSignature])> = Vec::new();
-        for item in &file.items {
-            if let roca::Item::Struct(s) = item {
-                if !s.signatures.is_empty() {
-                    structs.push((&s.name, &s.fields, &s.signatures));
+        for file in files {
+            let mut structs: Vec<(&str, &[roca::Field], &[roca::FnSignature])> = Vec::new();
+            for item in &file.items {
+                if let roca::Item::Struct(s) = item {
+                    if !s.signatures.is_empty() {
+                        structs.push((&s.name, &s.fields, &s.signatures));
+                    }
                 }
             }
-        }
 
-        for (name, fields, sigs) in &structs {
-            for sig in *sigs {
-                if sig.returns_err && !sig.errors.is_empty() {
-                    let field_mocks: Vec<String> = fields.iter().map(|f| {
-                        let mock_val = mock_value_for_type(&f.type_ref);
-                        format!("{}: {}", f.name, mock_val)
-                    }).collect();
+            for (name, fields, sigs) in &structs {
+                for sig in *sigs {
+                    if sig.returns_err && !sig.errors.is_empty() {
+                        let field_mocks: Vec<String> = fields.iter().map(|f| {
+                            let mock_val = mock_value_for_type(&f.type_ref);
+                            format!("{}: {}", f.name, mock_val)
+                        }).collect();
 
-                    let constructor_args = if field_mocks.is_empty() {
-                        "{}".to_string()
-                    } else {
-                        format!("{{ {} }}", field_mocks.join(", "))
-                    };
+                        let constructor_args = if field_mocks.is_empty() {
+                            "{}".to_string()
+                        } else {
+                            format!("{{ {} }}", field_mocks.join(", "))
+                        };
 
-                    patches.push(format!(
-                        "const _save_{name}_{method} = {name}.{method};\n\
-                         {name}.{method} = function() {{ return {{ value: new {name}({args}), err: null }}; }};",
-                        name = name,
-                        method = sig.name,
-                        args = constructor_args,
-                    ));
+                        patches.push(format!(
+                            "const _save_{name}_{method} = {name}.{method};\n\
+                             {name}.{method} = function() {{ return {{ value: new {name}({args}), err: null }}; }};",
+                            name = name,
+                            method = sig.name,
+                            args = constructor_args,
+                        ));
+                    }
                 }
             }
         }
     }
 
+    for file in files {
     for item in &file.items {
-        if let roca::Item::ExternFn(f) = item {
-            if let Some(mock_def) = &f.mock {
+        match item {
+            roca::Item::ExternFn(f) => {
+                let mock_def = super::values::auto_mock_def_for_extern_fn(f);
                 for entry in &mock_def.entries {
                     let mock_val = emit_expr_js(&entry.value);
-                    // Wrap in {value, err} tuple if the extern fn returns errors
                     let return_val = if f.returns_err {
                         format!("{{ value: {}, err: null }}", mock_val)
                     } else {
                         mock_val
                     };
                     patches.push(format!(
-                        "globalThis.{name} = async function() {{ return {val}; }};",
+                        "globalThis.{name} = function() {{ return {val}; }};",
                         name = f.name,
                         val = return_val,
                     ));
                 }
             }
+            roca::Item::ExternContract(_) => {
+                // Extern contracts have JS wrappers — let real implementations run.
+                // Crash blocks handle failures (e.g., Fs.readFile in V8 without Node).
+            }
+            _ => {}
         }
+    }
     }
 
     if patches.is_empty() {

@@ -73,11 +73,6 @@ pub struct ResolvedProject {
     pub registry: ContractRegistry,
 }
 
-/// Try to load and parse a .roca file by searching common base directories.
-pub fn try_load_roca_file(rel_path: &str) -> Option<SourceFile> {
-    try_load_roca_file_from(rel_path, None)
-}
-
 /// Try to load and parse a .roca file, optionally searching from a specific directory.
 pub fn try_load_roca_file_from(rel_path: &str, from_dir: Option<&Path>) -> Option<SourceFile> {
     let roca_path = Path::new(rel_path);

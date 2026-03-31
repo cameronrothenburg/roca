@@ -10,7 +10,6 @@ pub const PANIC_WARNING: &str = "panic-warning";
 // Contract rules
 pub const DUPLICATE_ERR: &str = "duplicate-err";
 pub const ERR_NO_ERRORS: &str = "err-no-errors";
-pub const MOCK_NULL: &str = "mock-null";
 // Struct rules
 pub const EMPTY_STRUCT: &str = "empty-struct";
 pub const MISSING_IMPL: &str = "missing-impl";
@@ -24,7 +23,7 @@ pub const SATISFIES_MISMATCH: &str = "satisfies-mismatch";
 pub const MISSING_TEST: &str = "missing-test";
 pub const UNTESTED_ERROR: &str = "untested-error";
 pub const NO_SUCCESS_TEST: &str = "no-success-test";
-pub const INVALID_MOCK_REF: &str = "invalid-mock-ref";
+pub const TEST_SHAPE_MISMATCH: &str = "test-shape-mismatch";
 // Variable rules
 pub const CONST_REASSIGN: &str = "const-reassign";
 // Type rules
@@ -59,6 +58,11 @@ pub const MANUAL_ERR_CHECK: &str = "manual-err-check";
 pub const MISSING_DOC: &str = "missing-doc";
 // Function error rules
 pub const FN_ERROR_DEF: &str = "no-fn-error-def";
+// Ownership rules
+pub const USE_AFTER_MOVE: &str = "use-after-move";
+pub const MOVE_IN_LOOP: &str = "move-in-loop";
+pub const MUST_BE_CONST: &str = "must-be-const";
+pub const RECURSIVE_CYCLE: &str = "recursive-cycle";
 
 #[derive(Debug, Clone)]
 pub struct RuleError {

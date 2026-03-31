@@ -10,6 +10,7 @@ mod emit;
 mod errors;
 mod init;
 mod lsp;
+mod native;
 mod resolve;
 
 use std::env;
@@ -39,7 +40,11 @@ fn main() {
             init::init_project(&args[2]);
         }
         "repl" => {
-            cli::repl::run_repl();
+            if args.iter().any(|a| a == "--native") {
+                cli::repl::run_repl_native();
+            } else {
+                cli::repl::run_repl();
+            }
         }
         "skills" => {
             let with_claude = args.iter().any(|a| a == "--claude");
@@ -196,7 +201,7 @@ fn print_help() {
     println!("  test [path]          Build + run proof tests, then clean output");
     println!("  run [path]           Build + execute via embedded V8");
     println!("  gen-extern <.d.ts>   Generate extern contracts from TypeScript declarations");
-    println!("  repl                 Interactive REPL");
+    println!("  repl [--native]      Interactive REPL (V8 default, --native for Cranelift)");
     println!("  search <query>       Search stdlib and project for types/functions");
     println!("  patterns             Show coding patterns and JS integration examples");
     println!("  lsp                  Start language server (stdio)");
@@ -214,7 +219,7 @@ fn print_help() {
     println!("  satisfies            Link a struct to a contract");
     println!("  extern contract      Declare a JS runtime type shape");
     println!("  extern fn            Declare a JS runtime function");
-    println!("  enum                 Define named constants");
+    println!("  enum                 Named constants or algebraic data types");
     println!("  crash                Error handling: halt, retry, fallback, panic");
     println!("  crash chains         Compose strategies: log |> retry(3, 1000) |> halt");
     println!("  test                 Inline proof tests on every function");

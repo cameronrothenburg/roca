@@ -1,0 +1,14 @@
+/// Character utilities — char code conversion and classification.
+/// Import with: import { Char } from std::char
+pub extern contract Char {
+    /// Convert a character code to a single-character string
+    fromCode(code: Number) -> String
+    /// Check if a character is a digit (0-9)
+    isDigit(ch: String) -> Bool
+    /// Check if a character is a letter (a-z, A-Z)
+    isLetter(ch: String) -> Bool
+    /// Check if a character is whitespace (space, tab, newline, etc.)
+    isWhitespace(ch: String) -> Bool
+    /// Check if a character is alphanumeric (letter or digit)
+    isAlphanumeric(ch: String) -> Bool
+}

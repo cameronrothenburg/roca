@@ -1,0 +1,30 @@
+// Deep stdlib tests: Crypto contract
+
+import { Crypto } from std::crypto
+
+/// Test
+pub fn test_uuid() -> Number {
+    const id = Crypto.randomUUID()
+    return id.length
+    test {
+        self() == 36
+    }
+}
+
+/// Test
+pub fn test_sha256_type(input: String) -> Bool {
+    const hash = Crypto.sha256(input)
+    return hash.length > 0
+    test {
+        self("hello") is Ok
+    }
+}
+
+/// Test
+pub fn test_sha512_type(input: String) -> Bool {
+    const hash = Crypto.sha512(input)
+    return hash.length > 0
+    test {
+        self("hello") is Ok
+    }
+}

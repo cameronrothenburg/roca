@@ -1,0 +1,12 @@
+// Deep stdlib tests: Time contract
+
+import { Time } from std::time
+
+/// Test
+pub fn test_now() -> Bool {
+    const t = Time.now()
+    return t > 0
+    test {
+        self() is Ok
+    }
+}

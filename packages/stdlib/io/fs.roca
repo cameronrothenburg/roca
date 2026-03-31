@@ -1,0 +1,20 @@
+/// File system operations.
+/// Native: backed by Rust std::fs via Cranelift runtime.
+/// JS: caller provides implementation via dependency injection.
+pub extern contract Fs {
+    readFile(path: String) -> String, err {
+        err not_found = "file not found"
+        err permission = "permission denied"
+        err io = "I/O error"
+    }
+    writeFile(path: String, content: String) -> Ok, err {
+        err not_found = "parent directory not found"
+        err permission = "permission denied"
+        err io = "I/O error"
+    }
+    exists(path: String) -> Bool
+    readDir(path: String) -> Array<String>, err {
+        err not_found = "directory not found"
+        err permission = "permission denied"
+    }
+}

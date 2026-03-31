@@ -11,6 +11,8 @@ pub enum TypeRef {
     Generic(String, Vec<TypeRef>),
     /// Type | null — nullable field
     Nullable(Box<TypeRef>),
+    /// Function type: fn(A, B) -> C
+    Fn(Vec<TypeRef>, Box<TypeRef>),
     Ok,
 }
 

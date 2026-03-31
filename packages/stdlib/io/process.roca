@@ -1,0 +1,11 @@
+/// Process information and control.
+/// Native: backed by Rust std::env/std::process via Cranelift runtime.
+/// JS: caller provides implementation or uses globalThis.process.
+pub extern contract Process {
+    args() -> Array<String>
+    env(key: String) -> String, err {
+        err notSet = "environment variable not set"
+    }
+    exit(code: Number) -> Ok
+    cwd() -> String
+}

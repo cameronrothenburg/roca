@@ -1,0 +1,10 @@
+/// Path manipulation — pure string operations, no I/O.
+/// Works identically on all targets.
+pub extern contract Path {
+    join(base: String, segment: String) -> String
+    dirname(path: String) -> String
+    basename(path: String) -> String
+    extension(path: String) -> String
+    isAbsolute(path: String) -> Bool
+    normalize(path: String) -> String
+}

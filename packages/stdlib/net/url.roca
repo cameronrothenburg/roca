@@ -1,0 +1,36 @@
+/**
+ * URL parsing and query string handling.
+ * Import with: import { Url } from std::url
+ */
+pub extern contract Url {
+    /// Parse a URL string. Returns parse_failed if invalid.
+    parse(raw: String) -> Url, err {
+        err parse_failed = "invalid URL"
+    }
+    /// Check if a string is a valid URL
+    isValid(raw: String) -> Bool
+    /// Full serialized URL
+    href() -> String
+    /// scheme://host
+    origin() -> String
+    /// Includes trailing colon, e.g. "https:"
+    protocol() -> String
+    /// Domain only, no port
+    hostname() -> String
+    /// hostname:port (port omitted if default)
+    host() -> String
+    /// Empty string when using default port
+    port() -> String
+    /// Includes leading /
+    pathname() -> String
+    /// Includes leading ? or empty string
+    search() -> String
+    /// Includes leading # or empty string
+    hash() -> String
+    /// Get a query parameter by name — null if not present
+    getParam(name: String) -> Optional<String>
+    /// Check if a query parameter exists
+    hasParam(name: String) -> Bool
+    /// Convert to string (same as href)
+    toString() -> String
+}

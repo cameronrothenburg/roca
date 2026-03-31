@@ -86,6 +86,11 @@ fn type_to_ts(t: &TypeRef) -> String {
             format!("{}<{}>", name, ts_args.join(", "))
         }
         TypeRef::Nullable(inner) => format!("{} | null", type_to_ts(inner)),
+        TypeRef::Fn(params, ret) => {
+            let p: Vec<String> = params.iter().enumerate()
+                .map(|(i, t)| format!("arg{}: {}", i, type_to_ts(t))).collect();
+            format!("({}) => {}", p.join(", "), type_to_ts(ret))
+        }
     }
 }
 
@@ -112,7 +117,19 @@ fn emit_fn_decl(f: &FnDef, is_async: bool) -> String {
     } else {
         ret
     };
-    format!("export declare function {}({}): {};", f.name, params_to_ts(&f.params), ret_str)
+    let type_params = if f.type_params.is_empty() {
+        String::new()
+    } else {
+        let params: Vec<String> = f.type_params.iter().map(|tp| {
+            if let Some(constraint) = &tp.constraint {
+                format!("{} extends {}", tp.name, constraint)
+            } else {
+                tp.name.clone()
+            }
+        }).collect();
+        format!("<{}>", params.join(", "))
+    };
+    format!("export declare function {}{}({}): {};", f.name, type_params, params_to_ts(&f.params), ret_str)
 }
 
 fn emit_class_decl(s: &StructDef, sat_methods: &[&FnDef]) -> String {
@@ -181,16 +198,33 @@ fn emit_extern_contract_decl(c: &ContractDef) -> String {
 }
 
 fn emit_enum_decl(e: &EnumDef) -> String {
+    use super::ast_helpers::{TAG_FIELD, positional_field};
     let mut lines = Vec::new();
     lines.push(format!("export declare const {}: {{", e.name));
     for v in &e.variants {
-        let val = match &v.value {
-            EnumValue::String(s) => format!("\"{}\"", s),
+        match &v.value {
+            EnumValue::String(s) => {
+                lines.push(format!("  readonly {}: \"{}\";", v.name, s));
+            }
             EnumValue::Number(n) => {
-                if *n == (*n as i64) as f64 { format!("{}", *n as i64) } else { format!("{}", n) }
+                let val = if *n == (*n as i64) as f64 { format!("{}", *n as i64) } else { format!("{}", n) };
+                lines.push(format!("  readonly {}: {};", v.name, val));
+            }
+            EnumValue::Data(types) => {
+                let params: Vec<String> = types.iter().enumerate()
+                    .map(|(i, t)| format!("{}: {}", positional_field(i), type_to_ts(t)))
+                    .collect();
+                let fields: String = types.iter().enumerate()
+                    .map(|(i, t)| format!(", {}: {}", positional_field(i), type_to_ts(t)))
+                    .collect();
+                lines.push(format!("  {}({}): {{ {}: \"{}\"{} }};",
+                    v.name, params.join(", "), TAG_FIELD, v.name, fields,
+                ));
+            }
+            EnumValue::Unit => {
+                lines.push(format!("  readonly {}: {{ {}: \"{}\" }};", v.name, TAG_FIELD, v.name));
             }
         };
-        lines.push(format!("  readonly {}: {};", v.name, val));
     }
     lines.push("};".to_string());
     lines.join("\n")
@@ -275,7 +309,6 @@ mod tests {
         let dts = emit_dts(&parse::parse(r#"
             extern fn fetch(url: String) -> String, err {
                 err net = "net"
-                mock { fetch -> "ok" }
             }
             pub fn load(url: String) -> String {
                 const data = wait fetch(url)

@@ -55,6 +55,13 @@ pub enum Expr {
     Null,
     /// self keyword
     SelfRef,
+    /// Enum variant constructor: Token.Number(42)
+    #[allow(dead_code)]
+    EnumVariant {
+        enum_name: String,
+        variant: String,
+        args: Vec<Expr>,
+    },
 }
 
 /// Extract the dotted call name from a call target expression.
@@ -109,6 +116,18 @@ pub enum StringPart {
 #[derive(Debug, Clone, PartialEq)]
 pub struct MatchArm {
     /// None = default/wildcard (_)
-    pub pattern: Option<Expr>,
+    pub pattern: Option<MatchPattern>,
     pub value: Expr,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum MatchPattern {
+    /// Simple value comparison: 42, "hello"
+    Value(Expr),
+    /// Enum variant destructure: Token.Number(n) — bindings are variable names
+    Variant {
+        enum_name: String,
+        variant: String,
+        bindings: Vec<String>,
+    },
 }

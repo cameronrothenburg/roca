@@ -19,27 +19,42 @@ pub struct ContractRegistry {
     pub satisfies_map: HashMap<String, Vec<String>>,
 }
 
-const STDLIB_SOURCE: &str = include_str!("../../packages/stdlib/primitives.roca");
+const STDLIB_SOURCE: &str = concat!(
+    include_str!("../../packages/stdlib/core/traits.roca"),
+    include_str!("../../packages/stdlib/core/string.roca"),
+    include_str!("../../packages/stdlib/core/number.roca"),
+    include_str!("../../packages/stdlib/core/bool.roca"),
+    include_str!("../../packages/stdlib/core/array.roca"),
+    include_str!("../../packages/stdlib/core/map.roca"),
+    include_str!("../../packages/stdlib/core/optional.roca"),
+    include_str!("../../packages/stdlib/core/bytes.roca"),
+);
 
 /// Stdlib parsed once and cached for the lifetime of the process.
 static STDLIB_AST: LazyLock<SourceFile> = LazyLock::new(|| crate::parse::parse(STDLIB_SOURCE));
 
 /// Stdlib modules — loaded dynamically from the stdlib directory.
 /// The module name maps to stdlib/{name}.roca
-fn stdlib_module(name: &str) -> Option<String> {
-    // Find stdlib directory relative to the roca binary
+pub fn load_stdlib_module(name: &str) -> Option<String> {
     let exe = std::env::current_exe().ok()?;
     let exe_dir = exe.parent()?;
 
-    // Check alongside binary first, then common install locations
     for base in &[
         exe_dir.join("../packages/stdlib"),
         exe_dir.join("../../packages/stdlib"),
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("packages/stdlib"),
     ] {
-        let path = base.join(format!("{}.roca", name));
-        if let Ok(source) = std::fs::read_to_string(&path) {
+        // Check flat: stdlib/{name}.roca (legacy)
+        let flat = base.join(format!("{}.roca", name));
+        if let Ok(source) = std::fs::read_to_string(&flat) {
             return Some(source);
+        }
+        // Check subdirectories: stdlib/{subdir}/{name}.roca
+        for subdir in &["core", "io", "net", "data", "security", "time"] {
+            let nested = base.join(subdir).join(format!("{}.roca", name));
+            if let Ok(source) = std::fs::read_to_string(&nested) {
+                return Some(source);
+            }
         }
     }
     None
@@ -96,7 +111,7 @@ impl ContractRegistry {
                 }
                 Item::Import(imp) => {
                     if let ImportSource::Std(Some(module)) = &imp.source {
-                        if let Some(src) = stdlib_module(module) {
+                        if let Some(src) = load_stdlib_module(module) {
                             if let Ok(parsed) = crate::parse::try_parse(&src) {
                                 // Load only the imported names
                                 for imp_item in &parsed.items {
@@ -410,10 +425,10 @@ mod tests {
     #[test]
     fn satisfies_tracked() {
         let file = parse::parse(r#"
-            contract Loggable { to_log() -> String }
+            contract Loggable { toLog() -> String }
             pub struct Email { value: String }{}
             Email satisfies Loggable {
-                fn to_log() -> String { return self.value test {} }
+                fn toLog() -> String { return self.value test {} }
             }
         "#);
         let reg = ContractRegistry::build(&file);

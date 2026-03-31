@@ -78,11 +78,44 @@ Optional:   Optional<String> — field may be absent (use on struct fields)
 Generic:    Array<T>, Map<V>
 Special:    Ok (void return)
 
-VARIABLES
----------
-  const x = 5               immutable
-  let x = 5                 mutable, can reassign
+VARIABLES & OWNERSHIP
+---------------------
+  const x = 5               immutable — borrowed when passed
+  let x = 5                 mutable — moved when passed
   self.field = value         mutate struct fields in methods
+
+Roca has memory safety without a garbage collector. Two rules:
+
+  1. const = immutable, borrowed when passed to functions.
+     The caller keeps ownership. The function reads it.
+
+  2. let = mutable, moved when passed to functions.
+     The caller loses ownership. The function owns it.
+
+Examples:
+
+  const name = "hello"
+  greet(name)              // borrowed — name still valid after call
+  log(name)                // OK
+
+  let items = [1, 2, 3]
+  process(items)           // moved — items is gone
+  log(items)               // COMPILE ERROR: use-after-move
+
+Returning transfers ownership back to the caller:
+
+  let data = [3, 1, 2]
+  let sorted = sort(data)  // data moved into sort
+  log(sorted)              // OK — sorted owns the result
+
+Clone explicitly for shared copies:
+
+  const a = "shared"
+  const b = a.clone()      // explicit copy
+  log(a)                   // still valid
+
+The compiler enforces these rules at compile time. The native engine
+generates real alloc/free code. JS gets the same checks but uses GC.
 
 CONTRACTS
 ---------
@@ -151,7 +184,7 @@ SATISFIES
 Links a struct to a contract. One block per contract.
 
   Email satisfies Loggable {
-      fn to_log() -> String {
+      fn toLog() -> String {
           return self.value
           test { self() == "test@example.com" }
       }
@@ -227,6 +260,32 @@ CONTROL FLOW
       _ => "unknown"
   }
 
+GENERIC FUNCTIONS
+-----------------
+Functions can have type parameters:
+
+  pub fn identity<T>(value: T) -> T {
+      return value
+  }
+
+  pub fn transform<A, B>(input: A, convert: fn(A) -> B) -> B {
+      return convert(input)
+  }
+
+Constrained type parameters:
+
+  pub fn log_item<T: Loggable>(item: T) -> Ok {
+      log(item.toLog())
+  }
+
+Function types as parameters:
+
+  fn(Number) -> String          takes Number, returns String
+  fn(A, B) -> C                 generic function type
+  fn() -> Ok                    no params, void return
+
+Compiles to plain JS — type parameters are erased at the output.
+
 CLOSURES
 --------
   items.map(fn(x) -> x * 2)
@@ -263,10 +322,34 @@ Type casts:
 
 ENUMS
 -----
+Flat enums (constant values):
   enum Status { active = "active", suspended = "suspended" }
   enum HttpCode { ok = 200, not_found = 404 }
 
-Compiles to: const Status = { active: "active", suspended: "suspended" };
+  Compiles to: const Status = { active: "active", suspended: "suspended" };
+
+Algebraic enums (data variants):
+  enum Token {
+      Number(Number)
+      Str(String)
+      Plus
+      Minus
+  }
+
+  // Construct:
+  const t = Token.Number(42)    // { _tag: "Number", _0: 42 }
+  const p = Token.Plus          // { _tag: "Plus" }
+
+  // Pattern match:
+  const label = match token {
+      Token.Number(n) => "number: {n}"
+      Token.Plus => "+"
+      _ => "unknown"
+  }
+
+  Data variants carry typed fields. Unit variants have no data.
+  Each variant is tagged with _tag for pattern matching.
+  Compiles to constructor functions (data) or plain objects (unit).
 
 IMPORTS
 -------
@@ -344,17 +427,17 @@ STDLIB
 ------
 String:  trim, trimStart, trimEnd, toUpperCase, toLowerCase, replace,
          slice, repeat, includes, startsWith, endsWith, indexOf, split,
-         charAt, toString, to_log
-Number:  toString, toFixed, to_log
-Bool:    toString, to_log
+         charAt, toString, toLog
+Number:  toString, toFixed, toLog
+Bool:    toString, toLog
 Array:   length, includes, indexOf, join, reverse, push, pop, concat,
          map, filter, find, slice, forEach, some, every, flat, reduce
 Map:     get, set, has, delete, keys, values, size
-Bytes:   byteLength, at, slice, toString, to_log, toHex, toBase64, toArray
+Bytes:   byteLength, at, slice, toString, toLog, toHex, toBase64, toArray
 Buffer:  write, writeString, writeByte, toBytes, toString, byteLength, clear
 Optional: isPresent, unwrap, unwrapOr
 
-Loggable: contract requiring to_log() -> String.
+Loggable: contract requiring toLog() -> String.
 String, Number, Bool, Bytes all satisfy Loggable.
 log(), error(), warn() require Loggable arguments.
 
@@ -371,7 +454,7 @@ The compiler enforces:
   type-mismatch        Comparing different types
   struct-comparison    Cannot compare structs directly
   nullable-access      Calling method on nullable without null check
-  not-loggable         log/error/warn arg doesn't have to_log()
+  not-loggable         log/error/warn arg doesn't have toLog()
   generic-mismatch     Wrong type for generic parameter
   constraint-violation Type doesn't satisfy generic constraint
   return-type-mismatch Returning wrong type from function
@@ -397,6 +480,10 @@ The compiler enforces:
   empty-struct         Struct has no methods — use a contract instead
   invalid-mock-ref     __mock_X used but X has no mock block
   private-method       Calling non-pub struct method from outside
+  use-after-move       Using a let variable after it was passed to a function
+  move-in-loop         Moving an outer let inside a loop body
+  must-be-const        let declared but never mutated — use const
+  recursive-cycle      Struct field references its own type directly (infinite size)
 
 CONFIGURATION (roca.toml)
 -------------------------

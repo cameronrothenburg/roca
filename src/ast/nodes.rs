@@ -3,7 +3,6 @@
 
 use super::crash::CrashBlock;
 use super::err::ErrDecl;
-use super::mock::MockDef;
 use super::stmt::Stmt;
 use super::test_block::TestBlock;
 use super::types::TypeRef;
@@ -29,7 +28,7 @@ pub enum Item {
     ExternFn(ExternFnDef),
 }
 
-/// extern fn name(params) -> ReturnType, err { err declarations, mock block }
+/// extern fn name(params) -> ReturnType, err { err declarations }
 #[derive(Debug, Clone, PartialEq)]
 pub struct ExternFnDef {
     pub name: String,
@@ -38,16 +37,17 @@ pub struct ExternFnDef {
     pub return_type: TypeRef,
     pub returns_err: bool,
     pub errors: Vec<ErrDecl>,
-    pub mock: Option<MockDef>,
 }
 
-/// enum Name { key = value, ... }
+/// enum Name { key = value, ... } OR enum Name { Variant(Type) | Variant | ... }
 #[derive(Debug, Clone, PartialEq)]
 pub struct EnumDef {
     pub name: String,
     pub is_pub: bool,
     pub doc: Option<String>,
     pub variants: Vec<EnumVariant>,
+    /// True if this is an algebraic enum (data variants), false for flat key=value
+    pub is_algebraic: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -60,6 +60,10 @@ pub struct EnumVariant {
 pub enum EnumValue {
     String(String),
     Number(f64),
+    /// Data variant with typed fields: Variant(Type1, Type2)
+    Data(Vec<TypeRef>),
+    /// Unit variant (no data): Variant
+    Unit,
 }
 
 /// import { Name1, Name2 } from "./path" or from std::module
@@ -77,11 +81,12 @@ pub enum ImportSource {
     Std(Option<String>),
 }
 
-/// Function parameter
+/// Function parameter — optionally constrained for validation and testing
 #[derive(Debug, Clone, PartialEq)]
 pub struct Param {
     pub name: String,
     pub type_ref: TypeRef,
+    pub constraints: Vec<Constraint>,
 }
 
 /// Function signature (used in contracts and struct contract blocks)
@@ -120,7 +125,7 @@ pub enum Constraint {
 
 // ─── Contract ───────────────────────────────────────────
 
-/// contract Name<T, V: Constraint> { signatures, errors, mock }
+/// contract Name<T, V: Constraint> { signatures, fields, values }
 #[derive(Debug, Clone, PartialEq)]
 pub struct ContractDef {
     pub name: String,
@@ -129,7 +134,6 @@ pub struct ContractDef {
     pub type_params: Vec<TypeParam>,
     pub functions: Vec<FnSignature>,
     pub fields: Vec<Field>,
-    pub mock: Option<MockDef>,
     pub values: Vec<ContractValue>,
 }
 
@@ -182,6 +186,7 @@ pub struct FnDef {
     pub name: String,
     pub is_pub: bool,
     pub doc: Option<String>,
+    pub type_params: Vec<TypeParam>,
     pub params: Vec<Param>,
     pub return_type: TypeRef,
     pub returns_err: bool,

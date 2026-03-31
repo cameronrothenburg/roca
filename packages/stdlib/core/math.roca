@@ -1,0 +1,12 @@
+/// Math operations — pure, no side effects.
+pub extern contract Math {
+    floor(n: Number) -> Number
+    ceil(n: Number) -> Number
+    round(n: Number) -> Number
+    abs(n: Number) -> Number
+    sqrt(n: Number) -> Number
+    pow(base: Number, exp: Number) -> Number
+    min(a: Number, b: Number) -> Number
+    max(a: Number, b: Number) -> Number
+    random() -> Number
+}
