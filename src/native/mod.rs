@@ -87,6 +87,9 @@ pub fn compile_to_object(source: &crate::ast::SourceFile) -> Result<Vec<u8>, Str
 
 // Test modules — each in its own file under 500 lines
 #[cfg(test)] mod tests_basic;
+#[cfg(test)] mod tests_control;
 #[cfg(test)] mod tests_features;
 #[cfg(test)] mod tests_stdlib;
+#[cfg(test)] mod tests_stdlib_ext;
 #[cfg(test)] mod tests_memory;
+#[cfg(test)] mod tests_memory_complex;

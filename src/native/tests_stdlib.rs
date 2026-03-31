@@ -1,15 +1,8 @@
-//! IO, constraints, async, ownership tests
+//! File I/O and constraint validation tests (core constraints)
 
 use cranelift_jit::JITModule;
 use cranelift_module::Module;
-use crate::native::{create_jit_module, compile_all, compile_to_object, runtime, test_runner};
-
-macro_rules! mem_test {
-    ($name:ident, $body:block) => {
-        #[test]
-        fn $name() { runtime::MEM.reset(); $body }
-    };
-}
+use crate::native::{create_jit_module, compile_all, runtime};
 
 fn jit(source: &str) -> JITModule {
     let file = crate::parse::parse(source);
@@ -31,6 +24,7 @@ unsafe fn call_f64(m: &mut JITModule, name: &str, params: usize) -> *const u8 {
     let id = m.declare_function(name, cranelift_module::Linkage::Export, &sig).unwrap();
     m.get_finalized_function(id)
 }
+
 // ─── File I/O Tests ────────────────────────────────
 
 #[test]
@@ -104,7 +98,6 @@ fn fs_read_dir_not_found() {
 
 #[test]
 fn constraint_number_valid() {
-    // Valid number within constraints — should not trap
     let mut m = jit(r#"
         pub struct Config {
             port: Number { min: 1, max: 65535, default: 8080 }
@@ -120,7 +113,6 @@ fn constraint_number_valid() {
 
 #[test]
 fn constraint_string_minlen_valid() {
-    // Valid string within length constraint
     let mut m = jit(r#"
         pub struct User {
             name: String { minLen: 1, maxLen: 64, default: "anon" }
@@ -136,7 +128,6 @@ fn constraint_string_minlen_valid() {
 
 #[test]
 fn constraint_contains_valid() {
-    // String contains "@" — valid
     let mut m = jit(r#"
         pub struct Email {
             value: String { contains: "@", default: "a@b.com" }
@@ -208,7 +199,6 @@ fn constraint_contains_violated() {
 
 #[test]
 fn constraint_number_min_and_max_valid() {
-    // Value within both min and max — should pass
     runtime::reset_constraint_violated();
     let mut m = jit(r#"
         pub struct Range {
@@ -226,7 +216,6 @@ fn constraint_number_min_and_max_valid() {
 
 #[test]
 fn constraint_number_min_and_max_below() {
-    // Value below min with both min and max — should fail
     runtime::reset_constraint_violated();
     let mut m = jit(r#"
         pub struct Range {
@@ -244,7 +233,6 @@ fn constraint_number_min_and_max_below() {
 
 #[test]
 fn constraint_number_min_and_max_above() {
-    // Value above max with both min and max — should fail
     runtime::reset_constraint_violated();
     let mut m = jit(r#"
         pub struct Range {
@@ -262,7 +250,6 @@ fn constraint_number_min_and_max_above() {
 
 #[test]
 fn constraint_string_minlen_and_maxlen_valid() {
-    // String length within both bounds
     runtime::reset_constraint_violated();
     let mut m = jit(r#"
         pub struct Tag {
@@ -280,7 +267,6 @@ fn constraint_string_minlen_and_maxlen_valid() {
 
 #[test]
 fn constraint_string_minlen_violated() {
-    // String too short
     runtime::reset_constraint_violated();
     let mut m = jit(r#"
         pub struct Tag {
@@ -298,7 +284,6 @@ fn constraint_string_minlen_violated() {
 
 #[test]
 fn constraint_string_maxlen_violated() {
-    // String too long
     runtime::reset_constraint_violated();
     let mut m = jit(r#"
         pub struct Tag {
@@ -318,7 +303,6 @@ fn constraint_string_maxlen_violated() {
 
 #[test]
 fn constraint_number_at_exact_min() {
-    // Value == min exactly — should pass
     runtime::reset_constraint_violated();
     let mut m = jit(r#"
         pub struct Bound {
@@ -336,7 +320,6 @@ fn constraint_number_at_exact_min() {
 
 #[test]
 fn constraint_number_at_exact_max() {
-    // Value == max exactly — should pass
     runtime::reset_constraint_violated();
     let mut m = jit(r#"
         pub struct Bound {
@@ -354,7 +337,6 @@ fn constraint_number_at_exact_max() {
 
 #[test]
 fn constraint_number_just_below_min() {
-    // Value just below min — should fail
     runtime::reset_constraint_violated();
     let mut m = jit(r#"
         pub struct Bound {
@@ -372,7 +354,6 @@ fn constraint_number_just_below_min() {
 
 #[test]
 fn constraint_number_just_above_max() {
-    // Value just above max — should fail
     runtime::reset_constraint_violated();
     let mut m = jit(r#"
         pub struct Bound {
@@ -387,272 +368,3 @@ fn constraint_number_just_above_max() {
     f();
     assert!(runtime::constraint_violated(), "101 > max 100, should fail");
 }
-
-// ─── Constraint: empty string edge cases ─────────────
-
-#[test]
-fn constraint_empty_string_with_minlen_1() {
-    // Empty string with minLen: 1 — should fail
-    runtime::reset_constraint_violated();
-    let mut m = jit(r#"
-        pub struct Name {
-            value: String { minLen: 1, default: "x" }
-        }{}
-        pub fn make() -> Number {
-            const n = Name { value: "" }
-            return 1
-        }
-    "#);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make", 0)) };
-    f();
-    assert!(runtime::constraint_violated(), "empty string violates minLen: 1");
-}
-
-#[test]
-fn constraint_contains_empty_needle() {
-    // Contains with empty search string — should always pass
-    runtime::reset_constraint_violated();
-    let mut m = jit(r#"
-        pub struct Doc {
-            body: String { contains: "", default: "anything" }
-        }{}
-        pub fn make() -> Number {
-            const d = Doc { body: "test" }
-            return 1
-        }
-    "#);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make", 0)) };
-    assert_eq!(f(), 1.0);
-    assert!(!runtime::constraint_violated(), "contains empty string always passes");
-}
-
-// ─── Constraint: field with only default ─────────────
-
-#[test]
-fn constraint_default_only_no_validation() {
-    // Field with only a default constraint — no validation needed, should pass
-    runtime::reset_constraint_violated();
-    let mut m = jit(r#"
-        pub struct Settings {
-            timeout: Number { default: 30 }
-        }{}
-        pub fn make() -> Number {
-            const s = Settings { timeout: 999 }
-            return s.timeout
-        }
-    "#);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make", 0)) };
-    assert_eq!(f(), 999.0);
-    assert!(!runtime::constraint_violated(), "default-only field has no validation");
-}
-
-// ─── Constraint: string min/max (treated as minLen/maxLen) ──
-
-#[test]
-fn constraint_string_min_as_minlen() {
-    // min on a String field is treated as minLen
-    runtime::reset_constraint_violated();
-    let mut m = jit(r#"
-        pub struct Token {
-            code: String { min: 4, default: "abcd" }
-        }{}
-        pub fn make() -> Number {
-            const t = Token { code: "ab" }
-            return 1
-        }
-    "#);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make", 0)) };
-    f();
-    assert!(runtime::constraint_violated(), "min on String = minLen, 'ab' (len 2) < 4");
-}
-
-#[test]
-fn constraint_string_max_as_maxlen() {
-    // max on a String field is treated as maxLen
-    runtime::reset_constraint_violated();
-    let mut m = jit(r#"
-        pub struct Token {
-            code: String { max: 5, default: "abc" }
-        }{}
-        pub fn make() -> Number {
-            const t = Token { code: "toolongvalue" }
-            return 1
-        }
-    "#);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make", 0)) };
-    f();
-    assert!(runtime::constraint_violated(), "max on String = maxLen, 'toolongvalue' (len 12) > 5");
-}
-
-// ─── Constraint: multi-field struct ──────────────────
-
-#[test]
-fn constraint_multiple_fields_all_valid() {
-    // Struct with constraints on multiple fields — all valid
-    runtime::reset_constraint_violated();
-    let mut m = jit(r#"
-        pub struct Server {
-            port: Number { min: 1, max: 65535, default: 8080 }
-            name: String { minLen: 1, maxLen: 32, default: "srv" }
-        }{}
-        pub fn make() -> Number {
-            const s = Server { port: 443, name: "web" }
-            return s.port
-        }
-    "#);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make", 0)) };
-    assert_eq!(f(), 443.0);
-    assert!(!runtime::constraint_violated(), "all fields valid");
-}
-
-#[test]
-fn constraint_multiple_fields_second_violated() {
-    // First field valid, second field violated
-    runtime::reset_constraint_violated();
-    let mut m = jit(r#"
-        pub struct Server {
-            port: Number { min: 1, max: 65535, default: 8080 }
-            name: String { minLen: 1, maxLen: 32, default: "srv" }
-        }{}
-        pub fn make() -> Number {
-            const s = Server { port: 443, name: "" }
-            return s.port
-        }
-    "#);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make", 0)) };
-    f();
-    assert!(runtime::constraint_violated(), "empty name violates minLen: 1");
-}
-
-#[test]
-fn aot_produces_object() {
-    let file = crate::parse::parse("pub fn add(a: Number, b: Number) -> Number { return a + b }");
-    let bytes = compile_to_object(&file).unwrap();
-    assert!(bytes.len() > 100, "object file too small: {} bytes", bytes.len());
-    assert_eq!(&bytes[1..4], b"ELF", "expected ELF object file");
-}
-
-// ─── Memory Tests ──────────────────────────────────
-// Thread-local counters — no lock needed, tests run in parallel safely.
-// Pattern: reset → compile → run → assert exact counts.
-
-macro_rules! mem_test {
-    ($name:ident, $body:block) => {
-        #[test]
-        fn $name() {
-            runtime::MEM.reset();
-            $body
-        }
-    };
-}
-
-mem_test!(rc_alloc_and_release, {
-    let ptr = runtime::roca_rc_alloc(32);
-    assert_ne!(ptr, 0);
-    assert_eq!(runtime::MEM.stats().0, 1);
-    assert_eq!(runtime::MEM.stats().1, 0);
-
-    runtime::roca_rc_release(ptr);
-    assert_eq!(runtime::MEM.stats().1, 1);
-    assert_eq!(runtime::MEM.stats().4, 0);
-});
-
-mem_test!(rc_retain_delays_free, {
-    let ptr = runtime::roca_rc_alloc(16);
-    runtime::roca_rc_retain(ptr); // refcount 2
-
-    runtime::roca_rc_release(ptr); // refcount 1
-    assert_eq!(runtime::MEM.stats().1, 0);
-
-    runtime::roca_rc_release(ptr); // refcount 0, freed
-    assert_eq!(runtime::MEM.stats().1, 1);
-});
-
-mem_test!(rc_null_is_safe, {
-    runtime::roca_rc_retain(0);
-    runtime::roca_rc_release(0);
-    runtime::MEM.assert_clean();
-});
-
-mem_test!(rc_multiple_allocs_all_freed, {
-    let ptrs: Vec<i64> = (0..10).map(|_| runtime::roca_rc_alloc(24)).collect();
-    assert_eq!(runtime::MEM.stats().0, 10);
-    for ptr in ptrs { runtime::roca_rc_release(ptr); }
-    runtime::MEM.assert_clean();
-});
-
-mem_test!(rc_shared_const_pattern, {
-    let ptr = runtime::roca_rc_alloc(8);
-    runtime::roca_rc_retain(ptr); // refcount 2
-    runtime::roca_rc_release(ptr); // refcount 1
-    runtime::roca_rc_release(ptr); // refcount 0, freed
-    runtime::MEM.assert_clean();
-});
-
-mem_test!(mem_scope_frees_string_locals, {
-    let mut m = jit(r#"
-        pub fn work() -> Number {
-            const s = "hello"
-            const t = "world"
-            return 42
-        }
-    "#);
-    runtime::MEM.reset(); // reset after compilation
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "work", 0)) };
-    assert_eq!(f(), 42.0);
-    let (allocs, frees, _, _, _) = runtime::MEM.stats();
-    assert!(allocs >= 2, "should allocate >= 2 strings, got {}", allocs);
-    assert_eq!(allocs, frees, "all string locals freed: {} allocs, {} frees", allocs, frees);
-});
-
-mem_test!(mem_return_value_not_freed, {
-    let mut m = jit(r#"
-        pub fn greeting() -> String {
-            const extra = "unused"
-            return "hello"
-        }
-    "#);
-    let mut sig = m.make_signature();
-    sig.returns.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I64));
-    let id = m.declare_function("greeting", cranelift_module::Linkage::Export, &sig).unwrap();
-    let f = unsafe { std::mem::transmute::<_, fn() -> *const u8>(m.get_finalized_function(id)) };
-    runtime::MEM.reset();
-    let result = f();
-    assert!(!result.is_null());
-    let (allocs, frees, _, _, _) = runtime::MEM.stats();
-    assert_eq!(frees, allocs - 1, "return value NOT freed: {} allocs, {} frees", allocs, frees);
-});
-
-mem_test!(mem_struct_freed_at_scope_exit, {
-    let mut m = jit(r#"
-        pub fn make_point() -> Number {
-            const p = Point { x: 10, y: 20 }
-            return p.x
-        }
-    "#);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make_point", 0)) };
-    runtime::MEM.reset();
-    assert_eq!(f(), 10.0);
-    let (allocs, frees, _, _, _) = runtime::MEM.stats();
-    assert!(allocs >= 1, "should allocate struct");
-    assert_eq!(allocs, frees, "struct freed: {} allocs, {} frees", allocs, frees);
-});
-
-mem_test!(mem_loop_no_leak, {
-    let mut m = jit(r#"
-        pub fn loop_count() -> Number {
-            let i = 0
-            while i < 5 {
-                const s = "temp"
-                i = i + 1
-            }
-            return i
-        }
-    "#);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "loop_count", 0)) };
-    runtime::MEM.reset();
-    assert_eq!(f(), 5.0);
-    let (allocs, frees, _, _, _) = runtime::MEM.stats();    assert!(allocs >= 5, "should allocate >= 5 strings, got {}", allocs);
-    assert_eq!(allocs, frees, "loop locals freed: {} allocs, {} frees", allocs, frees);
-});
-
