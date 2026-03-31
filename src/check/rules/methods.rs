@@ -275,6 +275,21 @@ mod tests {
 
 pub struct MethodsRule;
 
+/// If type_name is a function type parameter (e.g., "T" from fn<T: Loggable>),
+/// resolve it to the constraint contract name. Otherwise return as-is.
+fn resolve_type_param(type_name: &str, ctx: &ExprContext) -> String {
+    for tp in &ctx.func.def.type_params {
+        if tp.name == type_name {
+            if let Some(constraint) = &tp.constraint {
+                return constraint.clone();
+            }
+            // Unconstrained type param — no methods available
+            return type_name.to_string();
+        }
+    }
+    type_name.to_string()
+}
+
 impl Rule for MethodsRule {
     fn name(&self) -> &'static str { "methods" }
 
@@ -302,7 +317,9 @@ impl Rule for MethodsRule {
                         None
                     });
                     if let Some(type_name) = type_name {
-                        check_method_call(&type_name, field, args, ctx, &mut errors);
+                        // Resolve type params to their constraint contract
+                        let resolved = resolve_type_param(&type_name, ctx);
+                        check_method_call(&resolved, field, args, ctx, &mut errors);
                     }
                 }
             }

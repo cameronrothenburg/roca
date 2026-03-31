@@ -117,7 +117,19 @@ fn emit_fn_decl(f: &FnDef, is_async: bool) -> String {
     } else {
         ret
     };
-    format!("export declare function {}({}): {};", f.name, params_to_ts(&f.params), ret_str)
+    let type_params = if f.type_params.is_empty() {
+        String::new()
+    } else {
+        let params: Vec<String> = f.type_params.iter().map(|tp| {
+            if let Some(constraint) = &tp.constraint {
+                format!("{} extends {}", tp.name, constraint)
+            } else {
+                tp.name.clone()
+            }
+        }).collect();
+        format!("<{}>", params.join(", "))
+    };
+    format!("export declare function {}{}({}): {};", f.name, type_params, params_to_ts(&f.params), ret_str)
 }
 
 fn emit_class_decl(s: &StructDef, sat_methods: &[&FnDef]) -> String {
