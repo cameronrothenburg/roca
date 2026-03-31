@@ -12,7 +12,7 @@ crash {
     Http.text -> fallback("error")
 }
     test {
-        self("https://example.com") == "mock body"
+        self("https://example.com") == ""
     }
 }
 
@@ -40,7 +40,7 @@ crash {
     Http.text -> fallback("")
 }
     test {
-        self("https://api.example.com", "data") == "mock body"
+        self("https://api.example.com", "data") == ""
     }
 }
 

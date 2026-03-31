@@ -65,18 +65,8 @@ impl Parser {
                 }
                 // Legacy mock block — skip entirely
                 Token::Mock => {
-                    self.advance(); // consume "mock"
-                    if self.at(&Token::LBrace) {
-                        self.advance(); // consume "{"
-                        let mut depth = 1;
-                        while depth > 0 && !self.at(&Token::EOF) {
-                            match self.advance() {
-                                Token::LBrace => depth += 1,
-                                Token::RBrace => depth -= 1,
-                                _ => {}
-                            }
-                        }
-                    }
+                    self.advance();
+                    self.skip_braced_block();
                 }
                 // Identifier — could be a field or function signature
                 Token::Ident(_) => {

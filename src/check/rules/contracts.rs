@@ -1,5 +1,5 @@
-//! Rule: duplicate-err, err-no-errors, mock-null
-//! Validates contract error declarations and mock blocks.
+//! Rule: duplicate-err, err-no-errors
+//! Validates contract error declarations.
 
 use std::collections::HashSet;
 use crate::ast::*;

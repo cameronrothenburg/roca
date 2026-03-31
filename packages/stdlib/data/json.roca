@@ -20,6 +20,5 @@ pub extern contract JSON {
     /// Get an array value by key
     getArray(key: String) -> Optional<Array<JSON>>
     /// Convert this JSON value to a string representation
-    toString() -> String"
-    }
+    toString() -> String
 }

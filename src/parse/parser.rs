@@ -104,19 +104,8 @@ impl Parser {
                     };
                     errors.push(ErrDecl { name: err_name, message });
                 } else if self.at(&Token::Mock) {
-                    // Skip legacy mock blocks
-                    self.advance(); // consume "mock"
-                    if self.at(&Token::LBrace) {
-                        self.advance(); // consume "{"
-                        let mut depth = 1;
-                        while depth > 0 && !self.at(&Token::EOF) {
-                            match self.advance() {
-                                Token::LBrace => depth += 1,
-                                Token::RBrace => depth -= 1,
-                                _ => {}
-                            }
-                        }
-                    }
+                    self.advance();
+                    self.skip_braced_block();
                 } else {
                     return Err(self.err(format!("expected err in extern fn block, got {:?}", self.peek())));
                 }

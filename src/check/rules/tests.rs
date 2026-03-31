@@ -1,4 +1,4 @@
-//! Rule: missing-test, untested-error, no-success-test, invalid-mock-ref
+//! Rule: missing-test, untested-error, no-success-test
 //! Validates inline test blocks — coverage of error paths and success cases.
 
 use std::collections::HashSet;
@@ -203,16 +203,29 @@ fn check_test_coverage(f: &FnDef, declared_errors: &[ErrDecl], qn: &str, errors:
         None => return,
     };
 
+    if test.cases.is_empty() {
+        return;
+    }
+
+    // Check test expected values match return type
+    for (i, case) in test.cases.iter().enumerate() {
+        if let TestCase::Equals { expected, .. } = case {
+            if let Some(mismatch) = check_shape(&f.return_type, expected) {
+                errors.push(RuleError::new(
+                    errors::TEST_SHAPE_MISMATCH,
+                    format!("test case {} expected {} but function returns {}", i, mismatch, type_name(&f.return_type)),
+                    Some(qn.to_string()),
+                ));
+            }
+        }
+    }
+
     let mut all_error_names: HashSet<String> = declared_errors.iter().map(|e| e.name.clone()).collect();
     for name in collect_returned_error_names(&f.body) {
         all_error_names.insert(name);
     }
 
     if all_error_names.is_empty() && !f.returns_err {
-        return;
-    }
-
-    if test.cases.is_empty() {
         return;
     }
 
@@ -232,81 +245,52 @@ fn check_test_coverage(f: &FnDef, declared_errors: &[ErrDecl], qn: &str, errors:
     }
 }
 
-fn check_mock_refs(f: &FnDef, file: &SourceFile, source_dir: Option<&std::path::Path>, qn: &str, errors: &mut Vec<RuleError>) {
-    let test = match &f.test {
-        Some(t) => t,
-        None => return,
-    };
-
-    let mut valid_mocks: HashSet<String> = file.items.iter().filter_map(|item| {
-        match item {
-            Item::Contract(c) => Some(c.name.clone()),
-            Item::ExternContract(c) => Some(c.name.clone()),
-            _ => None,
-        }
-    }).collect();
-
-    // Also check imported files for contracts (all contracts have auto-stubs now)
-    for item in &file.items {
-        if let Item::Import(imp) = item {
-            if let ImportSource::Path(path) = &imp.source {
-                if let Some(imported) = crate::resolve::try_load_roca_file_from(path, source_dir) {
-                    for imp_item in &imported.items {
-                        match imp_item {
-                            Item::Contract(c) => { valid_mocks.insert(c.name.clone()); }
-                            Item::ExternContract(c) => { valid_mocks.insert(c.name.clone()); }
-                            _ => {}
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    let mut mock_refs = Vec::new();
-    for case in &test.cases {
-        match case {
-            TestCase::Equals { args, expected } => {
-                for arg in args { collect_mock_idents(arg, &mut mock_refs); }
-                collect_mock_idents(expected, &mut mock_refs);
-            }
-            TestCase::IsOk { args } | TestCase::IsErr { args, .. } => {
-                for arg in args { collect_mock_idents(arg, &mut mock_refs); }
-            }
-            TestCase::StatusMock { mocks, .. } => {
-                for m in mocks { collect_mock_idents(&m.value, &mut mock_refs); }
-            }
-        }
-    }
-
-    for mock_ref in &mock_refs {
-        if !valid_mocks.contains(mock_ref.as_str()) {
-            errors.push(RuleError::new(errors::INVALID_MOCK_REF, format!("__mock_{} used but '{}' has no mock block — only contracts with mock {{}} can be mocked", mock_ref, mock_ref), Some(qn.to_string())));
-        }
+/// Check if an expected expression matches the function's return type.
+/// Returns None if types match, or a description of the mismatch.
+fn check_shape(return_type: &TypeRef, expected: &Expr) -> Option<String> {
+    match (return_type, expected) {
+        (TypeRef::Number, Expr::Number(_)) => None,
+        (TypeRef::String, Expr::String(_)) => None,
+        (TypeRef::Bool, Expr::Bool(_)) => None,
+        // String concat produces String
+        (TypeRef::String, Expr::BinOp { op: BinOp::Add, .. }) => None,
+        // Struct literals match Named types
+        (TypeRef::Named(_), Expr::StructLit { .. }) => None,
+        // Null matches nullable and named types
+        (TypeRef::Nullable(_), Expr::Null) => None,
+        (TypeRef::Named(_), Expr::Null) => None,
+        // Array literals match generic Array
+        (TypeRef::Generic(name, _), Expr::Array(_)) if name == "Array" => None,
+        // Ok type matches null/bool
+        (TypeRef::Ok, Expr::Null) => None,
+        // Identifiers and complex expressions — can't statically check
+        (_, Expr::Ident(_)) => None,
+        (_, Expr::Call { .. }) => None,
+        (_, Expr::FieldAccess { .. }) => None,
+        (_, Expr::BinOp { .. }) => None,
+        (_, Expr::Match { .. }) => None,
+        // Mismatches we can detect
+        (TypeRef::Number, Expr::String(s)) => Some(format!("String \"{}\"", s)),
+        (TypeRef::Number, Expr::Bool(b)) => Some(format!("Bool {}", b)),
+        (TypeRef::String, Expr::Number(n)) => Some(format!("Number {}", n)),
+        (TypeRef::String, Expr::Bool(b)) => Some(format!("Bool {}", b)),
+        (TypeRef::Bool, Expr::Number(n)) => Some(format!("Number {}", n)),
+        (TypeRef::Bool, Expr::String(s)) => Some(format!("String \"{}\"", s)),
+        _ => None, // can't determine — allow
     }
 }
 
-fn collect_mock_idents(expr: &Expr, refs: &mut Vec<String>) {
-    match expr {
-        Expr::Ident(name) if name.starts_with("__mock_") => {
-            let contract_name = name.strip_prefix("__mock_").unwrap().to_string();
-            if !refs.contains(&contract_name) {
-                refs.push(contract_name);
-            }
-        }
-        Expr::StructLit { fields, .. } => {
-            for (_, v) in fields {
-                collect_mock_idents(v, refs);
-            }
-        }
-        Expr::Call { target, args } => {
-            collect_mock_idents(target, refs);
-            for a in args { collect_mock_idents(a, refs); }
-        }
-        Expr::Array(elements) => {
-            for e in elements { collect_mock_idents(e, refs); }
-        }
-        _ => {}
+fn type_name(ty: &TypeRef) -> &'static str {
+    match ty {
+        TypeRef::Number => "Number",
+        TypeRef::String => "String",
+        TypeRef::Bool => "Bool",
+        TypeRef::Ok => "Ok",
+        TypeRef::Named(_) => "Named",
+        TypeRef::Generic(_, _) => "Generic",
+        TypeRef::Nullable(_) => "Nullable",
+        TypeRef::Fn(_, _) => "Fn",
     }
 }
+
 
