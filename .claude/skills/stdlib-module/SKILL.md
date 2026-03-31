@@ -87,7 +87,33 @@ Rules:
 - Deduplicate shared logic into helper functions
 - The compiled output must work in any JS environment
 
-## 3. Runtime bridge — `packages/runtime/{name}-bridge.js`
+## 3. Native runtime — `src/native/runtime/stdlib.rs`
+
+Each stdlib method needs a native (Cranelift) implementation for `roca build --native` and the REPL.
+
+```rust
+// In src/native/runtime/stdlib.rs
+pub extern "C" fn roca_contract_method(param: i64) -> i64 {
+    let input = read_cstr(param);
+    alloc_str(&result)
+}
+```
+
+Then register in `src/native/runtime/mod.rs` inside `runtime_funcs!`:
+```
+(contract_method, "roca_contract_method", roca_contract_method, [types::I64], [types::I64]),
+```
+
+Rules:
+- Use `read_cstr(ptr)` to read string args, `alloc_str(&s)` to return strings
+- Numbers are `f64`, bools are `u8`, strings/arrays/structs are `i64` pointers
+- Error-returning methods: return `(value, err_tag)` where `err_tag: u8` (0 = no error)
+- Add null guards: `if ptr == 0 { return 0; }`
+- Track memory: `MEM.track_alloc(size)` / `MEM.track_free(size)` for heap allocations
+- Add a free function if the type is heap-allocated (like Map)
+- For extern contracts: auto-stubs are generated from types — no mock blocks needed
+
+## 4. Runtime bridge (V8 only) — `packages/runtime/{name}-bridge.js`
 
 Only needed if bare V8 doesn't have the API (e.g. URL, crypto).
 
@@ -111,7 +137,7 @@ Rules:
 - Load in `src/cli/runtime.rs` bootstrap via `include_str!`
 - **Never** referenced in compiled output
 
-## 4. Rust ops — `src/cli/runtime.rs`
+## 5. Rust ops (V8 only) — `src/cli/runtime.rs`
 
 ```rust
 #[op2]
@@ -134,7 +160,7 @@ Rules:
 - Use `serde_json` for structured returns — never raw `format!` interpolation (injection risk)
 - Load bridge in `bootstrap()` function
 
-## 5. Tests — `tests/verify/{name}.rs`
+## 6. Tests — `tests/verify/{name}.rs`
 
 ```rust
 use super::harness::run;
@@ -179,21 +205,21 @@ Rules:
   ```
 - Register in `tests/verify/main.rs`
 
-## 6. Error rules
+## 7. Error rules
 
 - **Only struct contract blocks and extern contracts define errors** — standalone functions cannot mint new error names (`no-fn-error-def` rule)
 - `halt` propagates callee errors automatically — those errors are auto-declared on the function
 - Every declared error must be tested in the test block
 - Every error-returning call needs a crash entry
 
-## 7. Documentation
+## 8. Documentation
 
 After adding the module:
 - Update `docs/src/integration/stdlib-modules.md` — add method table + usage example
 - Update `docs/src/reference/stdlib.md` — if new contracts added to primitives
 - Update `docs/src/reference/compiler-rules.md` — if new checker rules added
 
-## 8. Verification checklist
+## 9. Verification checklist
 
 ```bash
 cargo test                    # all tests pass, zero warnings
