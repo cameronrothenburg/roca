@@ -66,9 +66,13 @@ pub fn compile_function(
         }
     }
 
-    // Import runtime print
+    // Import runtime functions
     let print_ref = module.declare_func_in_func(_rt.print, &mut builder.func);
     func_refs.insert("__print".to_string(), print_ref);
+    let string_eq_ref = module.declare_func_in_func(_rt.string_eq, &mut builder.func);
+    func_refs.insert("__string_eq".to_string(), string_eq_ref);
+    let string_concat_ref = module.declare_func_in_func(_rt.string_concat, &mut builder.func);
+    func_refs.insert("__string_concat".to_string(), string_concat_ref);
 
     // Store params in stack slots
     let mut vars: HashMap<String, VarInfo> = HashMap::new();
@@ -157,6 +161,37 @@ fn emit_stmt(b: &mut FunctionBuilder, stmt: &Stmt, vars: &mut HashMap<String, Va
             b.switch_to_block(merge_block);
             b.seal_block(merge_block);
         }
+        Stmt::While { condition, body, .. } => {
+            let header_block = b.create_block();
+            let body_block = b.create_block();
+            let exit_block = b.create_block();
+
+            b.ins().jump(header_block, &[]);
+
+            // Header: evaluate condition
+            b.switch_to_block(header_block);
+            let cond = emit_expr(b, condition, vars, funcs);
+            b.ins().brif(cond, body_block, &[], exit_block, &[]);
+
+            // Body
+            b.switch_to_block(body_block);
+            b.seal_block(body_block);
+            let mut body_ret = false;
+            for s in body { if body_ret { break; } emit_stmt(b, s, vars, funcs, returns_err, &mut body_ret); }
+            if !body_ret { b.ins().jump(header_block, &[]); }
+
+            // Seal header after body (it has a back-edge from body)
+            b.seal_block(header_block);
+
+            b.switch_to_block(exit_block);
+            b.seal_block(exit_block);
+        }
+        Stmt::Assign { name, value } => {
+            if let Some(var) = vars.get(name) {
+                let val = emit_expr(b, value, vars, funcs);
+                b.ins().stack_store(val, var.slot, 0);
+            }
+        }
         _ => {}
     }
 }
@@ -179,15 +214,71 @@ fn emit_expr(b: &mut FunctionBuilder, expr: &Expr, vars: &HashMap<String, VarInf
         Expr::BinOp { left, op, right } => {
             let l = emit_expr(b, left, vars, funcs);
             let r = emit_expr(b, right, vars, funcs);
+            let l_type = b.func.dfg.value_type(l);
+            let is_float = l_type == types::F64;
+
             match op {
-                BinOp::Add => b.ins().fadd(l, r),
+                BinOp::Add => {
+                    if is_float {
+                        b.ins().fadd(l, r)
+                    } else if let Some(concat_ref) = funcs.get("__string_concat") {
+                        // String concatenation via runtime
+                        let call = b.ins().call(*concat_ref, &[l, r]);
+                        b.inst_results(call)[0]
+                    } else {
+                        b.ins().iadd(l, r) // fallback integer add
+                    }
+                }
                 BinOp::Sub => b.ins().fsub(l, r),
                 BinOp::Mul => b.ins().fmul(l, r),
                 BinOp::Div => b.ins().fdiv(l, r),
-                BinOp::Eq => { let c = b.ins().fcmp(ir::condcodes::FloatCC::Equal, l, r); b.ins().uextend(types::I64, c) }
+                BinOp::Eq => {
+                    if is_float {
+                        let c = b.ins().fcmp(ir::condcodes::FloatCC::Equal, l, r);
+                        b.ins().uextend(types::I64, c)
+                    } else if let Some(eq_ref) = funcs.get("__string_eq") {
+                        // String equality via runtime
+                        let call = b.ins().call(*eq_ref, &[l, r]);
+                        let result = b.inst_results(call)[0];
+                        b.ins().uextend(types::I64, result)
+                    } else {
+                        let c = b.ins().icmp(ir::condcodes::IntCC::Equal, l, r);
+                        b.ins().uextend(types::I64, c)
+                    }
+                }
+                BinOp::Neq => {
+                    if is_float {
+                        let c = b.ins().fcmp(ir::condcodes::FloatCC::NotEqual, l, r);
+                        b.ins().uextend(types::I64, c)
+                    } else if let Some(eq_ref) = funcs.get("__string_eq") {
+                        let call = b.ins().call(*eq_ref, &[l, r]);
+                        let result = b.inst_results(call)[0];
+                        let extended = b.ins().uextend(types::I64, result);
+                        let one = b.ins().iconst(types::I64, 1);
+                        b.ins().isub(one, extended) // negate: 1 - eq
+                    } else {
+                        let c = b.ins().icmp(ir::condcodes::IntCC::NotEqual, l, r);
+                        b.ins().uextend(types::I64, c)
+                    }
+                }
                 BinOp::Lt => { let c = b.ins().fcmp(ir::condcodes::FloatCC::LessThan, l, r); b.ins().uextend(types::I64, c) }
                 BinOp::Gt => { let c = b.ins().fcmp(ir::condcodes::FloatCC::GreaterThan, l, r); b.ins().uextend(types::I64, c) }
-                _ => b.ins().iconst(types::I64, 0),
+                BinOp::Lte => { let c = b.ins().fcmp(ir::condcodes::FloatCC::LessThanOrEqual, l, r); b.ins().uextend(types::I64, c) }
+                BinOp::Gte => { let c = b.ins().fcmp(ir::condcodes::FloatCC::GreaterThanOrEqual, l, r); b.ins().uextend(types::I64, c) }
+                BinOp::And => {
+                    let zero = b.ins().iconst(types::I64, 0);
+                    let lb = b.ins().icmp(ir::condcodes::IntCC::NotEqual, l, zero);
+                    let rb = b.ins().icmp(ir::condcodes::IntCC::NotEqual, r, zero);
+                    let result = b.ins().band(lb, rb);
+                    b.ins().uextend(types::I64, result)
+                }
+                BinOp::Or => {
+                    let zero = b.ins().iconst(types::I64, 0);
+                    let lb = b.ins().icmp(ir::condcodes::IntCC::NotEqual, l, zero);
+                    let rb = b.ins().icmp(ir::condcodes::IntCC::NotEqual, r, zero);
+                    let result = b.ins().bor(lb, rb);
+                    b.ins().uextend(types::I64, result)
+                }
             }
         }
         Expr::Call { target, args } => {

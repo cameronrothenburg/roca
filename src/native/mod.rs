@@ -259,10 +259,7 @@ mod tests {
             }
         "#);
 
-        let mut module = JITModule::new(
-            cranelift_jit::JITBuilder::new(cranelift_module::default_libcall_names())
-                .expect("jit builder failed")
-        );
+        let mut module = create_jit_module();
         let rt = runtime::declare_runtime(&mut module);
         let mut compiled = emit::CompiledFuncs::new();
 
@@ -284,6 +281,128 @@ mod tests {
 
         assert_eq!(double_fn(5.0), 10.0);
         assert_eq!(double_fn(21.0), 42.0);
+    }
+
+    #[test]
+    fn compile_roca_string_eq() {
+        let file = crate::parse::parse(r#"
+            pub fn is_hello(s: String) -> Bool {
+                if s == "hello" { return true }
+                return false
+            }
+        "#);
+
+        let mut module = create_jit_module();
+        let rt = runtime::declare_runtime(&mut module);
+        let mut compiled = emit::CompiledFuncs::new();
+
+        if let crate::ast::Item::Function(f) = &file.items[0] {
+            emit::compile_function(&mut module, f, &rt, &mut compiled).unwrap();
+        }
+        module.finalize_definitions().unwrap();
+
+        let mut sig = module.make_signature();
+        sig.params.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I64));
+        sig.returns.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I8));
+        let func_id = module.declare_function("is_hello", cranelift_module::Linkage::Export, &sig).unwrap();
+        let ptr = module.get_finalized_function(func_id);
+        let is_hello_fn = unsafe { std::mem::transmute::<_, fn(*const u8) -> u8>(ptr) };
+
+        assert_eq!(is_hello_fn(b"hello\0".as_ptr()), 1);
+        assert_eq!(is_hello_fn(b"world\0".as_ptr()), 0);
+    }
+
+    #[test]
+    fn compile_roca_while_loop() {
+        let file = crate::parse::parse(r#"
+            pub fn count_to(n: Number) -> Number {
+                let i = 0
+                while i < n {
+                    i = i + 1
+                }
+                return i
+            }
+        "#);
+
+        let mut module = create_jit_module();
+        let rt = runtime::declare_runtime(&mut module);
+        let mut compiled = emit::CompiledFuncs::new();
+
+        if let crate::ast::Item::Function(f) = &file.items[0] {
+            emit::compile_function(&mut module, f, &rt, &mut compiled).unwrap();
+        }
+        module.finalize_definitions().unwrap();
+
+        let mut sig = module.make_signature();
+        sig.params.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::F64));
+        sig.returns.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::F64));
+        let func_id = module.declare_function("count_to", cranelift_module::Linkage::Export, &sig).unwrap();
+        let ptr = module.get_finalized_function(func_id);
+        let count_fn = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(ptr) };
+
+        assert_eq!(count_fn(5.0), 5.0);
+        assert_eq!(count_fn(0.0), 0.0);
+        assert_eq!(count_fn(100.0), 100.0);
+    }
+
+    #[test]
+    fn compile_roca_string_concat() {
+        let file = crate::parse::parse(r#"
+            pub fn greet(name: String) -> String {
+                return "hello " + name
+            }
+        "#);
+
+        let mut module = create_jit_module();
+        let rt = runtime::declare_runtime(&mut module);
+        let mut compiled = emit::CompiledFuncs::new();
+
+        if let crate::ast::Item::Function(f) = &file.items[0] {
+            emit::compile_function(&mut module, f, &rt, &mut compiled).unwrap();
+        }
+        module.finalize_definitions().unwrap();
+
+        let mut sig = module.make_signature();
+        sig.params.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I64));
+        sig.returns.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I64));
+        let func_id = module.declare_function("greet", cranelift_module::Linkage::Export, &sig).unwrap();
+        let ptr = module.get_finalized_function(func_id);
+        let greet_fn = unsafe { std::mem::transmute::<_, fn(*const u8) -> *const u8>(ptr) };
+
+        let result = greet_fn(b"world\0".as_ptr());
+        let cstr = unsafe { std::ffi::CStr::from_ptr(result as *const i8) };
+        assert_eq!(cstr.to_str().unwrap(), "hello world");
+    }
+
+    #[test]
+    fn compile_roca_and_or() {
+        let file = crate::parse::parse(r#"
+            pub fn both(a: Number, b: Number) -> Number {
+                if a > 0 && b > 0 { return 1 }
+                return 0
+            }
+        "#);
+
+        let mut module = create_jit_module();
+        let rt = runtime::declare_runtime(&mut module);
+        let mut compiled = emit::CompiledFuncs::new();
+
+        if let crate::ast::Item::Function(f) = &file.items[0] {
+            emit::compile_function(&mut module, f, &rt, &mut compiled).unwrap();
+        }
+        module.finalize_definitions().unwrap();
+
+        let mut sig = module.make_signature();
+        sig.params.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::F64));
+        sig.params.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::F64));
+        sig.returns.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::F64));
+        let func_id = module.declare_function("both", cranelift_module::Linkage::Export, &sig).unwrap();
+        let ptr = module.get_finalized_function(func_id);
+        let both_fn = unsafe { std::mem::transmute::<_, fn(f64, f64) -> f64>(ptr) };
+
+        assert_eq!(both_fn(1.0, 1.0), 1.0);
+        assert_eq!(both_fn(1.0, -1.0), 0.0);
+        assert_eq!(both_fn(-1.0, 1.0), 0.0);
     }
 
     #[test]
