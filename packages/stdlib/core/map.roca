@@ -1,0 +1,9 @@
+contract Map<K, V> {
+    get(key: K) -> V
+    set(key: K, value: V) -> Map<K, V>
+    has(key: K) -> Bool
+    delete(key: K) -> Bool
+    keys() -> Array<K>
+    values() -> Array<V>
+    size() -> Number
+}

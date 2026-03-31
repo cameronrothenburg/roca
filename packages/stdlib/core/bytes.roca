@@ -1,0 +1,25 @@
+contract Bytes {
+    byteLength() -> Number
+    at(index: Number) -> Number
+    slice(start: Number) -> Bytes
+    toString() -> String
+    toHex() -> String
+    toBase64() -> String
+    toArray() -> Array
+}
+
+Bytes satisfies Loggable {
+    fn to_log() -> String {
+        return self.toHex()
+    }
+}
+
+contract Buffer {
+    write(data: Bytes) -> Buffer
+    writeString(data: String) -> Buffer
+    writeByte(value: Number) -> Buffer
+    toBytes() -> Bytes
+    toString() -> String
+    byteLength() -> Number
+    clear() -> Buffer
+}

@@ -1,0 +1,9 @@
+contract Bool {
+    toString() -> String
+}
+
+Bool satisfies Loggable {
+    fn to_log() -> String {
+        return self.toString()
+    }
+}

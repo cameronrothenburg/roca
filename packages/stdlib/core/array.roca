@@ -1,0 +1,19 @@
+contract Array<T> {
+    length: Number
+    includes(item: T) -> Bool
+    indexOf(item: T) -> Number
+    join(separator: String) -> String
+    reverse() -> Array<T>
+    push(item: T) -> Number
+    pop() -> T
+    concat(other: Array<T>) -> Array<T>
+    map(callback: T) -> Array
+    filter(callback: T) -> Array<T>
+    find(callback: T) -> T | null
+    slice(start: Number) -> Array<T>
+    forEach(callback: T) -> Ok
+    some(callback: T) -> Bool
+    every(callback: T) -> Bool
+    flat() -> Array
+    reduce(callback: T) -> T
+}

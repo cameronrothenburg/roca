@@ -1,0 +1,61 @@
+/**
+ * HTTP fetch and response handling.
+ * Import with: import { Http } from std::http
+ *
+ * Compiled output uses globalThis.fetch — works in browsers, Node, Bun, Workers.
+ * The embedded runtime does not provide fetch (proof tests use mocks).
+ */
+pub extern contract Http {
+    /// GET request
+    get(url: String) -> Http, err {
+        err network = "network error"
+        err abort = "request aborted"
+    }
+    /// POST request with body
+    post(url: String, body: String) -> Http, err {
+        err network = "network error"
+        err abort = "request aborted"
+    }
+    /// PUT request with body
+    put(url: String, body: String) -> Http, err {
+        err network = "network error"
+        err abort = "request aborted"
+    }
+    /// PATCH request with body
+    patch(url: String, body: String) -> Http, err {
+        err network = "network error"
+        err abort = "request aborted"
+    }
+    /// DELETE request
+    delete(url: String) -> Http, err {
+        err network = "network error"
+        err abort = "request aborted"
+    }
+    /// Response status code (100-599)
+    status() -> Number
+    /// True when status is 200-299
+    ok() -> Bool
+    /// Response body as text
+    text() -> String, err {
+        err consumed = "body already consumed"
+    }
+    /// Response body as parsed JSON
+    json() -> JSON, err {
+        err consumed = "body already consumed"
+        err parse = "invalid JSON"
+    }
+    /// Get a response header by name — null if missing
+    header(name: String) -> Optional<String>
+    mock {
+        get -> Http
+        post -> Http
+        put -> Http
+        patch -> Http
+        delete -> Http
+        status -> 200
+        ok -> true
+        text -> "mock body"
+        json -> "mock"
+        header -> "text/plain"
+    }
+}

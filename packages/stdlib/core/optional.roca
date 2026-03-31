@@ -1,0 +1,5 @@
+contract Optional<T> {
+    isPresent() -> Bool
+    unwrap() -> T
+    unwrapOr(value: T) -> T
+}
