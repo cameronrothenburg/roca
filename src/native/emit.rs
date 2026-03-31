@@ -42,6 +42,7 @@ pub enum ValKind {
 }
 
 /// Tracks struct field layouts for field access by index and type.
+#[derive(Clone)]
 struct StructLayout {
     fields: Vec<(String, ValKind)>,
 }
@@ -1589,11 +1590,15 @@ fn emit_struct_lit(b: &mut FunctionBuilder, name: &str, fields: &[(String, Expr)
 
     // Emit constraint validation guards if struct has constraints
     if let Some(field_defs) = ctx.struct_defs.get(name).cloned() {
+        let layout = ctx.struct_layouts.get(name).cloned();
         for field_def in &field_defs {
             if field_def.constraints.is_empty() { continue; }
-            if let Some(idx) = fields.iter().position(|(n, _)| n == &field_def.name) {
+            // Field must be present in the literal AND use the layout index (not literal index)
+            // to read back the stored value correctly even when fields are reordered.
+            let layout_idx = layout.as_ref().and_then(|l| l.field_index(&field_def.name));
+            if fields.iter().any(|(n, _)| n == &field_def.name) && layout_idx.is_some() {
                 let is_string = matches!(field_def.type_ref, roca::TypeRef::String);
-                let field_idx = b.ins().iconst(types::I64, idx as i64);
+                let field_idx = b.ins().iconst(types::I64, layout_idx.unwrap() as i64);
 
                 for constraint in &field_def.constraints {
                     match constraint {

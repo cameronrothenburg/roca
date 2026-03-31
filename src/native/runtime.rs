@@ -382,14 +382,27 @@ fn rc_header(payload_ptr: i64) -> *mut i64 {
     unsafe { (payload_ptr as *mut u8).sub(RC_HEADER_SIZE) as *mut i64 }
 }
 
-/// Report a constraint violation. Prints the message and sets a flag.
-/// In production, this would abort. In tests, check CONSTRAINT_VIOLATED.
-pub static CONSTRAINT_VIOLATED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+// Constraint violation flag — thread-local like MemTracker to avoid races
+// between parallel tests. In production, this would abort.
+// In tests, check constraint_violated().
+thread_local! {
+    static TL_CONSTRAINT_VIOLATED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Reset the constraint-violated flag for the current thread.
+pub fn reset_constraint_violated() {
+    TL_CONSTRAINT_VIOLATED.with(|c| c.set(false));
+}
+
+/// Check whether a constraint violation occurred on the current thread.
+pub fn constraint_violated() -> bool {
+    TL_CONSTRAINT_VIOLATED.with(|c| c.get())
+}
 
 pub extern "C" fn roca_constraint_panic(msg: i64) {
     let s = read_cstr(msg);
     eprintln!("constraint violation: {}", s);
-    CONSTRAINT_VIOLATED.store(true, Ordering::SeqCst);
+    TL_CONSTRAINT_VIOLATED.with(|c| c.set(true));
 }
 
 // ─── File I/O ─────────────────────────────────────────
