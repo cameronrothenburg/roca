@@ -57,14 +57,24 @@ ImportSource = StringLit | 'std' ('::' Ident)?
 The import list MUST contain at least one name. The source MUST be either a string literal (relative path) or `std` with an optional module path.
 
 ```roca
-// Import from a relative file
-import { UserProfile } from "./types.roca"
+// Import from a relative .roca file in the same project
+import { UserProfile, Permissions } from "./types.roca"
 
-// Import from the standard library root
-import { map } from std
+// Import from a subdirectory
+import { DatabaseClient } from "./db/client.roca"
 
-// Import from a standard library module
-import { readFile, writeFile } from std::fs
+// Import from the standard library
+import { Math } from std::math
+import { Fs } from std::fs
+import { Http } from std::http
+```
+
+Path imports MUST use relative paths with a `.roca` extension. The compiler resolves them relative to the importing file's directory. The compiled JS output replaces `.roca` with `.js`:
+
+```javascript
+// Compiled output
+import { UserProfile, Permissions } from "./types.js";
+import { DatabaseClient } from "./db/client.js";
 ```
 
 ### 2.2.2 Contract
@@ -81,7 +91,7 @@ The `pub` modifier is OPTIONAL. Type parameters MAY have a constraint (another c
 
 ```roca
 contract Stringable {
-    to_string() -> String
+    toString() -> String
 }
 
 pub contract Collection<T> {
@@ -163,9 +173,9 @@ The first block MUST contain fields and/or function signatures. The second block
 pub struct Email {
     value: String { contains: "@", maxLen: 255 }
 
-    to_string() -> String
+    toString() -> String
 }{
-    fn to_string() -> String {
+    fn toString() -> String {
         return self.value
     }
 }
@@ -200,7 +210,7 @@ The first identifier MUST name an existing struct. The second MUST name an exist
 
 ```roca
 Email satisfies Stringable {
-    fn to_string() -> String {
+    fn toString() -> String {
         return self.value
     }
 }
