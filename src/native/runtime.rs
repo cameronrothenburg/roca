@@ -99,6 +99,26 @@ runtime_funcs! {
     // Constraint validation
     (constraint_panic, "roca_constraint_panic", roca_constraint_panic, [types::I64], []),
 
+    // Math
+    (math_floor,        "roca_math_floor",        roca_math_floor,        [types::F64],                                [types::F64]),
+    (math_ceil,         "roca_math_ceil",          roca_math_ceil,         [types::F64],                                [types::F64]),
+    (math_round,        "roca_math_round",         roca_math_round,        [types::F64],                                [types::F64]),
+    (math_abs,          "roca_math_abs",            roca_math_abs,          [types::F64],                                [types::F64]),
+    (math_sqrt,         "roca_math_sqrt",           roca_math_sqrt,         [types::F64],                                [types::F64]),
+    (math_pow,          "roca_math_pow",            roca_math_pow,          [types::F64, types::F64],                    [types::F64]),
+    (math_min,          "roca_math_min",            roca_math_min,          [types::F64, types::F64],                    [types::F64]),
+    (math_max,          "roca_math_max",            roca_math_max,          [types::F64, types::F64],                    [types::F64]),
+
+    // Path
+    (path_join,         "roca_path_join",           roca_path_join,         [types::I64, types::I64],                    [types::I64]),
+    (path_dirname,      "roca_path_dirname",        roca_path_dirname,      [types::I64],                                [types::I64]),
+    (path_basename,     "roca_path_basename",       roca_path_basename,     [types::I64],                                [types::I64]),
+    (path_extension,    "roca_path_extension",      roca_path_extension,    [types::I64],                                [types::I64]),
+
+    // Process
+    (process_cwd,       "roca_process_cwd",         roca_process_cwd,       [],                                          [types::I64]),
+    (process_exit,      "roca_process_exit",        roca_process_exit,      [types::F64],                                []),
+
     // Async / timing / concurrency
     (sleep,             "roca_sleep",             roca_sleep,             [types::F64],                                []),
     (time_now,          "roca_time_now",          roca_time_now,          [],                                          [types::F64]),
@@ -409,6 +429,52 @@ pub extern "C" fn roca_constraint_panic(msg: i64) {
     let s = read_cstr(msg);
     eprintln!("constraint violation: {}", s);
     TL_CONSTRAINT_VIOLATED.with(|c| c.set(true));
+}
+
+// ─── Math ─────────────────────────────────────────────
+
+extern "C" fn roca_math_floor(n: f64) -> f64 { n.floor() }
+extern "C" fn roca_math_ceil(n: f64) -> f64 { n.ceil() }
+extern "C" fn roca_math_round(n: f64) -> f64 { n.round() }
+extern "C" fn roca_math_abs(n: f64) -> f64 { n.abs() }
+extern "C" fn roca_math_sqrt(n: f64) -> f64 { n.sqrt() }
+extern "C" fn roca_math_pow(base: f64, exp: f64) -> f64 { base.powf(exp) }
+extern "C" fn roca_math_min(a: f64, b: f64) -> f64 { a.min(b) }
+extern "C" fn roca_math_max(a: f64, b: f64) -> f64 { a.max(b) }
+
+// ─── Path ─────────────────────────────────────────────
+
+extern "C" fn roca_path_join(base: i64, segment: i64) -> i64 {
+    let b = read_cstr(base);
+    let s = read_cstr(segment);
+    let joined = std::path::Path::new(b).join(s);
+    alloc_str(&joined.to_string_lossy())
+}
+
+extern "C" fn roca_path_dirname(path: i64) -> i64 {
+    let p = std::path::Path::new(read_cstr(path));
+    alloc_str(&p.parent().map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|| ".".into()))
+}
+
+extern "C" fn roca_path_basename(path: i64) -> i64 {
+    let p = std::path::Path::new(read_cstr(path));
+    alloc_str(&p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default())
+}
+
+extern "C" fn roca_path_extension(path: i64) -> i64 {
+    let p = std::path::Path::new(read_cstr(path));
+    let ext = p.extension().map(|e| format!(".{}", e.to_string_lossy())).unwrap_or_default();
+    alloc_str(&ext)
+}
+
+// ─── Process ──────────────────────────────────────────
+
+extern "C" fn roca_process_cwd() -> i64 {
+    alloc_str(&std::env::current_dir().map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|_| ".".into()))
+}
+
+extern "C" fn roca_process_exit(code: f64) {
+    std::process::exit(code as i32);
 }
 
 // ─── Async / Timing ──────────────────────────────────
