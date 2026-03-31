@@ -99,3 +99,4 @@ pub fn compile_to_object(source: &crate::ast::SourceFile) -> Result<Vec<u8>, Str
 #[cfg(test)] mod tests_memory;
 #[cfg(test)] mod tests_memory_complex;
 #[cfg(test)] mod tests_integration;
+#[cfg(test)] mod tests_memory_stdlib;
