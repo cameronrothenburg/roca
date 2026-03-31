@@ -287,7 +287,7 @@ pub extern "C" fn roca_thread_call_f64(fn_ptr: i64) -> f64 {
     fp()
 }
 
-/// Spawn N function pointers as threads, wait for all to complete.
+/// Spawn N function pointers as tokio tasks, wait for all to complete.
 /// fn_ptrs is an array of I64 function pointers. Returns array of f64 results.
 pub extern "C" fn roca_wait_all(fn_ptrs: i64, count: i64) -> i64 {
     let arr = roca_array_new();
@@ -297,22 +297,25 @@ pub extern "C" fn roca_wait_all(fn_ptrs: i64, count: i64) -> i64 {
         .map(|i| roca_array_get_str(fn_ptrs, i as i64))
         .collect();
 
-    let handles: Vec<_> = ptrs.into_iter().map(|fp| {
-        std::thread::spawn(move || {
-            if fp == 0 { return 0.0; }
-            let f: extern "C" fn() -> f64 = unsafe { std::mem::transmute(fp) };
-            f()
-        })
-    }).collect();
-
-    for handle in handles {
-        let result = handle.join().unwrap_or(0.0);
-        roca_array_push_f64(arr, result);
-    }
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let mut handles = Vec::new();
+        for fp in ptrs {
+            handles.push(tokio::task::spawn_blocking(move || {
+                if fp == 0 { return 0.0; }
+                let f: extern "C" fn() -> f64 = unsafe { std::mem::transmute(fp) };
+                f()
+            }));
+        }
+        for handle in handles {
+            let result = handle.await.unwrap_or(0.0);
+            roca_array_push_f64(arr, result);
+        }
+    });
     arr
 }
 
-/// Spawn N function pointers as threads, return first result.
+/// Spawn N function pointers as tokio tasks, return first result.
 pub extern "C" fn roca_wait_first(fn_ptrs: i64, count: i64) -> f64 {
     if fn_ptrs == 0 || count <= 0 { return 0.0; }
 
@@ -320,18 +323,20 @@ pub extern "C" fn roca_wait_first(fn_ptrs: i64, count: i64) -> f64 {
         .map(|i| roca_array_get_str(fn_ptrs, i as i64))
         .collect();
 
-    let (tx, rx) = std::sync::mpsc::channel();
-
-    for fp in ptrs {
-        let tx = tx.clone();
-        std::thread::spawn(move || {
-            if fp == 0 { let _ = tx.send(0.0); return; }
-            let f: extern "C" fn() -> f64 = unsafe { std::mem::transmute(fp) };
-            let _ = tx.send(f());
-        });
-    }
-
-    rx.recv().unwrap_or(0.0)
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+        for fp in ptrs {
+            let tx = tx.clone();
+            tokio::task::spawn_blocking(move || {
+                if fp == 0 { let _ = tx.blocking_send(0.0); return; }
+                let f: extern "C" fn() -> f64 = unsafe { std::mem::transmute(fp) };
+                let _ = tx.blocking_send(f());
+            });
+        }
+        drop(tx); // drop original sender so rx completes when all senders done
+        rx.recv().await.unwrap_or(0.0)
+    })
 }
 
 // ─── File I/O ────────────────────────────────────────

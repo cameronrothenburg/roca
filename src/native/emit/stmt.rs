@@ -349,13 +349,30 @@ fn emit_wait(
             ctx.set_var_kind(failed_name.to_string(), err_slot, types::I8, ValKind::Bool);
         }
         roca::WaitKind::All(exprs) => {
-            for (i, expr) in exprs.iter().enumerate() {
-                let val = emit_expr(b, expr, ctx);
-                let cl_type = b.func.dfg.value_type(val);
-                if i < names.len() {
-                    let slot = alloc_slot(b, val);
-                    let kind = infer_kind(expr, ctx);
-                    ctx.set_var_kind(names[i].clone(), slot, cl_type, kind);
+            // Build array of function pointers, call roca_wait_all for concurrent execution
+            if let Some(&arr_new) = ctx.get_func("__array_new") {
+                let arr = call_rt(b, arr_new, &[]);
+                for expr in exprs {
+                    let name = format!("__wait_{}", super::compile::wait_expr_hash(expr));
+                    if let Some(&func_ref) = ctx.get_func(&name) {
+                        let ptr = b.ins().func_addr(types::I64, func_ref);
+                        if let Some(&push) = ctx.get_func("__array_push_str") {
+                            call_void(b, push, &[arr, ptr]);
+                        }
+                    }
+                }
+                let count = b.ins().iconst(types::I64, exprs.len() as i64);
+                if let Some(&wait_all) = ctx.get_func("__wait_all") {
+                    let results = call_rt(b, wait_all, &[arr, count]);
+                    // Unpack results into named variables
+                    for (i, name) in names.iter().enumerate() {
+                        if let Some(&get) = ctx.get_func("__array_get_f64") {
+                            let idx = b.ins().iconst(types::I64, i as i64);
+                            let val = call_rt(b, get, &[results, idx]);
+                            let slot = alloc_slot(b, val);
+                            ctx.set_var_kind(name.clone(), slot, types::F64, ValKind::Number);
+                        }
+                    }
                 }
             }
             let false_val = b.ins().iconst(types::I8, 0);
@@ -363,13 +380,25 @@ fn emit_wait(
             ctx.set_var_kind(failed_name.to_string(), err_slot, types::I8, ValKind::Bool);
         }
         roca::WaitKind::First(exprs) => {
-            if let Some(first) = exprs.first() {
-                let val = emit_expr(b, first, ctx);
-                let cl_type = b.func.dfg.value_type(val);
-                if !names.is_empty() {
-                    let slot = alloc_slot(b, val);
-                    let kind = infer_kind(first, ctx);
-                    ctx.set_var_kind(names[0].clone(), slot, cl_type, kind);
+            // Build array of function pointers, call roca_wait_first — first result wins
+            if let Some(&arr_new) = ctx.get_func("__array_new") {
+                let arr = call_rt(b, arr_new, &[]);
+                for expr in exprs {
+                    let name = format!("__wait_{}", super::compile::wait_expr_hash(expr));
+                    if let Some(&func_ref) = ctx.get_func(&name) {
+                        let ptr = b.ins().func_addr(types::I64, func_ref);
+                        if let Some(&push) = ctx.get_func("__array_push_str") {
+                            call_void(b, push, &[arr, ptr]);
+                        }
+                    }
+                }
+                let count = b.ins().iconst(types::I64, exprs.len() as i64);
+                if let Some(&wait_first) = ctx.get_func("__wait_first") {
+                    let val = call_rt(b, wait_first, &[arr, count]);
+                    if !names.is_empty() {
+                        let slot = alloc_slot(b, val);
+                        ctx.set_var_kind(names[0].clone(), slot, types::F64, ValKind::Number);
+                    }
                 }
             }
             let false_val = b.ins().iconst(types::I8, 0);

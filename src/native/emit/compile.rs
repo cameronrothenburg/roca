@@ -218,6 +218,100 @@ fn collect_closures(stmts: &[roca::Stmt], out: &mut Vec<(Vec<String>, roca::Expr
     }
 }
 
+/// Pre-compile wait expressions as zero-arg functions for concurrent execution.
+/// Each waitAll/waitFirst sub-expression becomes a standalone JIT function.
+pub fn compile_wait_exprs<M: Module>(
+    module: &mut M,
+    source: &roca::SourceFile,
+    rt: &RuntimeFuncs,
+    compiled: &mut CompiledFuncs,
+    func_return_kinds: &HashMap<String, ValKind>,
+) -> Result<(), String> {
+    let mut wait_exprs = Vec::new();
+    for item in &source.items {
+        if let roca::Item::Function(f) = item {
+            collect_wait_exprs(&f.body, &mut wait_exprs);
+        }
+    }
+    for (name, expr) in wait_exprs {
+        if compiled.funcs.contains_key(&name) { continue; }
+
+        // Zero-arg function returning f64
+        let mut sig = module.make_signature();
+        sig.returns.push(AbiParam::new(types::F64));
+
+        let func_id = module.declare_function(&name, Linkage::Export, &sig)
+            .map_err(|e| format!("declare wait expr: {}", e))?;
+        compiled.funcs.insert(name.clone(), func_id);
+
+        let mut ctx = module.make_context();
+        ctx.func.signature = sig;
+        let mut bc = FunctionBuilderContext::new();
+        let mut builder = FunctionBuilder::new(&mut ctx.func, &mut bc);
+
+        let entry = builder.create_block();
+        builder.append_block_params_for_function_params(entry);
+        builder.switch_to_block(entry);
+        builder.seal_block(entry);
+
+        let mut emit_ctx = EmitCtx {
+            vars: HashMap::new(),
+            func_refs: rt.import_all(module, &mut builder.func, compiled),
+            returns_err: false,
+            return_type: types::F64,
+            struct_layouts: HashMap::new(),
+            var_struct_type: HashMap::new(),
+            crash_handlers: HashMap::new(),
+            func_return_kinds: func_return_kinds.clone(),
+            enum_variants: HashMap::new(),
+            struct_defs: HashMap::new(),
+            live_heap_vars: Vec::new(),
+            loop_heap_base: 0,
+            loop_exit: None,
+            loop_header: None,
+        };
+
+        let val = emit_expr(&mut builder, &expr, &mut emit_ctx);
+        emit_scope_cleanup(&mut builder, &emit_ctx, None);
+        builder.ins().return_(&[val]);
+        builder.finalize();
+
+        module.define_function(func_id, &mut ctx)
+            .map_err(|e| format!("compile wait expr {}: {}", name, e))?;
+        module.clear_context(&mut ctx);
+    }
+    Ok(())
+}
+
+fn collect_wait_exprs(stmts: &[roca::Stmt], out: &mut Vec<(String, roca::Expr)>) {
+    for stmt in stmts {
+        match stmt {
+            roca::Stmt::Wait { kind: roca::WaitKind::All(exprs), .. }
+            | roca::Stmt::Wait { kind: roca::WaitKind::First(exprs), .. } => {
+                for expr in exprs {
+                    let name = format!("__wait_{}", wait_expr_hash(expr));
+                    out.push((name, expr.clone()));
+                }
+            }
+            roca::Stmt::If { then_body, else_body, .. } => {
+                collect_wait_exprs(then_body, out);
+                if let Some(body) = else_body { collect_wait_exprs(body, out); }
+            }
+            roca::Stmt::While { body, .. } | roca::Stmt::For { body, .. } => {
+                collect_wait_exprs(body, out);
+            }
+            _ => {}
+        }
+    }
+}
+
+pub fn wait_expr_hash(expr: &roca::Expr) -> u64 {
+    use std::hash::{Hash, Hasher, DefaultHasher};
+    let mut h = DefaultHasher::new();
+    format!("{:?}", expr).hash(&mut h);
+    h.finish()
+}
+
 /// Compile a Roca function to native code. Returns the FuncId.
 pub fn compile_function<M: Module>(
     module: &mut M,

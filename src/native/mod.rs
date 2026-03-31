@@ -46,6 +46,7 @@ pub fn compile_all<M: Module>(
     }
 
     emit::compile_closures(module, source, &rt, &mut compiled, &func_return_kinds)?;
+    emit::compile_wait_exprs(module, source, &rt, &mut compiled, &func_return_kinds)?;
 
     for item in &source.items {
         match item {

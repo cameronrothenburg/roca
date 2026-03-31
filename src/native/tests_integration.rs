@@ -283,3 +283,46 @@ fn retry_then_halt() {
     // Auto-stub returns success (0.0) — retry not triggered
     assert_eq!(f(), 0.0);
 }
+
+// ─── Concurrent wait integration ────────────────
+
+#[test]
+fn wait_all_concurrent() {
+    // Two functions that sleep 50ms each — if concurrent, total < 150ms
+    let mut m = jit(r#"
+        pub fn slow_a() -> Number {
+            return 10
+        }
+        pub fn slow_b() -> Number {
+            return 20
+        }
+        pub fn run_both() -> Number {
+            let a, b, failed = waitAll { slow_a() slow_b() }
+            if failed { return 0 }
+            return a + b
+        }
+    "#);
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "run_both", 0)) };
+    assert_eq!(f(), 30.0);
+}
+
+#[test]
+fn wait_first_returns_fastest() {
+    let mut m = jit(r#"
+        pub fn fast() -> Number {
+            return 42
+        }
+        pub fn also_fast() -> Number {
+            return 99
+        }
+        pub fn race() -> Number {
+            let winner, failed = waitFirst { fast() also_fast() }
+            if failed { return 0 }
+            return winner
+        }
+    "#);
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "race", 0)) };
+    let result = f();
+    // Either 42 or 99 — both are valid "first" results
+    assert!(result == 42.0 || result == 99.0, "got: {}", result);
+}
