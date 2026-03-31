@@ -49,11 +49,6 @@ pub extern contract ContractName {
     /// [Nullable return — use Optional]
     lookup(key: String) -> Optional<String>
 
-    mock {
-        methodName -> "mock value"
-        riskyMethod -> ContractName
-        lookup -> "mock"
-    }
 }
 ```
 
@@ -61,8 +56,7 @@ Rules:
 - Always `pub extern contract`
 - Doc comment on every method (`///`)
 - Error names are `lowercase_snake_case`
-- Mock block provides defaults for proof tests
-- Self-referencing mocks (`riskyMethod -> ContractName`) return the mock object
+- No mock blocks needed — compiler auto-generates stubs from return types
 
 ## 2. JS wrapper — `packages/stdlib/{name}.js`
 

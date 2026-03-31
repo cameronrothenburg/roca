@@ -202,7 +202,6 @@ pub extern contract Database {
     query(sql: String) -> String, err {
         err query_failed = "query failed"
     }
-    mock { query -> "[]" }
 }
 
 /** Fetch all users */
@@ -211,7 +210,7 @@ pub fn get_users(db: Database) -> String, err {
     const data = wait db.query("SELECT * FROM users")
     return data
     crash { db.query -> halt }
-    test { self(__mock_Database) is Ok }
+    test { self(Database) is Ok }
 }
 ```
 

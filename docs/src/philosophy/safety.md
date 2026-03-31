@@ -171,7 +171,7 @@ pub fn process(db: Database) -> String {
         db.query -> halt           // OK — db.query returns errors
         data.trim -> fallback("")  // COMPILE ERROR: crash-on-safe — trim doesn't return errors
     }
-    test { self(__mock_Database) is Ok }
+    test { self(Database) is Ok }
 }
 ```
 
