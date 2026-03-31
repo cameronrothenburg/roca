@@ -92,11 +92,77 @@ fn generate_battle_test_for_method(
 }
 
 fn params_to_arbs(params: &[roca::Param], file: &roca::SourceFile) -> Option<String> {
-    let arbs: Vec<String> = params.iter().map(|p| type_to_arb(&p.type_ref, file)).collect();
+    let arbs: Vec<String> = params.iter().map(|p| {
+        if p.constraints.is_empty() {
+            type_to_arb(&p.type_ref, file)
+        } else {
+            constrained_arb(&p.type_ref, &p.constraints)
+        }
+    }).collect();
     if arbs.iter().any(|a| a == "null") {
         return None;
     }
     Some(arbs.join(", "))
+}
+
+/// Generate a constrained arbitrary that probes boundary values.
+/// Produces values both inside and outside the valid range for fuzzing.
+fn constrained_arb(ty: &roca::TypeRef, constraints: &[roca::Constraint]) -> String {
+    match ty {
+        roca::TypeRef::Number => {
+            let mut min = f64::NEG_INFINITY;
+            let mut max = f64::INFINITY;
+            for c in constraints {
+                match c {
+                    roca::Constraint::Min(n) => min = *n,
+                    roca::Constraint::Max(n) => max = *n,
+                    _ => {}
+                }
+            }
+            if min.is_finite() && max.is_finite() {
+                // Generate values at boundaries: min-1, min, mid, max, max+1
+                format!("fc.oneof(fc.constant({}), fc.constant({}), fc.constant({}), fc.constant({}), fc.constant({}))",
+                    min - 1.0, min, (min + max) / 2.0, max, max + 1.0)
+            } else if min.is_finite() {
+                format!("fc.oneof(fc.constant({}), fc.constant({}), arb.Number())", min - 1.0, min)
+            } else if max.is_finite() {
+                format!("fc.oneof(fc.constant({}), fc.constant({}), arb.Number())", max, max + 1.0)
+            } else {
+                "arb.Number()".to_string()
+            }
+        }
+        roca::TypeRef::String => {
+            let mut min_len: Option<f64> = None;
+            let mut max_len: Option<f64> = None;
+            let mut must_contain: Option<&str> = None;
+            for c in constraints {
+                match c {
+                    roca::Constraint::Min(n) | roca::Constraint::MinLen(n) => min_len = Some(*n),
+                    roca::Constraint::Max(n) | roca::Constraint::MaxLen(n) => max_len = Some(*n),
+                    roca::Constraint::Contains(s) => must_contain = Some(s),
+                    _ => {}
+                }
+            }
+            // Generate edge cases: empty, too short, valid, too long, with/without required content
+            let mut cases = vec!["fc.constant(\"\")".to_string()];
+            if let Some(min) = min_len {
+                if min > 1.0 {
+                    cases.push(format!("fc.constant(\"x\".repeat({}))", min as i64 - 1));
+                }
+                cases.push(format!("fc.constant(\"x\".repeat({}))", min as i64));
+            }
+            if let Some(max) = max_len {
+                cases.push(format!("fc.constant(\"x\".repeat({}))", max as i64));
+                cases.push(format!("fc.constant(\"x\".repeat({}))", max as i64 + 1));
+            }
+            if let Some(s) = must_contain {
+                cases.push(format!("fc.constant(\"test{}test\")", s));
+                cases.push("fc.constant(\"nope\")".to_string());
+            }
+            format!("fc.oneof({})", cases.join(", "))
+        }
+        _ => "null".to_string(),
+    }
 }
 
 fn type_to_arb(t: &roca::TypeRef, file: &roca::SourceFile) -> String {

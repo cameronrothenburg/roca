@@ -395,3 +395,120 @@ mem_test!(mem_wait_no_leak, {
     let (allocs, frees, _, _, _) = runtime::MEM.stats();
     assert_eq!(allocs, frees, "wait no leak: {} allocs, {} frees", allocs, frees);
 });
+
+// ─── Function parameter constraints ────────────────
+
+#[test]
+fn param_constraint_number_valid() {
+    runtime::reset_constraint_violated();
+    let mut m = jit(r#"
+        pub fn clamp(n: Number { min: 0, max: 100 }) -> Number {
+            return n * 2
+        }
+    "#);
+    let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "clamp", 1)) };
+    assert_eq!(f(50.0), 100.0);
+    assert!(!runtime::constraint_violated(), "50 is within 0..100");
+}
+
+#[test]
+fn param_constraint_number_min_violated() {
+    runtime::reset_constraint_violated();
+    let mut m = jit(r#"
+        pub fn clamp(n: Number { min: 0, max: 100 }) -> Number {
+            return n * 2
+        }
+    "#);
+    let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "clamp", 1)) };
+    f(-5.0);
+    assert!(runtime::constraint_violated(), "-5 < min 0");
+}
+
+#[test]
+fn param_constraint_number_max_violated() {
+    runtime::reset_constraint_violated();
+    let mut m = jit(r#"
+        pub fn clamp(n: Number { min: 0, max: 100 }) -> Number {
+            return n * 2
+        }
+    "#);
+    let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "clamp", 1)) };
+    f(200.0);
+    assert!(runtime::constraint_violated(), "200 > max 100");
+}
+
+#[test]
+fn param_constraint_string_contains() {
+    runtime::reset_constraint_violated();
+    let mut m = jit(r#"
+        pub fn sendEmail(to: String { contains: "@" }) -> Number {
+            return to.length
+        }
+    "#);
+    let mut sig = m.make_signature();
+    sig.params.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I64));
+    sig.returns.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::F64));
+    let id = m.declare_function("sendEmail", cranelift_module::Linkage::Export, &sig).unwrap();
+    let f = unsafe { std::mem::transmute::<_, fn(*const u8) -> f64>(m.get_finalized_function(id)) };
+
+    // Valid — contains @
+    runtime::reset_constraint_violated();
+    assert_eq!(f(b"user@example.com\0".as_ptr()), 16.0);
+    assert!(!runtime::constraint_violated(), "valid email has @");
+
+    // Invalid — missing @
+    runtime::reset_constraint_violated();
+    f(b"nope\0".as_ptr());
+    assert!(runtime::constraint_violated(), "missing @ should violate");
+}
+
+#[test]
+fn param_constraint_string_minlen() {
+    runtime::reset_constraint_violated();
+    let mut m = jit(r#"
+        pub fn setName(name: String { minLen: 2, maxLen: 50 }) -> Number {
+            return name.length
+        }
+    "#);
+    let mut sig = m.make_signature();
+    sig.params.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I64));
+    sig.returns.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::F64));
+    let id = m.declare_function("setName", cranelift_module::Linkage::Export, &sig).unwrap();
+    let f = unsafe { std::mem::transmute::<_, fn(*const u8) -> f64>(m.get_finalized_function(id)) };
+
+    // Valid
+    runtime::reset_constraint_violated();
+    assert_eq!(f(b"Cameron\0".as_ptr()), 7.0);
+    assert!(!runtime::constraint_violated());
+
+    // Too short
+    runtime::reset_constraint_violated();
+    f(b"X\0".as_ptr());
+    assert!(runtime::constraint_violated(), "1 char < minLen 2");
+}
+
+#[test]
+fn param_constraint_multiple_params() {
+    runtime::reset_constraint_violated();
+    let mut m = jit(r#"
+        pub fn createUser(age: Number { min: 0, max: 150 }, score: Number { min: 0, max: 1000 }) -> Number {
+            return age + score
+        }
+    "#);
+    let f = unsafe { std::mem::transmute::<_, fn(f64, f64) -> f64>(call_f64(&mut m, "createUser", 2)) };
+
+    // Both valid
+    runtime::reset_constraint_violated();
+    assert_eq!(f(25.0, 500.0), 525.0);
+    assert!(!runtime::constraint_violated());
+
+    // First param violated
+    runtime::reset_constraint_violated();
+    f(-1.0, 500.0);
+    assert!(runtime::constraint_violated(), "age -1 < min 0");
+
+    // Second param violated
+    runtime::reset_constraint_violated();
+    f(25.0, 2000.0);
+    assert!(runtime::constraint_violated(), "score 2000 > max 1000");
+}

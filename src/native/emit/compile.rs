@@ -13,6 +13,7 @@ use super::context::{CompiledFuncs, EmitCtx, ValKind, StructLayout, VarInfo};
 use super::helpers::{type_ref_to_kind, emit_scope_cleanup, infer_kind};
 use super::expr::emit_expr;
 use super::stmt::emit_stmt;
+use super::methods::emit_param_constraints;
 
 /// Build a map of function name → return ValKind from the source file.
 pub fn build_return_kind_map(source: &roca::SourceFile) -> HashMap<String, ValKind> {
@@ -276,6 +277,9 @@ pub fn compile_function<M: Module>(
         emit_ctx.set_var(p.name.clone(), slot, cl_type);
     }
 
+    // Validate constrained params at function entry
+    emit_param_constraints(&mut builder, &func.params, &mut emit_ctx);
+
     let mut returned = false;
     for stmt in &func.body {
         if returned { break; }
@@ -380,6 +384,9 @@ pub fn compile_struct_method<M: Module>(
         let slot = alloc_slot(&mut builder, block_params[i + 1]);
         emit_ctx.set_var(p.name.clone(), slot, cl_type);
     }
+
+    // Validate constrained params at method entry
+    emit_param_constraints(&mut builder, &func.params, &mut emit_ctx);
 
     let mut returned = false;
     for stmt in &func.body {

@@ -83,11 +83,12 @@ pub enum ImportSource {
     Std(Option<String>),
 }
 
-/// Function parameter
+/// Function parameter — optionally constrained for validation and testing
 #[derive(Debug, Clone, PartialEq)]
 pub struct Param {
     pub name: String,
     pub type_ref: TypeRef,
+    pub constraints: Vec<Constraint>,
 }
 
 /// Function signature (used in contracts and struct contract blocks)

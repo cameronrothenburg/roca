@@ -14,6 +14,79 @@ use super::helpers::{
 };
 use super::expr::emit_expr;
 
+/// Emit constraint validation guards for function parameters at entry.
+pub fn emit_param_constraints(b: &mut FunctionBuilder, params: &[roca::Param], ctx: &mut EmitCtx) {
+    for param in params {
+        if param.constraints.is_empty() { continue; }
+        let var = match ctx.get_var(&param.name) {
+            Some(v) => v.clone(),
+            None => continue,
+        };
+        let val = load_slot(b, var.slot, var.cranelift_type);
+        let is_string = matches!(param.type_ref, roca::TypeRef::String);
+        emit_value_constraints(b, val, is_string, &param.name, &param.constraints, ctx);
+    }
+}
+
+/// Shared constraint guard emission for a pre-loaded value.
+/// Used by both param constraints and struct field constraints.
+pub fn emit_value_constraints(
+    b: &mut FunctionBuilder,
+    val: Value,
+    is_string: bool,
+    name: &str,
+    constraints: &[roca::Constraint],
+    ctx: &EmitCtx,
+) {
+    for constraint in constraints {
+        match constraint {
+            roca::Constraint::Min(n) if !is_string => {
+                let min_val = b.ins().f64const(*n);
+                let cmp = b.ins().fcmp(ir::condcodes::FloatCC::LessThan, val, min_val);
+                let cmp_ext = b.ins().uextend(types::I64, cmp);
+                emit_constraint_trap(b, cmp_ext, name, &format!("must be >= {}", n), ctx);
+            }
+            roca::Constraint::Max(n) if !is_string => {
+                let max_val = b.ins().f64const(*n);
+                let cmp = b.ins().fcmp(ir::condcodes::FloatCC::GreaterThan, val, max_val);
+                let cmp_ext = b.ins().uextend(types::I64, cmp);
+                emit_constraint_trap(b, cmp_ext, name, &format!("must be <= {}", n), ctx);
+            }
+            roca::Constraint::Min(n) | roca::Constraint::MinLen(n) if is_string => {
+                if let Some(&len_fn) = ctx.get_func("__string_len") {
+                    let len = call_rt(b, len_fn, &[val]);
+                    let min_val = b.ins().iconst(types::I64, *n as i64);
+                    let cmp = b.ins().icmp(ir::condcodes::IntCC::SignedLessThan, len, min_val);
+                    let cmp_ext = b.ins().uextend(types::I64, cmp);
+                    emit_constraint_trap(b, cmp_ext, name, &format!("min length {}", n), ctx);
+                }
+            }
+            roca::Constraint::Max(n) | roca::Constraint::MaxLen(n) if is_string => {
+                if let Some(&len_fn) = ctx.get_func("__string_len") {
+                    let len = call_rt(b, len_fn, &[val]);
+                    let max_val = b.ins().iconst(types::I64, *n as i64);
+                    let cmp = b.ins().icmp(ir::condcodes::IntCC::SignedGreaterThan, len, max_val);
+                    let cmp_ext = b.ins().uextend(types::I64, cmp);
+                    emit_constraint_trap(b, cmp_ext, name, &format!("max length {}", n), ctx);
+                }
+            }
+            roca::Constraint::Contains(s) => {
+                let needle = leak_cstr(b, s);
+                if let Some(&includes) = ctx.get_func("__string_includes") {
+                    let result = call_rt(b, includes, &[val, needle]);
+                    let not_result = {
+                        let ext = b.ins().uextend(types::I64, result);
+                        let one = b.ins().iconst(types::I64, 1);
+                        b.ins().isub(one, ext)
+                    };
+                    emit_constraint_trap(b, not_result, name, &format!("must contain \"{}\"", s), ctx);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 pub fn emit_method_call(b: &mut FunctionBuilder, target: &Expr, method: &str, args: &[Expr], ctx: &mut EmitCtx) -> Value {
     // Enum data variant constructor: Token.Number(42)
     if let Expr::Ident(name) = target {
@@ -207,68 +280,10 @@ pub fn emit_struct_lit(b: &mut FunctionBuilder, name: &str, fields: &[(String, E
             if fields.iter().any(|(n, _)| n == &field_def.name) && layout_idx.is_some() {
                 let is_string = matches!(field_def.type_ref, roca::TypeRef::String);
                 let field_idx = b.ins().iconst(types::I64, layout_idx.unwrap() as i64);
-
-                for constraint in &field_def.constraints {
-                    match constraint {
-                        roca::Constraint::Min(n) if !is_string => {
-                            if let Some(&get) = ctx.get_func("__struct_get_f64") {
-                                let val = call_rt(b, get, &[ptr, field_idx]);
-                                let min_val = b.ins().f64const(*n);
-                                let cmp = b.ins().fcmp(ir::condcodes::FloatCC::LessThan, val, min_val);
-                                let cmp_ext = b.ins().uextend(types::I64, cmp);
-                                emit_constraint_trap(b, cmp_ext, &field_def.name, &format!("must be >= {}", n), ctx);
-                            }
-                        }
-                        roca::Constraint::Max(n) if !is_string => {
-                            if let Some(&get) = ctx.get_func("__struct_get_f64") {
-                                let val = call_rt(b, get, &[ptr, field_idx]);
-                                let max_val = b.ins().f64const(*n);
-                                let cmp = b.ins().fcmp(ir::condcodes::FloatCC::GreaterThan, val, max_val);
-                                let cmp_ext = b.ins().uextend(types::I64, cmp);
-                                emit_constraint_trap(b, cmp_ext, &field_def.name, &format!("must be <= {}", n), ctx);
-                            }
-                        }
-                        roca::Constraint::Min(n) | roca::Constraint::MinLen(n) if is_string => {
-                            if let Some(&get) = ctx.get_func("__struct_get_ptr") {
-                                let val = call_rt(b, get, &[ptr, field_idx]);
-                                if let Some(&len_fn) = ctx.get_func("__string_len") {
-                                    let len = call_rt(b, len_fn, &[val]);
-                                    let min_val = b.ins().iconst(types::I64, *n as i64);
-                                    let cmp = b.ins().icmp(ir::condcodes::IntCC::SignedLessThan, len, min_val);
-                                    let cmp_ext = b.ins().uextend(types::I64, cmp);
-                                    emit_constraint_trap(b, cmp_ext, &field_def.name, &format!("min length {}", n), ctx);
-                                }
-                            }
-                        }
-                        roca::Constraint::Max(n) | roca::Constraint::MaxLen(n) if is_string => {
-                            if let Some(&get) = ctx.get_func("__struct_get_ptr") {
-                                let val = call_rt(b, get, &[ptr, field_idx]);
-                                if let Some(&len_fn) = ctx.get_func("__string_len") {
-                                    let len = call_rt(b, len_fn, &[val]);
-                                    let max_val = b.ins().iconst(types::I64, *n as i64);
-                                    let cmp = b.ins().icmp(ir::condcodes::IntCC::SignedGreaterThan, len, max_val);
-                                    let cmp_ext = b.ins().uextend(types::I64, cmp);
-                                    emit_constraint_trap(b, cmp_ext, &field_def.name, &format!("max length {}", n), ctx);
-                                }
-                            }
-                        }
-                        roca::Constraint::Contains(s) => {
-                            if let Some(&get) = ctx.get_func("__struct_get_ptr") {
-                                let val = call_rt(b, get, &[ptr, field_idx]);
-                                let needle = leak_cstr(b, s);
-                                if let Some(&includes) = ctx.get_func("__string_includes") {
-                                    let result = call_rt(b, includes, &[val, needle]);
-                                    let not_result = {
-                                        let ext = b.ins().uextend(types::I64, result);
-                                        let one = b.ins().iconst(types::I64, 1);
-                                        b.ins().isub(one, ext)
-                                    };
-                                    emit_constraint_trap(b, not_result, &field_def.name, &format!("must contain \"{}\"", s), ctx);
-                                }
-                            }
-                        }
-                        _ => {}
-                    }
+                let get_fn = if is_string { "__struct_get_ptr" } else { "__struct_get_f64" };
+                if let Some(&get) = ctx.get_func(get_fn) {
+                    let val = call_rt(b, get, &[ptr, field_idx]);
+                    emit_value_constraints(b, val, is_string, &field_def.name, &field_def.constraints, ctx);
                 }
             }
         }

@@ -164,13 +164,15 @@ impl Parser {
             let name = self.expect_ident()?;
             self.expect(&Token::Colon)?;
             let type_ref = self.parse_type_ref()?;
-            params.push(Param { name, type_ref });
+            let constraints = self.parse_constraints()?;
+            params.push(Param { name, type_ref, constraints });
 
             while self.eat(&Token::Comma) {
                 let name = self.expect_ident()?;
                 self.expect(&Token::Colon)?;
                 let type_ref = self.parse_type_ref()?;
-                params.push(Param { name, type_ref });
+                let constraints = self.parse_constraints()?;
+                params.push(Param { name, type_ref, constraints });
             }
         }
         Ok(params)
