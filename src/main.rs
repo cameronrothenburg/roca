@@ -40,7 +40,11 @@ fn main() {
             init::init_project(&args[2]);
         }
         "repl" => {
-            cli::repl::run_repl();
+            if args.iter().any(|a| a == "--native") {
+                cli::repl::run_repl_native();
+            } else {
+                cli::repl::run_repl();
+            }
         }
         "skills" => {
             let with_claude = args.iter().any(|a| a == "--claude");
