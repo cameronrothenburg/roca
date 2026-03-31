@@ -26,10 +26,11 @@ pub fn create_jit_module() -> JITModule {
 pub fn eval_roca(source: &crate::ast::SourceFile) -> Result<String, String> {
     let mut module = create_jit_module();
     let rt = runtime::declare_runtime(&mut module);
+    let mut compiled = emit::CompiledFuncs::new();
 
     for item in &source.items {
         if let crate::ast::Item::Function(f) = item {
-            emit::compile_function(&mut module, f, &rt)?;
+            emit::compile_function(&mut module, f, &rt, &mut compiled)?;
         }
     }
 
@@ -66,7 +67,8 @@ mod tests {
 
         if let crate::ast::Item::Function(f) = &file.items[0] {
             let rt = runtime::declare_runtime(&mut module);
-            emit::compile_function(&mut module, f, &rt).unwrap();
+            let mut compiled = emit::CompiledFuncs::new();
+            emit::compile_function(&mut module, f, &rt, &mut compiled).unwrap();
         }
 
         module.finalize_definitions().unwrap();
@@ -95,7 +97,8 @@ mod tests {
 
         if let crate::ast::Item::Function(f) = &file.items[0] {
             let rt = runtime::declare_runtime(&mut module);
-            emit::compile_function(&mut module, f, &rt).unwrap();
+            let mut compiled = emit::CompiledFuncs::new();
+            emit::compile_function(&mut module, f, &rt, &mut compiled).unwrap();
         }
         module.finalize_definitions().unwrap();
 
@@ -129,7 +132,8 @@ mod tests {
 
         if let crate::ast::Item::Function(f) = &file.items[0] {
             let rt = runtime::declare_runtime(&mut module);
-            emit::compile_function(&mut module, f, &rt).unwrap();
+            let mut compiled = emit::CompiledFuncs::new();
+            emit::compile_function(&mut module, f, &rt, &mut compiled).unwrap();
         }
         module.finalize_definitions().unwrap();
 
@@ -160,7 +164,8 @@ mod tests {
 
         if let crate::ast::Item::Function(f) = &file.items[0] {
             let rt = runtime::declare_runtime(&mut module);
-            emit::compile_function(&mut module, f, &rt).unwrap();
+            let mut compiled = emit::CompiledFuncs::new();
+            emit::compile_function(&mut module, f, &rt, &mut compiled).unwrap();
         }
         module.finalize_definitions().unwrap();
 
@@ -192,7 +197,8 @@ mod tests {
 
         if let crate::ast::Item::Function(f) = &file.items[0] {
             let rt = runtime::declare_runtime(&mut module);
-            emit::compile_function(&mut module, f, &rt).unwrap();
+            let mut compiled = emit::CompiledFuncs::new();
+            emit::compile_function(&mut module, f, &rt, &mut compiled).unwrap();
         }
         module.finalize_definitions().unwrap();
 
@@ -224,7 +230,8 @@ mod tests {
 
         if let crate::ast::Item::Function(f) = &file.items[0] {
             let rt = runtime::declare_runtime(&mut module);
-            emit::compile_function(&mut module, f, &rt).unwrap();
+            let mut compiled = emit::CompiledFuncs::new();
+            emit::compile_function(&mut module, f, &rt, &mut compiled).unwrap();
         }
         module.finalize_definitions().unwrap();
 
@@ -238,6 +245,45 @@ mod tests {
         assert!(!result.is_null(), "string should return non-null pointer");
         let cstr = unsafe { std::ffi::CStr::from_ptr(result as *const i8) };
         assert_eq!(cstr.to_str().unwrap(), "hello");
+    }
+
+    #[test]
+    fn compile_roca_function_calls() {
+        // Two functions: double calls add
+        let file = crate::parse::parse(r#"
+            pub fn add(a: Number, b: Number) -> Number {
+                return a + b
+            }
+            pub fn double(n: Number) -> Number {
+                return add(n, n)
+            }
+        "#);
+
+        let mut module = JITModule::new(
+            cranelift_jit::JITBuilder::new(cranelift_module::default_libcall_names())
+                .expect("jit builder failed")
+        );
+        let rt = runtime::declare_runtime(&mut module);
+        let mut compiled = emit::CompiledFuncs::new();
+
+        // Compile both functions
+        for item in &file.items {
+            if let crate::ast::Item::Function(f) = item {
+                emit::compile_function(&mut module, f, &rt, &mut compiled).unwrap();
+            }
+        }
+        module.finalize_definitions().unwrap();
+
+        // Call double(5) — should call add(5, 5) = 10
+        let mut sig = module.make_signature();
+        sig.params.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::F64));
+        sig.returns.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::F64));
+        let func_id = module.declare_function("double", cranelift_module::Linkage::Export, &sig).unwrap();
+        let ptr = module.get_finalized_function(func_id);
+        let double_fn = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(ptr) };
+
+        assert_eq!(double_fn(5.0), 10.0);
+        assert_eq!(double_fn(21.0), 42.0);
     }
 
     #[test]
