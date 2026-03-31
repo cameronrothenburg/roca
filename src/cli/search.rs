@@ -4,7 +4,14 @@ use std::path::Path;
 use crate::ast::*;
 use crate::check::walker::type_ref_to_name;
 
-const STDLIB_SOURCE: &str = include_str!("../../packages/stdlib/primitives.roca");
+const STDLIB_SOURCE: &str = concat!(
+    include_str!("../../packages/stdlib/primitives.roca"),
+    include_str!("../../packages/stdlib/core/traits.roca"),
+    include_str!("../../packages/stdlib/core/math.roca"),
+    include_str!("../../packages/stdlib/core/path.roca"),
+    include_str!("../../packages/stdlib/io/fs.roca"),
+    include_str!("../../packages/stdlib/io/process.roca"),
+);
 
 /// A search match with display info
 struct Match {

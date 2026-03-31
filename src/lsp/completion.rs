@@ -5,11 +5,21 @@ use crate::constants::{KEYWORDS, BUILTIN_TYPES};
 use tower_lsp::lsp_types::*;
 
 const STDLIB_MODULES: &[(&str, &str)] = &[
-    ("json", "JSON parsing and serialization"),
+    // core
+    ("math", "Math operations (floor, ceil, sqrt, pow, abs)"),
+    ("path", "Path manipulation (join, dirname, basename)"),
+    // io
+    ("fs", "File system (readFile, writeFile, exists)"),
+    ("process", "Process info (args, env, exit, cwd)"),
+    // net
     ("http", "HTTP requests (get, post, put, patch, delete)"),
     ("url", "URL parsing and query parameters"),
-    ("crypto", "Cryptographic operations (UUID, SHA)"),
+    // data
+    ("json", "JSON parsing and serialization"),
     ("encoding", "Text encoding/decoding and base64"),
+    // security
+    ("crypto", "Cryptographic operations (UUID, SHA)"),
+    // time
     ("time", "Timestamps and date parsing"),
 ];
 

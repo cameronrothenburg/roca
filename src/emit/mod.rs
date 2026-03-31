@@ -28,9 +28,17 @@ fn stdlib_runtime(module: &str) -> Option<String> {
         exe_dir.join("../../packages/stdlib"),
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("packages/stdlib"),
     ] {
-        let path = base.join(format!("{}.js", module));
-        if let Ok(source) = std::fs::read_to_string(&path) {
+        // Check flat: stdlib/{name}.js (legacy)
+        let flat = base.join(format!("{}.js", module));
+        if let Ok(source) = std::fs::read_to_string(&flat) {
             return Some(source);
+        }
+        // Check subdirectories: stdlib/{subdir}/{name}.js
+        for subdir in &["core", "io", "net", "data", "security", "time"] {
+            let nested = base.join(subdir).join(format!("{}.js", module));
+            if let Ok(source) = std::fs::read_to_string(&nested) {
+                return Some(source);
+            }
         }
     }
     None

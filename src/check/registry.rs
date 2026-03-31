@@ -27,19 +27,25 @@ static STDLIB_AST: LazyLock<SourceFile> = LazyLock::new(|| crate::parse::parse(S
 /// Stdlib modules — loaded dynamically from the stdlib directory.
 /// The module name maps to stdlib/{name}.roca
 fn stdlib_module(name: &str) -> Option<String> {
-    // Find stdlib directory relative to the roca binary
     let exe = std::env::current_exe().ok()?;
     let exe_dir = exe.parent()?;
 
-    // Check alongside binary first, then common install locations
     for base in &[
         exe_dir.join("../packages/stdlib"),
         exe_dir.join("../../packages/stdlib"),
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("packages/stdlib"),
     ] {
-        let path = base.join(format!("{}.roca", name));
-        if let Ok(source) = std::fs::read_to_string(&path) {
+        // Check flat: stdlib/{name}.roca (legacy)
+        let flat = base.join(format!("{}.roca", name));
+        if let Ok(source) = std::fs::read_to_string(&flat) {
             return Some(source);
+        }
+        // Check subdirectories: stdlib/{subdir}/{name}.roca
+        for subdir in &["core", "io", "net", "data", "security", "time"] {
+            let nested = base.join(subdir).join(format!("{}.roca", name));
+            if let Ok(source) = std::fs::read_to_string(&nested) {
+                return Some(source);
+            }
         }
     }
     None
