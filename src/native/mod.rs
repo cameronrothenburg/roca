@@ -4,6 +4,7 @@ pub mod types;
 pub mod helpers;
 pub mod runtime;
 pub mod emit;
+#[allow(dead_code)]
 pub mod test_runner;
 
 use cranelift_jit::{JITBuilder, JITModule};
@@ -70,6 +71,7 @@ pub fn compile_all<M: Module>(
 }
 
 /// Compile Roca source to an object file via Cranelift AOT (production).
+#[allow(dead_code)]
 pub fn compile_to_object(source: &crate::ast::SourceFile) -> Result<Vec<u8>, String> {
     let isa = cranelift_native::builder()
         .map_err(|e| format!("native ISA: {}", e))?

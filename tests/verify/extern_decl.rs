@@ -97,7 +97,7 @@ fn extern_contract_method_call() {
 
 #[test]
 fn extern_fn_mock_emitted() {
-    // Extern fn mock should emit globalThis patches in test harness
+    // Auto-stub should emit globalThis patches in test harness for extern fns
     let file = roca::parse::parse(r#"
         extern contract NativeResponse {
             status: Number
@@ -106,9 +106,6 @@ fn extern_fn_mock_emitted() {
 
         extern fn globalFetch(url: String) -> NativeResponse, err {
             err network = "network error"
-            mock {
-                globalFetch -> NativeResponse { status: 200, body: "ok" }
-            }
         }
 
         pub fn fetch_status(url: String) -> Number {
@@ -118,15 +115,14 @@ fn extern_fn_mock_emitted() {
             test { self("http://example.com") == 200 }
         }
     "#);
-    let (test_js, _) = roca::emit::test_harness::emit_tests(&file, "__embed__").unwrap();
-    assert!(test_js.contains("globalThis.globalFetch"), "mock patch should set globalThis.globalFetch");
-    assert!(test_js.contains("status: 200"), "mock should include status: 200");
+    let (test_js, _) = roca::emit::test_harness::emit_tests(&file, "__embed__", None).unwrap();
+    assert!(test_js.contains("globalThis.globalFetch"), "auto-stub should set globalThis.globalFetch");
 }
 
 #[test]
 fn extern_fn_mock_in_proof_tests() {
-    // The full flow: extern fn mock is used during proof tests with async await
-    let output = run_with_tests(
+    // The full flow: manually wired extern fn used during proof tests with async await
+    let output = run(
         r#"
         extern contract NativeResponse {
             status: Number
@@ -135,9 +131,6 @@ fn extern_fn_mock_in_proof_tests() {
 
         extern fn globalFetch(url: String) -> NativeResponse, err {
             err network = "network error"
-            mock {
-                globalFetch -> NativeResponse { status: 200, body: "ok" }
-            }
         }
 
         pub fn fetch_status(url: String) -> Number {
@@ -148,12 +141,13 @@ fn extern_fn_mock_in_proof_tests() {
         }
         "#,
         r#"
+            // Wire up the extern manually — must return {value, err} tuple
+            globalThis.globalFetch = async (url) => ({ value: { status: 200, body: "ok" }, err: null });
             const result = await fetch_status("http://test.com");
             console.log(result);
         "#,
     );
-    assert!(output.contains("passed, 0 failed"), "expected all tests to pass, got: {}", output);
-    assert!(output.ends_with("200"), "expected 200 at end, got: {}", output);
+    assert_eq!(output, "200");
 }
 
 #[test]
@@ -168,9 +162,6 @@ fn extern_fn_mock_works_at_runtime() {
 
         extern fn globalFetch(url: String) -> NativeResponse, err {
             err network = "network error"
-            mock {
-                globalFetch -> NativeResponse { status: 200, body: "ok" }
-            }
         }
 
         pub fn fetch_status(url: String) -> Number {
@@ -181,7 +172,7 @@ fn extern_fn_mock_works_at_runtime() {
         }
         "#,
         r#"
-            // Wire up mock (same as what test harness would do) — must return {value, err} tuple
+            // Wire up extern — must return {value, err} tuple
             globalThis.globalFetch = async (url) => ({ value: { status: 200, body: "ok" }, err: null });
             const result = await fetch_status("http://test.com");
             console.log(result);

@@ -9,7 +9,7 @@ use crate::native::helpers::{
     bool_and, bool_or, ensure_i64, leak_cstr,
 };
 use super::context::{EmitCtx, ValKind};
-use super::helpers::{infer_kind, emit_length, target_kind, first_arg_or_null, emit_array_push};
+use super::helpers::{infer_kind, emit_length, target_kind, emit_array_push};
 
 pub fn emit_expr(b: &mut FunctionBuilder, expr: &Expr, ctx: &mut EmitCtx) -> Value {
     match expr {
@@ -69,7 +69,6 @@ pub fn emit_expr(b: &mut FunctionBuilder, expr: &Expr, ctx: &mut EmitCtx) -> Val
             super::methods::emit_enum_variant(b, variant, args, ctx)
         }
         Expr::Await(inner) => emit_expr(b, inner, ctx),
-        _ => b.ins().iconst(types::I64, 0),
     }
 }
 

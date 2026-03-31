@@ -166,6 +166,16 @@ pub(crate) fn build_stmt<'a>(
             // The crash handler extracts .value from the error tuple — the return just needs
             // to wrap that extracted value in { value, err: null } if returns_err.
             if let Some(handler) = find_crash_handler(expr, crash) {
+                // Skip on a non-error-returning call is a no-op — just return the raw value.
+                if is_passthrough(&handler.strategy) {
+                    let val = build_expr(ast, expr);
+                    if returns_err {
+                        let ret = make_result(ast, val, null(ast));
+                        return vec![ast.statement_return(SPAN, Some(ret))];
+                    } else {
+                        return vec![ast.statement_return(SPAN, Some(val))];
+                    }
+                }
                 let call_expr = build_expr(ast, expr);
                 let tmp_name = "_ret";
                 let mut stmts = wrap_with_strategy(ast, call_expr, tmp_name, &handler.strategy, expr, returns_err);

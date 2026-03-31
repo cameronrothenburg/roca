@@ -1,8 +1,8 @@
-import { KV, Fetcher, Logger } from "./runtime.roca"
+import { KV, __mock_Fetcher, Logger } from "./runtime.roca"
 import { ApiResponse } from "./types.roca"
 
 /** Fetch a user by ID — checks cache first, falls back to upstream */
-pub fn get_user(kv: KV, fetcher: Fetcher, logger: Logger, id: String) -> ApiResponse {
+pub fn get_user(kv: KV, fetcher: __mock_Fetcher, logger: __mock_Logger, id: String) -> ApiResponse {
     const cached = wait kv.get("user:" + id)
     logger.info("cache hit: " + id)
     return ApiResponse.ok(cached)
@@ -17,7 +17,7 @@ pub fn get_user(kv: KV, fetcher: Fetcher, logger: Logger, id: String) -> ApiResp
 }
 
 /** Create or update a user */
-pub fn create_user(kv: KV, logger: Logger, id: String, body: String) -> ApiResponse {
+pub fn create_user(kv: KV, logger: __mock_Logger, id: String, body: String) -> ApiResponse {
     wait kv.put("user:" + id, body)
     logger.info("created: " + id)
     return ApiResponse.created(body)
@@ -32,7 +32,7 @@ pub fn create_user(kv: KV, logger: Logger, id: String, body: String) -> ApiRespo
 }
 
 /** Delete a user by clearing their data */
-pub fn delete_user(kv: KV, logger: Logger, id: String) -> ApiResponse {
+pub fn delete_user(kv: KV, logger: __mock_Logger, id: String) -> ApiResponse {
     wait kv.put("user:" + id, "")
     logger.info("deleted: " + id)
     return ApiResponse.ok("")

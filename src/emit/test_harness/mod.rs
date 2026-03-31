@@ -22,7 +22,7 @@ use battle::generate_battle_tests;
 
 /// Emit a test file that imports from the main JS module.
 /// Returns (test_js_code, test_count) or None if no tests.
-pub fn emit_tests(file: &roca::SourceFile, import_path: &str) -> Option<(String, usize)> {
+pub fn emit_tests(file: &roca::SourceFile, import_path: &str, source_dir: Option<&std::path::Path>) -> Option<(String, usize)> {
     let has_tests = file.items.iter().any(|item| match item {
         roca::Item::Function(f) => f.test.is_some(),
         roca::Item::Struct(s) => s.methods.iter().any(|m| m.test.is_some()),
@@ -63,7 +63,7 @@ pub fn emit_tests(file: &roca::SourceFile, import_path: &str) -> Option<(String,
         if let roca::Item::Import(imp) = item {
             match &imp.source {
                 roca::ImportSource::Path(path) => {
-                    if let Some(parsed) = crate::resolve::try_load_roca_file(path) {
+                    if let Some(parsed) = crate::resolve::try_load_roca_file_from(path, source_dir) {
                         imported_files.push((path.clone(), parsed));
                     }
                 }

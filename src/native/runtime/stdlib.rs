@@ -281,6 +281,7 @@ pub extern "C" fn roca_time_now() -> f64 {
 /// Call a function pointer on a new thread and return the f64 result.
 /// Used by waitAll/waitFirst to run JIT functions in parallel.
 /// fn_ptr is a JIT function pointer (extern "C" fn() -> f64).
+#[allow(dead_code)]
 pub extern "C" fn roca_thread_call_f64(fn_ptr: i64) -> f64 {
     if fn_ptr == 0 { return 0.0; }
     let fp: extern "C" fn() -> f64 = unsafe { std::mem::transmute(fn_ptr) };
@@ -348,6 +349,7 @@ pub extern "C" fn roca_wait_first(fn_ptrs: i64, count: i64) -> f64 {
 
 /// Read a file to string. Returns (content_ptr, err_tag).
 /// err_tag: 0 = OK, 1 = not_found, 2 = permission, 3 = io
+#[allow(improper_ctypes_definitions)]
 pub extern "C" fn roca_fs_read_file(path: i64) -> (i64, u8) {
     let path_str = read_cstr(path);
     match std::fs::read_to_string(path_str) {
@@ -384,6 +386,7 @@ pub extern "C" fn roca_fs_exists(path: i64) -> u8 {
 
 /// Read directory entries. Returns (array_ptr, err_tag).
 /// The array contains string pointers to entry names.
+#[allow(improper_ctypes_definitions)]
 pub extern "C" fn roca_fs_read_dir(path: i64) -> (i64, u8) {
     let path_str = read_cstr(path);
     match std::fs::read_dir(path_str) {

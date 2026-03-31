@@ -95,7 +95,6 @@ pub fn emit_stmt(b: &mut FunctionBuilder, stmt: &Stmt, ctx: &mut EmitCtx, return
         Stmt::Wait { names, failed_name, kind } => {
             emit_wait(b, names, failed_name, kind, ctx);
         }
-        _ => {}
     }
 }
 
@@ -105,7 +104,7 @@ fn emit_if(
     then_body: &[Stmt],
     else_body: Option<&[Stmt]>,
     ctx: &mut EmitCtx,
-    returned: &mut bool,
+    _returned: &mut bool,
 ) {
     let cond = emit_expr(b, condition, ctx);
     let then_block = b.create_block();
@@ -148,7 +147,7 @@ fn emit_while(
     condition: &Expr,
     body: &[Stmt],
     ctx: &mut EmitCtx,
-    returned: &mut bool,
+    _returned: &mut bool,
 ) {
     let header = b.create_block();
     let body_block = b.create_block();
@@ -189,7 +188,7 @@ fn emit_for(
     iter: &Expr,
     body: &[Stmt],
     ctx: &mut EmitCtx,
-    returned: &mut bool,
+    _returned: &mut bool,
 ) {
     let arr = emit_expr(b, iter, ctx);
     let len_ref = ctx.get_func("__array_len").copied();

@@ -8,10 +8,6 @@ pub extern contract KV {
     put(key: String, value: String) -> Ok, err {
         err write_failed = "write failed"
     }
-    mock {
-        get -> "cached"
-        put -> Ok
-    }
 }
 
 /** HTTP client for upstream API calls */
@@ -21,9 +17,6 @@ pub extern contract Fetcher {
         err network = "network error"
         err timeout = "request timed out"
     }
-    mock {
-        get -> "mock user data"
-    }
 }
 
 /** Structured logger */
@@ -32,8 +25,4 @@ pub extern contract Logger {
     info(msg: String) -> Ok
     /// Log an error message
     error(msg: String) -> Ok
-    mock {
-        info -> Ok
-        error -> Ok
-    }
 }

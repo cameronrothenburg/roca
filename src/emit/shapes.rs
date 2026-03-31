@@ -293,12 +293,21 @@ fn js_match_inner<'a>(ast: &AstBuilder<'a>, value: &Expr, arms: &[roca::MatchArm
                 let alternate = result.unwrap_or_else(|| ident(ast, "undefined"));
                 result = Some(ast.expression_conditional(SPAN, test, arm_value, alternate));
             }
-            Some(MatchPattern::Variant { variant, bindings, .. }) => {
+            Some(MatchPattern::Variant { enum_name, variant, bindings }) => {
                 let val = expr_to_js(ast, value);
-                let tag = field_access(ast, val, ast.str(TAG_FIELD));
-                let tag_str = string_lit(ast, variant);
-                let test = binary(ast, tag, BinaryOperator::StrictEquality, tag_str);
                 let alternate = result.unwrap_or_else(|| ident(ast, "undefined"));
+
+                // For simple enum variants (no bindings), compare value === EnumName.variant.
+                // This works for string/number enums (primitive equality) and unit enums (singleton reference).
+                // For data enum variants (with bindings), compare value._tag === "variant" to match and destructure.
+                let test = if bindings.is_empty() {
+                    let enum_variant = field_access(ast, ident(ast, enum_name), ast.str(variant));
+                    binary(ast, val, BinaryOperator::StrictEquality, enum_variant)
+                } else {
+                    let tag = field_access(ast, val, ast.str(TAG_FIELD));
+                    let tag_str = string_lit(ast, variant);
+                    binary(ast, tag, BinaryOperator::StrictEquality, tag_str)
+                };
 
                 let consequent = if bindings.is_empty() {
                     arm_value

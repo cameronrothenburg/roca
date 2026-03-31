@@ -42,7 +42,8 @@ pub fn build_file(path: &Path) {
     }
 
     // Run tests
-    if let Some((test_js, _count)) = emit::test_harness::emit_tests(&file, "__embed__") {
+    let source_dir = path.parent();
+    if let Some((test_js, _count)) = emit::test_harness::emit_tests(&file, "__embed__", source_dir) {
         let (stdout, success) = super::runtime::run_tests(&test_js);
 
         let (passed, failed) = parse_test_counts(&stdout);
@@ -154,8 +155,9 @@ pub fn build_directory(dir: &Path) {
     let mut total_passed = 0;
     let mut total_failed = 0;
 
-    for (_file_path, fp_str, file) in &checked {
-        if let Some((test_js, _count)) = emit::test_harness::emit_tests(file, "__embed__") {
+    for (file_path, fp_str, file) in &checked {
+        let src_dir = file_path.parent();
+        if let Some((test_js, _count)) = emit::test_harness::emit_tests(file, "__embed__", src_dir) {
             let (stdout, success) = super::runtime::run_tests(&test_js);
 
             let (passed, failed) = parse_test_counts(&stdout);

@@ -92,7 +92,6 @@ fn closure_in_variable() {
         r#"pub fn apply() -> Number {
             const double = fn(x) -> x * 2
             return double(5)
-            crash { double -> halt }
             test { self() == 10 }
         }"#,
         "console.log(apply());",

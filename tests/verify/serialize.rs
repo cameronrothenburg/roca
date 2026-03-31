@@ -9,7 +9,7 @@ fn serializable_satisfies() {
             name: String
         }{}
         User satisfies Serializable {
-            fn toJSON() -> String {
+            fn toJson() -> String {
                 return self.name
                 test { self() == "test" }
             }

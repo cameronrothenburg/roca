@@ -245,6 +245,7 @@ impl MemTracker {
         )
     }
 
+    #[allow(dead_code)]
     pub fn assert_clean(&self) {
         let (allocs, frees, ..) = self.stats();
         assert_eq!(allocs, frees, "memory leak: {} allocs but only {} frees", allocs, frees);
@@ -291,11 +292,13 @@ thread_local! {
 }
 
 /// Reset the constraint-violated flag for the current thread.
+#[allow(dead_code)]
 pub fn reset_constraint_violated() {
     TL_CONSTRAINT_VIOLATED.with(|c| c.set(false));
 }
 
 /// Check whether a constraint violation occurred on the current thread.
+#[allow(dead_code)]
 pub fn constraint_violated() -> bool {
     TL_CONSTRAINT_VIOLATED.with(|c| c.get())
 }

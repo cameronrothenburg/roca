@@ -9,7 +9,7 @@ fn fuzz_tests_generated_for_pub_functions() {
             test { self("cam") == "Hello cam" }
         }
     "#);
-    let result = roca::emit::test_harness::emit_tests(&file, "__embed__");
+    let result = roca::emit::test_harness::emit_tests(&file, "__embed__", None);
     let (js, count) = result.unwrap();
     // 1 explicit test + 6 fuzz cases for String param
     assert!(count > 1, "expected fuzz tests generated, got count={}", count);
@@ -24,7 +24,7 @@ fn fuzz_tests_for_number_param() {
             test { self(5) == 10 }
         }
     "#);
-    let result = roca::emit::test_harness::emit_tests(&file, "__embed__");
+    let result = roca::emit::test_harness::emit_tests(&file, "__embed__", None);
     let (_, count) = result.unwrap();
     // 1 explicit + 5 number fuzz cases (0, -1, MAX, MIN, 0.3)
     assert!(count > 1, "expected fuzz tests, got count={}", count);
@@ -38,7 +38,7 @@ fn fuzz_tests_for_two_params() {
             test { self(1, 2) == 3 }
         }
     "#);
-    let result = roca::emit::test_harness::emit_tests(&file, "__embed__");
+    let result = roca::emit::test_harness::emit_tests(&file, "__embed__", None);
     let (_, count) = result.unwrap();
     // 1 explicit + up to 10 combo fuzz cases
     assert!(count > 1, "expected fuzz tests, got count={}", count);
@@ -69,7 +69,7 @@ fn fuzz_no_tests_for_private_functions() {
             test { self("a") == "a" }
         }
     "#);
-    let result = roca::emit::test_harness::emit_tests(&file, "__embed__");
+    let result = roca::emit::test_harness::emit_tests(&file, "__embed__", None);
     let (_, count) = result.unwrap();
     // Only 1 explicit test — no fuzz for private functions
     assert_eq!(count, 1, "private functions should not get fuzz tests");
@@ -83,7 +83,7 @@ fn fuzz_no_tests_for_no_params() {
             test { self() == "hello" }
         }
     "#);
-    let result = roca::emit::test_harness::emit_tests(&file, "__embed__");
+    let result = roca::emit::test_harness::emit_tests(&file, "__embed__", None);
     let (_, count) = result.unwrap();
     // Only 1 explicit — no fuzz when no params
     assert_eq!(count, 1, "no-param functions should not get fuzz tests");

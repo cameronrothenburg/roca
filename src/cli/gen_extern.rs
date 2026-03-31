@@ -285,7 +285,7 @@ fn mock_value(roca_type: &str, is_nullable: bool) -> String {
 
 fn generate_contract(iface: &TsInterface, known: &HashSet<String>) -> String {
     let mut out = String::new();
-    let snake = to_snake_case(&iface.name);
+    let _snake = to_snake_case(&iface.name);
 
     // Collect imports needed
     let mut imports: HashSet<String> = HashSet::new();

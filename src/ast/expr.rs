@@ -56,6 +56,7 @@ pub enum Expr {
     /// self keyword
     SelfRef,
     /// Enum variant constructor: Token.Number(42)
+    #[allow(dead_code)]
     EnumVariant {
         enum_name: String,
         variant: String,

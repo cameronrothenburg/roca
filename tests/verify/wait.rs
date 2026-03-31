@@ -328,7 +328,6 @@ fn wait_calls_appear_in_crash() {
     let file = roca::parse::parse(r#"
         extern fn fetch(url: String) -> String, err {
             err net = "net"
-            mock { fetch -> "ok" }
         }
         pub fn go() -> String {
             const r = wait fetch("x")

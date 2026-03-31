@@ -8,7 +8,7 @@ pub mod expr;
 pub mod methods;
 
 // Re-export public API used by native/mod.rs
-pub use context::{CompiledFuncs, ValKind};
+pub use context::CompiledFuncs;
 pub use compile::{
     build_return_kind_map, build_enum_variant_map, build_struct_def_map,
     declare_all_functions, compile_closures, compile_function,

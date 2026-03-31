@@ -341,7 +341,8 @@ fn check_method_call(type_name: &str, field: &str, args: &[Expr], ctx: &ExprCont
         errors.push(RuleError::new(errors::NULLABLE_ACCESS, format!("cannot call .{}() on nullable type '{}'", field, type_name.trim_end_matches('?')), Some(qn.clone())));
     }
 
-    let lookup_type = type_name.trim_end_matches('?');
+    let trimmed = type_name.trim_end_matches('?');
+    let lookup_type = trimmed.strip_prefix("__mock_").unwrap_or(trimmed);
     if !registry.has_method(lookup_type, field) {
         let available = registry.available_methods(lookup_type);
         let hint = if available.is_empty() { String::new() }

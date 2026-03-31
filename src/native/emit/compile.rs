@@ -589,7 +589,7 @@ pub fn compile_mock_stub<M: Module>(
 pub fn compile_contract_stubs<M: Module>(
     module: &mut M,
     contract: &roca::ContractDef,
-    rt: &RuntimeFuncs,
+    _rt: &RuntimeFuncs,
     compiled: &mut CompiledFuncs,
 ) -> Result<(), String> {
     for sig_def in &contract.functions {
