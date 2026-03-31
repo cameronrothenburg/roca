@@ -78,11 +78,44 @@ Optional:   Optional<String> — field may be absent (use on struct fields)
 Generic:    Array<T>, Map<V>
 Special:    Ok (void return)
 
-VARIABLES
----------
-  const x = 5               immutable
-  let x = 5                 mutable, can reassign
+VARIABLES & OWNERSHIP
+---------------------
+  const x = 5               immutable — borrowed when passed
+  let x = 5                 mutable — moved when passed
   self.field = value         mutate struct fields in methods
+
+Roca has memory safety without a garbage collector. Two rules:
+
+  1. const = immutable, borrowed when passed to functions.
+     The caller keeps ownership. The function reads it.
+
+  2. let = mutable, moved when passed to functions.
+     The caller loses ownership. The function owns it.
+
+Examples:
+
+  const name = "hello"
+  greet(name)              // borrowed — name still valid after call
+  log(name)                // OK
+
+  let items = [1, 2, 3]
+  process(items)           // moved — items is gone
+  log(items)               // COMPILE ERROR: use-after-move
+
+Returning transfers ownership back to the caller:
+
+  let data = [3, 1, 2]
+  let sorted = sort(data)  // data moved into sort
+  log(sorted)              // OK — sorted owns the result
+
+Clone explicitly for shared copies:
+
+  const a = "shared"
+  const b = a.clone()      // explicit copy
+  log(a)                   // still valid
+
+The compiler enforces these rules at compile time. The native engine
+generates real alloc/free code. JS gets the same checks but uses GC.
 
 CONTRACTS
 ---------
@@ -421,6 +454,10 @@ The compiler enforces:
   empty-struct         Struct has no methods — use a contract instead
   invalid-mock-ref     __mock_X used but X has no mock block
   private-method       Calling non-pub struct method from outside
+  use-after-move       Using a let variable after it was passed to a function
+  move-in-loop         Moving an outer let inside a loop body
+  must-be-const        let declared but never mutated — use const
+  recursive-cycle      Struct field references its own type directly (infinite size)
 
 CONFIGURATION (roca.toml)
 -------------------------
