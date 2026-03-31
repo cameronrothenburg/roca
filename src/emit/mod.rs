@@ -159,10 +159,13 @@ pub fn emit(file: &ast::SourceFile) -> String {
     for item in &file.items {
         if let Item::ExternContract(c) = item {
             let methods: Vec<String> = c.functions.iter().map(|sig| {
+                let default = test_harness::values::emit_expr_js(
+                    &test_harness::values::default_expr_for_type(&sig.return_type)
+                );
                 let ret = if sig.returns_err {
-                    format!("{{ value: {}, err: null }}", default_js_value(&sig.return_type))
+                    format!("{{ value: {}, err: null }}", default)
                 } else {
-                    default_js_value(&sig.return_type)
+                    default
                 };
                 format!("{}() {{ return {}; }}", sig.name, ret)
             }).collect();
@@ -175,18 +178,6 @@ pub fn emit(file: &ast::SourceFile) -> String {
     if !code.is_empty() { parts.push(code); }
     if !extern_stubs.is_empty() { parts.push(extern_stubs.join("\n")); }
     parts.join("\n")
-}
-
-fn default_js_value(ty: &ast::TypeRef) -> String {
-    match ty {
-        ast::TypeRef::String => "\"\"".to_string(),
-        ast::TypeRef::Number => "0".to_string(),
-        ast::TypeRef::Bool => "false".to_string(),
-        ast::TypeRef::Ok => "null".to_string(),
-        ast::TypeRef::Named(_) => "null".to_string(),
-        ast::TypeRef::Generic(name, _) if name == "Array" => "[]".to_string(),
-        _ => "null".to_string(),
-    }
 }
 
 /// Generate TypeScript declaration file (.d.ts) content
