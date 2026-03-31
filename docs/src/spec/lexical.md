@@ -113,14 +113,14 @@ When the tokenizer encounters `/`, it MUST apply the following rules in order:
 
 ## 1.4 Keywords
 
-The following 37 words are reserved keywords. A conforming tokenizer MUST emit the corresponding keyword token when any of these words appear as an identifier. Keywords are case-sensitive and MUST match exactly.
+The following 36 words are reserved keywords. A conforming tokenizer MUST emit the corresponding keyword token when any of these words appear as an identifier. Keywords are case-sensitive and MUST match exactly.
 
 | Category | Keywords |
 |---|---|
 | Declarations | `contract`, `struct`, `enum`, `extern`, `satisfies`, `fn`, `pub` |
 | Bindings | `const`, `let` |
 | Control flow | `return`, `if`, `else`, `for`, `in`, `match`, `while`, `break`, `continue` |
-| Blocks | `crash`, `test`, `mock` |
+| Blocks | `crash`, `test` |
 | Error handling | `err`, `Ok`, `null` |
 | Crash strategies | `retry`, `skip`, `halt`, `fallback`, `panic`, `default` |
 | Async | `wait`, `waitAll`, `waitFirst` |
@@ -236,13 +236,19 @@ const escaped = "she said \"hi\""  // contains literal double quotes
 
 ### 1.6.4 String Interpolation
 
-Curly braces `{` and `}` inside string literals denote interpolation expressions. The expression inside the braces MUST be evaluated and its result converted to a string at runtime.
+Curly braces `{` and `}` inside string literals denote interpolation. Interpolation supports identifiers and single-level field access only. Arbitrary expressions are NOT supported.
 
 ```roca
 const name = "world"
-const greeting = "hello {name}"        // "hello world"
-const math = "result: {1 + 2}"         // "result: 3"
-const nested = "{user.name} is {user.age} years old"
+const greeting = "hello {name}"                      // "hello world"
+const info = "{user.name} is {user.age} years old"   // field access
+```
+
+The following are NOT valid interpolation and will be treated as literal text:
+
+```roca
+const bad = "result: {1 + 2}"          // NOT interpolated — literal text
+const bad2 = "len: {name.length()}"    // NOT interpolated — method calls not supported
 ```
 
 ### 1.6.5 Boolean Literals
@@ -256,11 +262,7 @@ const verbose = false
 
 ### 1.6.6 Null Literal
 
-The keyword `null` MUST be tokenized as a `Null` token. It represents the absence of a value.
-
-```roca
-const missing: String | null = null
-```
+The keyword `null` MUST be tokenized as a `Null` token. It exists for interop with external APIs that return null values. Roca code SHOULD use `Optional<T>` for absence and `-> T, err` for failures instead of null.
 
 ---
 
