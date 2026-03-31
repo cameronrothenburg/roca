@@ -1,0 +1,8 @@
+/// Number parsing — convert strings to numbers.
+/// Import with: import { NumberParse } from std::parse
+pub extern contract NumberParse {
+    /// Parse a string to a number. Returns err.invalid if not a valid number.
+    parse(s: String) -> Number, err {
+        err invalid = "not a valid number"
+    }
+}

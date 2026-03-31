@@ -12,11 +12,3 @@ pub extern contract Char {
     /// Check if a character is alphanumeric (letter or digit)
     isAlphanumeric(ch: String) -> Bool
 }
-
-/// Parse a string to a number. Returns err.invalid if not a valid number.
-/// Import with: import { NumberParse } from std::char
-pub extern contract NumberParse {
-    parse(s: String) -> Number, err {
-        err invalid = "not a valid number"
-    }
-}

@@ -1,6 +1,7 @@
 // Self-hosting: character utilities for tokenizer
 
-import { Char, NumberParse } from std::char
+import { Char } from std::char
+import { NumberParse } from std::parse
 
 /// Test: charCodeAt returns correct code
 pub fn test_char_code() -> Number {

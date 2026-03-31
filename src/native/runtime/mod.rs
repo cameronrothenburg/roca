@@ -102,12 +102,14 @@ runtime_funcs! {
 
     // Maps
     (map_new,           "roca_map_new",           roca_map_new,           [],                                          [types::I64]),
+    (map_free,          "roca_map_free",          roca_map_free,          [types::I64],                                []),
     (map_set,           "roca_map_set",           roca_map_set,           [types::I64, types::I64, types::I64],        [types::I64]),
     (map_get,           "roca_map_get",           roca_map_get,           [types::I64, types::I64],                    [types::I64]),
     (map_has,           "roca_map_has",           roca_map_has,           [types::I64, types::I64],                    [types::I8]),
     (map_delete,        "roca_map_delete",        roca_map_delete,        [types::I64, types::I64],                    [types::I8]),
     (map_size,          "roca_map_size",           roca_map_size,          [types::I64],                                [types::F64]),
     (map_keys,          "roca_map_keys",           roca_map_keys,          [types::I64],                                [types::I64]),
+    (map_values,        "roca_map_values",         roca_map_values,        [types::I64],                                [types::I64]),
 
     // Structs
     (struct_alloc,      "roca_struct_alloc",      roca_struct_alloc,      [types::I64],                                [types::I64]),
