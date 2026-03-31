@@ -1,0 +1,84 @@
+// Self-hosting: character utilities for tokenizer
+
+import { Char, NumberParse } from std::char
+
+/// Test: charCodeAt returns correct code
+pub fn test_char_code() -> Number {
+    const a = "A"
+    return a.charCodeAt(0)
+    test {
+        self() == 65
+    }
+}
+
+/// Test: fromCode produces correct character
+pub fn test_from_code() -> String {
+    return Char.fromCode(65)
+    test {
+        self() == "A"
+    }
+}
+
+/// Test: isDigit classifies correctly
+pub fn test_is_digit_true() -> Bool {
+    return Char.isDigit("5")
+    test {
+        self() == true
+    }
+}
+
+/// Test: isDigit rejects letters
+pub fn test_is_digit_false() -> Bool {
+    return Char.isDigit("a")
+    test {
+        self() == false
+    }
+}
+
+/// Test: isLetter classifies correctly
+pub fn test_is_letter_true() -> Bool {
+    return Char.isLetter("a")
+    test {
+        self() == true
+    }
+}
+
+/// Test: isWhitespace classifies correctly
+pub fn test_is_whitespace_true() -> Bool {
+    return Char.isWhitespace(" ")
+    test {
+        self() == true
+    }
+}
+
+/// Test: isAlphanumeric classifies correctly
+pub fn test_is_alnum() -> Bool {
+    return Char.isAlphanumeric("a")
+    test {
+        self() == true
+    }
+}
+
+/// Test: number parsing valid
+pub fn test_number_parse_valid() -> Number {
+    const n = NumberParse.parse("42")
+    return n
+crash {
+    NumberParse.parse -> fallback(0)
+}
+    test {
+        self() == 42
+    }
+}
+
+/// Test: number parsing invalid returns fallback
+pub fn test_number_parse_invalid() -> Number {
+    const n = NumberParse.parse("abc")
+    return n
+crash {
+    NumberParse.parse -> fallback(0)
+}
+    test {
+        self() == 0
+    }
+}

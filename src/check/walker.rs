@@ -92,7 +92,7 @@ pub fn infer_type_with_registry(expr: &Expr, scope: &Scope, registry: Option<&su
                     if type_name == "String" {
                         return match field.as_str() {
                             "includes" | "startsWith" | "endsWith" => Some("Bool".to_string()),
-                            "indexOf" => Some("Number".to_string()),
+                            "indexOf" | "charCodeAt" | "length" => Some("Number".to_string()),
                             "split" => Some("Array".to_string()),
                             _ => Some("String".to_string()),
                         };

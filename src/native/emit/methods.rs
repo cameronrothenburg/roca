@@ -223,6 +223,13 @@ pub fn emit_method_call(b: &mut FunctionBuilder, target: &Expr, method: &str, ar
                 call_rt(b, f, &[obj, idx_i])
             } else { b.ins().iconst(types::I64, 0) }
         }
+        "charCodeAt" => {
+            let idx = first_arg_or_null(b, args, ctx);
+            let idx_i = ensure_i64(b, idx);
+            if let Some(&f) = ctx.get_func("__string_char_code_at") {
+                call_rt(b, f, &[obj, idx_i])
+            } else { b.ins().f64const(0.0) }
+        }
         "indexOf" => {
             let needle = first_arg_or_null(b, args, ctx);
             if let Some(&f) = ctx.get_func("__string_index_of") {

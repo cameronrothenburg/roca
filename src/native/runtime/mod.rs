@@ -79,6 +79,17 @@ runtime_funcs! {
     (string_split,      "roca_string_split",      roca_string_split,      [types::I64, types::I64],                    [types::I64]),
     (string_char_at,    "roca_string_char_at",    roca_string_char_at,    [types::I64, types::I64],                    [types::I64]),
     (string_index_of,   "roca_string_index_of",   roca_string_index_of,   [types::I64, types::I64],                    [types::F64]),
+    (string_char_code_at, "roca_string_char_code_at", roca_string_char_code_at, [types::I64, types::I64],                [types::F64]),
+
+    // Character utilities
+    (char_from_code,    "roca_char_from_code",    roca_char_from_code,    [types::F64],                                [types::I64]),
+    (char_is_digit,     "roca_char_is_digit",     roca_char_is_digit,     [types::I64],                                [types::I8]),
+    (char_is_letter,    "roca_char_is_letter",    roca_char_is_letter,    [types::I64],                                [types::I8]),
+    (char_is_whitespace,"roca_char_is_whitespace",roca_char_is_whitespace,[types::I64],                                [types::I8]),
+    (char_is_alphanumeric,"roca_char_is_alphanumeric",roca_char_is_alphanumeric,[types::I64],                           [types::I8]),
+
+    // Number parsing
+    (number_parse,      "roca_number_parse",      roca_number_parse,      [types::I64],                                [types::F64]),
 
     // Arrays
     (array_new,         "roca_array_new",         roca_array_new,         [],                                          [types::I64]),
@@ -88,6 +99,15 @@ runtime_funcs! {
     (array_push_str,    "roca_array_push_str",    roca_array_push_str,    [types::I64, types::I64],                    []),
     (array_get_str,     "roca_array_get_str",     roca_array_get_str,     [types::I64, types::I64],                    [types::I64]),
     (array_join,        "roca_array_join",        roca_array_join,        [types::I64, types::I64],                    [types::I64]),
+
+    // Maps
+    (map_new,           "roca_map_new",           roca_map_new,           [],                                          [types::I64]),
+    (map_set,           "roca_map_set",           roca_map_set,           [types::I64, types::I64, types::I64],        [types::I64]),
+    (map_get,           "roca_map_get",           roca_map_get,           [types::I64, types::I64],                    [types::I64]),
+    (map_has,           "roca_map_has",           roca_map_has,           [types::I64, types::I64],                    [types::I8]),
+    (map_delete,        "roca_map_delete",        roca_map_delete,        [types::I64, types::I64],                    [types::I8]),
+    (map_size,          "roca_map_size",           roca_map_size,          [types::I64],                                [types::F64]),
+    (map_keys,          "roca_map_keys",           roca_map_keys,          [types::I64],                                [types::I64]),
 
     // Structs
     (struct_alloc,      "roca_struct_alloc",      roca_struct_alloc,      [types::I64],                                [types::I64]),

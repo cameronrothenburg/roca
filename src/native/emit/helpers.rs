@@ -56,7 +56,7 @@ pub fn infer_kind(expr: &Expr, ctx: &EmitCtx) -> ValKind {
                     "map" | "filter" | "split" => ValKind::Array,
                     "trim" | "toUpperCase" | "toLowerCase" | "slice"
                     | "charAt" | "join" | "toString" | "concat" => ValKind::String,
-                    "indexOf" | "length" | "len" => ValKind::Number,
+                    "indexOf" | "charCodeAt" | "length" | "len" => ValKind::Number,
                     "includes" | "startsWith" | "endsWith" => ValKind::Bool,
                     "push" | "pop" => ValKind::Other,
                     _ => ValKind::Other,

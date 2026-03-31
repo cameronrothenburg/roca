@@ -87,6 +87,74 @@ pub extern "C" fn roca_string_index_of(haystack: i64, needle: i64) -> f64 {
     read_cstr(haystack).find(read_cstr(needle)).map(|i| i as f64).unwrap_or(-1.0)
 }
 
+pub extern "C" fn roca_string_char_code_at(s: i64, idx: i64) -> f64 {
+    read_cstr(s).chars().nth(idx as usize).map(|c| c as u32 as f64).unwrap_or(f64::NAN)
+}
+
+pub extern "C" fn roca_char_from_code(code: f64) -> i64 {
+    let c = char::from_u32(code as u32).unwrap_or('\0');
+    alloc_str(&c.to_string())
+}
+
+pub extern "C" fn roca_char_is_digit(ch: i64) -> u8 {
+    read_cstr(ch).chars().next().map(|c| c.is_ascii_digit() as u8).unwrap_or(0)
+}
+
+pub extern "C" fn roca_char_is_letter(ch: i64) -> u8 {
+    read_cstr(ch).chars().next().map(|c| c.is_ascii_alphabetic() as u8).unwrap_or(0)
+}
+
+pub extern "C" fn roca_char_is_whitespace(ch: i64) -> u8 {
+    read_cstr(ch).chars().next().map(|c| c.is_ascii_whitespace() as u8).unwrap_or(0)
+}
+
+pub extern "C" fn roca_char_is_alphanumeric(ch: i64) -> u8 {
+    read_cstr(ch).chars().next().map(|c| c.is_ascii_alphanumeric() as u8).unwrap_or(0)
+}
+
+pub extern "C" fn roca_number_parse(s: i64) -> f64 {
+    read_cstr(s).trim().parse::<f64>().unwrap_or(f64::NAN)
+}
+
+// ─── Map (String → i64 value pointers) ──────
+
+pub extern "C" fn roca_map_new() -> i64 {
+    let map: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+    Box::into_raw(Box::new(map)) as i64
+}
+
+pub extern "C" fn roca_map_set(map_ptr: i64, key: i64, value: i64) -> i64 {
+    let map = unsafe { &mut *(map_ptr as *mut std::collections::HashMap<String, i64>) };
+    map.insert(read_cstr(key).to_string(), value);
+    map_ptr
+}
+
+pub extern "C" fn roca_map_get(map_ptr: i64, key: i64) -> i64 {
+    let map = unsafe { &*(map_ptr as *const std::collections::HashMap<String, i64>) };
+    *map.get(read_cstr(key)).unwrap_or(&0)
+}
+
+pub extern "C" fn roca_map_has(map_ptr: i64, key: i64) -> u8 {
+    let map = unsafe { &*(map_ptr as *const std::collections::HashMap<String, i64>) };
+    map.contains_key(read_cstr(key)) as u8
+}
+
+pub extern "C" fn roca_map_delete(map_ptr: i64, key: i64) -> u8 {
+    let map = unsafe { &mut *(map_ptr as *mut std::collections::HashMap<String, i64>) };
+    map.remove(read_cstr(key)).is_some() as u8
+}
+
+pub extern "C" fn roca_map_size(map_ptr: i64) -> f64 {
+    let map = unsafe { &*(map_ptr as *const std::collections::HashMap<String, i64>) };
+    map.len() as f64
+}
+
+pub extern "C" fn roca_map_keys(map_ptr: i64) -> i64 {
+    let map = unsafe { &*(map_ptr as *const std::collections::HashMap<String, i64>) };
+    let keys: Vec<i64> = map.keys().map(|k| alloc_str(k)).collect();
+    Box::into_raw(Box::new(keys)) as i64
+}
+
 // ─── Array operations ────────────────────────────────
 
 pub extern "C" fn roca_array_new() -> i64 {

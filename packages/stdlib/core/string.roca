@@ -13,6 +13,7 @@ contract String {
     indexOf(search: String) -> Number
     split(separator: String) -> Array<String>
     charAt(index: Number) -> String
+    charCodeAt(index: Number) -> Number
     toString() -> String
 }
 
