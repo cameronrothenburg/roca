@@ -40,6 +40,9 @@ pub fn compile_all<M: Module>(
         }
     }
 
+    // Pre-compile closures as top-level functions
+    emit::compile_closures(module, source, &rt, &mut compiled, &func_return_kinds)?;
+
     for item in &source.items {
         if let crate::ast::Item::Function(f) = item {
             emit::compile_function(module, f, &rt, &mut compiled, &func_return_kinds)?;
@@ -747,6 +750,46 @@ mod tests {
     }
 
     #[test]
+    #[test]
+    fn closure_as_value() {
+        let mut m = jit(r#"
+            pub fn apply() -> Number {
+                const double = fn(x) -> x * 2
+                return double(5)
+            }
+        "#);
+        let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "apply", 0)) };
+        assert_eq!(f(), 10.0);
+    }
+
+    #[test]
+    fn closure_arithmetic() {
+        let mut m = jit(r#"
+            pub fn compute() -> Number {
+                const add_ten = fn(x) -> x + 10
+                const sub_one = fn(x) -> x - 1
+                return add_ten(sub_one(5))
+            }
+        "#);
+        let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "compute", 0)) };
+        assert_eq!(f(), 14.0); // (5-1)+10
+    }
+
+    #[test]
+    fn closure_passed_to_function() {
+        let mut m = jit(r#"
+            pub fn apply_fn(n: Number, transform: fn(Number) -> Number) -> Number {
+                return transform(n)
+            }
+            pub fn use_it() -> Number {
+                const triple = fn(x) -> x * 3
+                return apply_fn(4, triple)
+            }
+        "#);
+        let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "use_it", 0)) };
+        assert_eq!(f(), 12.0);
+    }
+
     fn aot_produces_object() {
         let file = crate::parse::parse("pub fn add(a: Number, b: Number) -> Number { return a + b }");
         let bytes = compile_to_object(&file).unwrap();
@@ -1084,5 +1127,57 @@ mod tests {
         // "start" + 3x "iter" = 4 allocs, all freed (3 on reassign + 1 at scope exit)
         assert_eq!(allocs, 4, "4 strings allocated");
         assert_eq!(allocs, frees, "loop reassign: {} allocs, {} frees", allocs, frees);
+    });
+
+    mem_test!(mem_closure_strings_freed, {
+        // Closure that creates strings — all should be freed at scope exit
+        let mut m = jit(r#"
+            pub fn closure_test() -> Number {
+                const greeting = "hello"
+                const unused = "waste"
+                return 42
+            }
+        "#);
+        runtime::MEM.reset();
+        let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "closure_test", 0)) };
+        assert_eq!(f(), 42.0);
+        let (allocs, frees, _, _, _) = runtime::MEM.stats();
+        assert_eq!(allocs, frees, "closure context strings freed: {} allocs, {} frees", allocs, frees);
+    });
+
+    mem_test!(mem_closure_as_value_no_leak, {
+        // First-class closure — the closure pointer itself isn't heap-allocated
+        // but strings created inside the closure should be freed
+        let mut m = jit(r#"
+            pub fn use_closure() -> Number {
+                const double = fn(x) -> x * 2
+                const temp = "some_string"
+                return double(5)
+            }
+        "#);
+        runtime::MEM.reset();
+        let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "use_closure", 0)) };
+        assert_eq!(f(), 10.0);
+        let (allocs, frees, _, _, _) = runtime::MEM.stats();
+        assert_eq!(allocs, frees, "closure value no leak: {} allocs, {} frees", allocs, frees);
+    });
+
+    mem_test!(mem_closure_passed_as_arg_no_leak, {
+        // Closure passed to another function — strings in caller freed
+        let mut m = jit(r#"
+            pub fn apply(n: Number, transform: fn(Number) -> Number) -> Number {
+                return transform(n)
+            }
+            pub fn caller() -> Number {
+                const label = "tracking"
+                const triple = fn(x) -> x * 3
+                return apply(4, triple)
+            }
+        "#);
+        runtime::MEM.reset();
+        let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "caller", 0)) };
+        assert_eq!(f(), 12.0);
+        let (allocs, frees, _, _, _) = runtime::MEM.stats();
+        assert_eq!(allocs, frees, "closure arg no leak: {} allocs, {} frees", allocs, frees);
     });
 }

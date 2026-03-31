@@ -50,6 +50,9 @@ impl StructLayout {
     }
 }
 
+/// Global counter for unique closure names
+static CLOSURE_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 /// Everything needed during emission — avoids parameter sprawl
 struct EmitCtx {
     vars: HashMap<String, VarInfo>,
@@ -115,6 +118,126 @@ pub fn build_return_kind_map(source: &roca::SourceFile) -> HashMap<String, ValKi
         }
     }
     map
+}
+
+/// Pre-compile all closures in a source file as top-level functions.
+/// Each closure gets a unique name based on its params and body hash.
+pub fn compile_closures<M: Module>(
+    module: &mut M,
+    source: &roca::SourceFile,
+    rt: &RuntimeFuncs,
+    compiled: &mut CompiledFuncs,
+    func_return_kinds: &HashMap<String, ValKind>,
+) -> Result<(), String> {
+    let mut closures = Vec::new();
+    for item in &source.items {
+        if let roca::Item::Function(f) = item {
+            collect_closures(&f.body, &mut closures);
+        }
+    }
+    for (params, body) in closures {
+        let name = format!("__closure_{}_{}", params.len(), closure_hash(&params, &body));
+        if compiled.funcs.contains_key(&name) { continue; }
+
+        // Build signature: assume f64 params and f64 return for numeric closures
+        // TODO: infer from fn(A) -> B type annotations
+        let mut sig = module.make_signature();
+        for _ in &params {
+            sig.params.push(AbiParam::new(types::F64));
+        }
+        sig.returns.push(AbiParam::new(types::F64));
+
+        let func_id = module.declare_function(&name, Linkage::Export, &sig)
+            .map_err(|e| format!("declare closure: {}", e))?;
+        compiled.funcs.insert(name.clone(), func_id);
+
+        let mut ctx = module.make_context();
+        ctx.func.signature = sig;
+        let mut bc = FunctionBuilderContext::new();
+        let mut builder = FunctionBuilder::new(&mut ctx.func, &mut bc);
+
+        let entry = builder.create_block();
+        builder.append_block_params_for_function_params(entry);
+        builder.switch_to_block(entry);
+        builder.seal_block(entry);
+
+        let mut emit_ctx = EmitCtx {
+            vars: HashMap::new(),
+            func_refs: rt.import_all(module, &mut builder.func, compiled),
+            returns_err: false,
+            return_type: types::F64,
+            struct_layouts: HashMap::new(),
+            var_struct_type: HashMap::new(),
+            crash_handlers: HashMap::new(),
+            func_return_kinds: func_return_kinds.clone(),
+            live_heap_vars: Vec::new(),
+            loop_heap_base: 0,
+            loop_exit: None,
+            loop_header: None,
+        };
+
+        // Bind params
+        let block_params: Vec<Value> = builder.block_params(entry).to_vec();
+        for (i, p) in params.iter().enumerate() {
+            let slot = alloc_slot(&mut builder, block_params[i]);
+            emit_ctx.set_var_kind(p.clone(), slot, types::F64, ValKind::Number);
+        }
+
+        let val = emit_expr(&mut builder, &body, &mut emit_ctx);
+        emit_scope_cleanup(&mut builder, &emit_ctx, None);
+        builder.ins().return_(&[val]);
+        builder.finalize();
+
+        module.define_function(func_id, &mut ctx)
+            .map_err(|e| format!("compile closure {}: {}", name, e))?;
+        module.clear_context(&mut ctx);
+    }
+    Ok(())
+}
+
+/// Collect closures that need pre-compilation as top-level functions.
+/// Only collects closures assigned to variables or passed as direct function arguments.
+/// Closures used inline in method calls (map/filter) are handled by emit_inline_map_filter.
+fn collect_closures(stmts: &[roca::Stmt], out: &mut Vec<(Vec<String>, roca::Expr)>) {
+    for stmt in stmts {
+        match stmt {
+            roca::Stmt::Const { value, .. } | roca::Stmt::Let { value, .. } => {
+                // Closure assigned to variable: const double = fn(x) -> x * 2
+                if let roca::Expr::Closure { params, body } = value {
+                    out.push((params.clone(), *body.clone()));
+                }
+                // Closure passed as argument to a direct function call (not method call)
+                if let roca::Expr::Call { target, args } = value {
+                    if matches!(target.as_ref(), roca::Expr::Ident(_)) {
+                        for a in args {
+                            if let roca::Expr::Closure { params, body } = a {
+                                out.push((params.clone(), *body.clone()));
+                            }
+                        }
+                    }
+                }
+            }
+            roca::Stmt::Return(expr) | roca::Stmt::Expr(expr) => {
+                if let roca::Expr::Call { target, args } = expr {
+                    if matches!(target.as_ref(), roca::Expr::Ident(_)) {
+                        for a in args {
+                            if let roca::Expr::Closure { params, body } = a {
+                                out.push((params.clone(), *body.clone()));
+                            }
+                        }
+                    }
+                }
+            }
+            roca::Stmt::If { then_body, else_body, .. } => {
+                collect_closures(then_body, out);
+                if let Some(body) = else_body { collect_closures(body, out); }
+            }
+            roca::Stmt::While { body, .. } | roca::Stmt::For { body, .. } => {
+                collect_closures(body, out);
+            }
+            _ => {}
+        }
+    }
 }
 
 /// Compile a Roca function to native code. Returns the FuncId.
@@ -976,17 +1099,34 @@ fn emit_call(b: &mut FunctionBuilder, target: &Expr, args: &[Expr], ctx: &mut Em
             let call = b.ins().call(func_ref, &arg_vals);
             let results = b.inst_results(call).to_vec();
 
-            // Check for crash handler on this call
             if results.len() >= 2 {
                 let value = results[0];
                 let err_tag = results[1];
                 if let Some(handler) = ctx.crash_handlers.get(name).cloned() {
                     return emit_crash_handler(b, value, err_tag, &handler, ctx);
                 }
-                // No crash handler but multi-return — just return the value
                 return value;
             }
             if !results.is_empty() { return results[0]; }
+        }
+
+        // Indirect call: variable holds a function pointer (closure)
+        if let Some(var) = ctx.get_var(name) {
+            if var.cranelift_type == types::I64 {
+                let func_ptr = load_slot(b, var.slot, types::I64);
+                let mut sig = b.func.signature.clone();
+                sig.params.clear();
+                sig.returns.clear();
+                for _ in args {
+                    sig.params.push(AbiParam::new(types::F64));
+                }
+                sig.returns.push(AbiParam::new(types::F64));
+                let sig_ref = b.import_signature(sig);
+                let arg_vals: Vec<Value> = args.iter().map(|a| emit_expr(b, a, ctx)).collect();
+                let call = b.ins().call_indirect(sig_ref, func_ptr, &arg_vals);
+                let results = b.inst_results(call);
+                if !results.is_empty() { return results[0]; }
+            }
         }
     }
     b.ins().iconst(types::I64, 0)
@@ -1117,10 +1257,25 @@ fn emit_struct_lit(b: &mut FunctionBuilder, name: &str, fields: &[(String, Expr)
     ptr
 }
 
-fn emit_closure(_b: &mut FunctionBuilder, _params: &[String], _body: &Expr, _ctx: &mut EmitCtx) -> Value {
-    // Closures as values need function pointers — placeholder for now.
-    // They work when inlined in method calls (map, filter) via emit_method_call.
-    _b.ins().iconst(types::I64, 0)
+fn emit_closure(b: &mut FunctionBuilder, params: &[String], body: &Expr, ctx: &mut EmitCtx) -> Value {
+    // Pre-compiled closures are registered with __closure_N names.
+    // Look up the closure by matching params+body hash to find the right one.
+    // If found, return the function pointer via func_addr.
+    let closure_name = format!("__closure_{}_{}", params.len(), closure_hash(params, body));
+    if let Some(&func_ref) = ctx.get_func(&closure_name) {
+        return b.ins().func_addr(types::I64, func_ref);
+    }
+    // Fallback for closures that weren't pre-compiled (e.g., inline map/filter)
+    b.ins().iconst(types::I64, 0)
+}
+
+/// Simple hash for identifying closures by their AST structure
+fn closure_hash(params: &[String], body: &Expr) -> u64 {
+    use std::hash::{Hash, Hasher, DefaultHasher};
+    let mut h = DefaultHasher::new();
+    for p in params { p.hash(&mut h); }
+    format!("{:?}", body).hash(&mut h);
+    h.finish()
 }
 
 fn emit_method_call(b: &mut FunctionBuilder, target: &Expr, method: &str, args: &[Expr], ctx: &mut EmitCtx) -> Value {
