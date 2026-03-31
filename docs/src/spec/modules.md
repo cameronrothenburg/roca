@@ -74,26 +74,32 @@ The stdlib runtime is published as an npm package:
 Package name: @rocalang/runtime
 ```
 
-Compiled Roca programs import from this package:
+The runtime exports a single `roca` object containing all stdlib implementations:
 
 ```javascript
-import { RocaMath, RocaFs, RocaHttp } from "@rocalang/runtime";
+import roca from "@rocalang/runtime";
+
+roca.Math.floor(3.7);
+roca.Fs.readFile(path);
+roca.Http.get(url);
 ```
 
-### 4.2.2 Naming Convention
+### 4.2.2 Runtime Map
 
-Stdlib exports use the same names as the Roca contracts. ES module imports are lexically scoped, so there are no global collisions:
+The runtime provides a map of stdlib implementations. Each entry is a wrapped version of the platform's native API (or a pure JS implementation where no native API exists):
 
 ```javascript
-// @rocalang/runtime exports Math, JSON, Map, etc.
-// These shadow globals within the importing module — no conflict
-import { Math, JSON, Fs } from "@rocalang/runtime";
-
-Math.floor(3.7);   // Calls @rocalang/runtime's Math, not globalThis.Math
-JSON.parse(text);  // Calls @rocalang/runtime's JSON, not globalThis.JSON
+// @rocalang/runtime internals
+export default {
+    Math: wrap({ floor: globalThis.Math.floor, ceil: globalThis.Math.ceil, ... }),
+    JSON: wrap({ parse: globalThis.JSON.parse, stringify: globalThis.JSON.stringify, ... }),
+    Fs: wrap({ readFile: readFileSync, writeFile: writeFileSync, ... }),  // Node only
+    Http: wrap({ get: fetch, post: fetch, ... }),
+    // ...
+};
 ```
 
-The compiler emits `Math.floor(n)` exactly as written in Roca source. No prefixing or renaming needed.
+The `wrap` function converts each method to Roca's `{ value, err }` protocol. The runtime detects the environment and only populates what's available — `Fs` exists on Node/Bun, not in browsers.
 
 ### 4.2.3 Installation
 
@@ -140,24 +146,40 @@ This is how users bridge existing JS code into Roca's error protocol without rew
 
 ### 4.3.1 Stdlib Imports
 
-When a Roca file imports from `std::`, the compiled JS MUST emit an import from `@rocalang/runtime`:
+When a Roca file uses stdlib contracts, the compiled JS MUST import the runtime and access stdlib via the `roca` map:
 
 ```roca
 import { Math } from std::math
 import { Fs } from std::fs
+
+pub fn process() -> Number {
+    const data = Fs.readFile("config.json")
+    return Math.floor(data.length)
+}
 ```
 
 Compiles to:
 
 ```javascript
-import { Math, Fs } from "@rocalang/runtime";
+import roca from "@rocalang/runtime";
+
+export function process() {
+    const _data_tmp = roca.Fs.readFile("config.json");
+    const _data_err = _data_tmp.err;
+    // ... crash handling ...
+    const data = _data_tmp.value;
+    return roca.Math.floor(data.length);
+}
 ```
 
-All stdlib imports MUST be consolidated into a single `import` statement from `@rocalang/runtime`.
+The compiler MUST:
+1. Emit a single `import roca from "@rocalang/runtime"` at the top
+2. Replace all stdlib contract references with `roca.ContractName`
+3. Only emit the runtime import if the file uses stdlib contracts
 
 ### 4.3.2 Relative Imports
 
-Relative `.roca` imports compile to relative `.js` imports:
+Relative `.roca` imports compile to relative `.js` imports unchanged:
 
 ```roca
 import { User } from "./types.roca"
@@ -169,21 +191,17 @@ Compiles to:
 import { User } from "./types.js";
 ```
 
-### 4.3.3 No Identifier Mapping
+### 4.3.3 Identifier Mapping
 
-Contract names are emitted as-is. No renaming or prefixing:
+The compiler MUST prefix stdlib contract names with `roca.` in all emitted JS:
 
-```roca
-const result = Math.floor(3.7)
-```
+| Roca source | JS output |
+|-------------|-----------|
+| `Math.floor(n)` | `roca.Math.floor(n)` |
+| `Fs.readFile(path)` | `roca.Fs.readFile(path)` |
+| `Http.get(url)` | `roca.Http.get(url)` |
 
-Compiles to:
-
-```javascript
-const result = Math.floor(3.7);
-```
-
-ES module scoping ensures the imported `Math` shadows `globalThis.Math` within the module. No `Roca` prefix needed.
+This mapping applies ONLY to contracts imported via `std::`. User-defined types and relative imports are emitted as-is.
 
 ---
 
