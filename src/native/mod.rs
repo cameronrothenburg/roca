@@ -2,6 +2,7 @@
 //! Experimental: use `--engine=native` to enable.
 
 pub mod types;
+#[allow(dead_code)]
 pub mod helpers;
 pub mod runtime;
 pub mod emit;
@@ -23,14 +24,12 @@ pub fn create_jit_module() -> JITModule {
 /// Compile and run a simple Roca expression, return the result as a string.
 /// This is the entry point for `--engine=native` proof test execution.
 pub fn eval_roca(source: &crate::ast::SourceFile) -> Result<String, String> {
-    let mut module = JITModule::new(
-        JITBuilder::new(cranelift_module::default_libcall_names()).expect("jit builder failed")
-    );
+    let mut module = create_jit_module();
+    let rt = runtime::declare_runtime(&mut module);
 
-    // Compile directly without runtime — just test basic IR generation
     for item in &source.items {
         if let crate::ast::Item::Function(f) = item {
-            emit::compile_function_bare(&mut module, f)?;
+            emit::compile_function(&mut module, f, &rt)?;
         }
     }
 
@@ -65,12 +64,9 @@ mod tests {
                 .expect("jit builder failed")
         );
 
-        let _ = std::fs::write("/tmp/cl_test_items.txt", format!("items: {}, first: {:?}", file.items.len(), std::mem::discriminant(&file.items[0])));
         if let crate::ast::Item::Function(f) = &file.items[0] {
-            let _ = std::fs::write("/tmp/cl_test_entering.txt", format!("entering compile_function_bare for {}", f.name));
-            emit::compile_function_bare(&mut module, f).unwrap();
-        } else {
-            let _ = std::fs::write("/tmp/cl_test_entering.txt", "NOT a function!".to_string());
+            let rt = runtime::declare_runtime(&mut module);
+            emit::compile_function(&mut module, f, &rt).unwrap();
         }
 
         module.finalize_definitions().unwrap();
@@ -98,7 +94,8 @@ mod tests {
         );
 
         if let crate::ast::Item::Function(f) = &file.items[0] {
-            emit::compile_function_bare(&mut module, f).unwrap();
+            let rt = runtime::declare_runtime(&mut module);
+            emit::compile_function(&mut module, f, &rt).unwrap();
         }
         module.finalize_definitions().unwrap();
 
@@ -131,7 +128,8 @@ mod tests {
         );
 
         if let crate::ast::Item::Function(f) = &file.items[0] {
-            emit::compile_function_bare(&mut module, f).unwrap();
+            let rt = runtime::declare_runtime(&mut module);
+            emit::compile_function(&mut module, f, &rt).unwrap();
         }
         module.finalize_definitions().unwrap();
 
@@ -161,7 +159,8 @@ mod tests {
         );
 
         if let crate::ast::Item::Function(f) = &file.items[0] {
-            emit::compile_function_bare(&mut module, f).unwrap();
+            let rt = runtime::declare_runtime(&mut module);
+            emit::compile_function(&mut module, f, &rt).unwrap();
         }
         module.finalize_definitions().unwrap();
 
@@ -192,7 +191,8 @@ mod tests {
         );
 
         if let crate::ast::Item::Function(f) = &file.items[0] {
-            emit::compile_function_bare(&mut module, f).unwrap();
+            let rt = runtime::declare_runtime(&mut module);
+            emit::compile_function(&mut module, f, &rt).unwrap();
         }
         module.finalize_definitions().unwrap();
 
@@ -223,7 +223,8 @@ mod tests {
         );
 
         if let crate::ast::Item::Function(f) = &file.items[0] {
-            emit::compile_function_bare(&mut module, f).unwrap();
+            let rt = runtime::declare_runtime(&mut module);
+            emit::compile_function(&mut module, f, &rt).unwrap();
         }
         module.finalize_definitions().unwrap();
 

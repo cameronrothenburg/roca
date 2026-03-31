@@ -76,8 +76,7 @@ extern "C" fn roca_string_concat(a: i64, b: i64) -> i64 {
         unsafe { CStr::from_ptr(b as *const i8) }.to_str().unwrap_or("")
     };
     let result = format!("{}{}\0", a_str, b_str);
-    let ptr = result.as_ptr() as i64;
-    std::mem::forget(result); // leak — TODO: refcounting
+    let ptr = Box::into_raw(result.into_boxed_str()) as *const u8 as i64;
     ptr
 }
 
@@ -95,7 +94,5 @@ extern "C" fn roca_string_from_f64(n: f64) -> i64 {
     } else {
         format!("{}\0", n)
     };
-    let ptr = s.as_ptr() as i64;
-    std::mem::forget(s);
-    ptr
+    Box::into_raw(s.into_boxed_str()) as *const u8 as i64
 }

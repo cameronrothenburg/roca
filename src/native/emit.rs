@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use cranelift_codegen::ir::{self, types, AbiParam, InstBuilder, StackSlotData, StackSlotKind, Value};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_jit::JITModule;
-use cranelift_module::{Module, Linkage};
+use cranelift_module::{Module, Linkage, FuncId};
 
 use crate::ast::{self as roca, Expr, Stmt, BinOp};
 use super::types::roca_to_cranelift;
@@ -15,16 +15,21 @@ struct VarInfo {
     cranelift_type: ir::Type,
 }
 
-/// Bare minimum compilation — no runtime, just test IR generation
-pub fn compile_function_bare(
+/// Compile a Roca function to native code. Returns the FuncId for calling it.
+pub fn compile_function(
     module: &mut JITModule,
     func: &roca::FnDef,
-) -> Result<(), String> {
+    _rt: &RuntimeFuncs,
+) -> Result<FuncId, String> {
     let mut sig = module.make_signature();
     for param in &func.params {
         sig.params.push(AbiParam::new(roca_to_cranelift(&param.type_ref)));
     }
-    sig.returns.push(AbiParam::new(roca_to_cranelift(&func.return_type)));
+    let ret_type = roca_to_cranelift(&func.return_type);
+    sig.returns.push(AbiParam::new(ret_type));
+    if func.returns_err {
+        sig.returns.push(AbiParam::new(types::I8));
+    }
 
     let func_id = module.declare_function(&func.name, Linkage::Export, &sig)
         .map_err(|e| format!("declare: {}", e))?;
@@ -49,96 +54,41 @@ pub fn compile_function_bare(
         builder.ins().stack_store(val, slot, 0);
         vars.insert(p.name.clone(), VarInfo { slot, cranelift_type: cl_type });
     }
+
+    // Emit body — track return manually (is_unreachable is unreliable on sealed entry blocks)
     let mut returned = false;
     for stmt in &func.body {
-        let _ = std::fs::write("/tmp/cl_in_loop.txt", format!("processing stmt: {:?}", std::mem::discriminant(stmt)));
-        emit_stmt(&mut builder, stmt, &mut vars, false, &mut returned);
         if returned { break; }
+        emit_stmt(&mut builder, stmt, &mut vars, func.returns_err, &mut returned);
     }
+
+    // Default return if no explicit return was emitted
     if !returned {
-        let d = builder.ins().f64const(0.0);
-        builder.ins().return_(&[d]);
+        let default_val = default_value_for_type(&mut builder, &func.return_type);
+        if func.returns_err {
+            let no_err = builder.ins().iconst(types::I8, 0);
+            builder.ins().return_(&[default_val, no_err]);
+        } else {
+            builder.ins().return_(&[default_val]);
+        }
     }
 
     builder.finalize();
-    let _ = std::fs::write("/tmp/cl_bare_ir.txt", format!("{}", ctx.func.display()));
-
-    module.define_function(func_id, &mut ctx).map_err(|e| format!("define: {}", e))?;
-    module.clear_context(&mut ctx);
-    Ok(())
-}
-
-pub fn compile_function(
-    module: &mut JITModule,
-    func: &roca::FnDef,
-    _rt: &RuntimeFuncs,
-) -> Result<(), String> {
-    let mut sig = module.make_signature();
-    for param in &func.params {
-        sig.params.push(AbiParam::new(roca_to_cranelift(&param.type_ref)));
-    }
-    let ret_type = roca_to_cranelift(&func.return_type);
-    sig.returns.push(AbiParam::new(ret_type));
-    if func.returns_err {
-        sig.returns.push(AbiParam::new(types::I8));
-    }
-
-    let func_id = module.declare_function(&func.name, Linkage::Export, &sig)
-        .map_err(|e| format!("declare error: {}", e))?;
-
-    let mut ctx = module.make_context();
-    ctx.func.signature = sig;
-    let mut builder_ctx = FunctionBuilderContext::new();
-
-    {
-        let mut builder = FunctionBuilder::new(&mut ctx.func, &mut builder_ctx);
-        let entry = builder.create_block();
-        builder.append_block_params_for_function_params(entry);
-        builder.switch_to_block(entry);
-        builder.seal_block(entry);
-
-        // Store params in stack slots
-        let mut vars: HashMap<String, VarInfo> = HashMap::new();
-        let block_params: Vec<Value> = builder.block_params(entry).to_vec();
-        for (i, param) in func.params.iter().enumerate() {
-            let val = block_params[i];
-            let cl_type = roca_to_cranelift(&param.type_ref);
-            let slot = builder.create_sized_stack_slot(StackSlotData::new(
-                StackSlotKind::ExplicitSlot, 8, 0,
-            ));
-            builder.ins().stack_store(val, slot, 0);
-            vars.insert(param.name.clone(), VarInfo { slot, cranelift_type: cl_type });
-        }
-
-        // Emit body
-        let returns_err = func.returns_err;
-        let mut returned = false;
-        for stmt in &func.body {
-            if returned { break; }
-            emit_stmt(&mut builder, stmt, &mut vars, returns_err, &mut returned);
-        }
-
-        // Default return if not yet returned
-        if !returned {
-            let default_val = match &func.return_type {
-                roca::TypeRef::Number => builder.ins().f64const(0.0),
-                _ => builder.ins().iconst(types::I8, 0),
-            };
-            if returns_err {
-                let no_err = builder.ins().iconst(types::I8, 0);
-                builder.ins().return_(&[default_val, no_err]);
-            } else {
-                builder.ins().return_(&[default_val]);
-            }
-        }
-
-        builder.finalize();
-    }
 
     module.define_function(func_id, &mut ctx)
         .map_err(|e| format!("compile error in {}: {}", func.name, e))?;
     module.clear_context(&mut ctx);
-    Ok(())
+    Ok(func_id)
+}
+
+/// Produce a default zero value for a Roca type
+fn default_value_for_type(b: &mut FunctionBuilder, ty: &roca::TypeRef) -> Value {
+    match ty {
+        roca::TypeRef::Number => b.ins().f64const(0.0),
+        roca::TypeRef::Bool => b.ins().iconst(types::I8, 0),
+        roca::TypeRef::String => b.ins().iconst(types::I64, 0), // null pointer
+        _ => b.ins().iconst(types::I64, 0),
+    }
 }
 
 fn emit_stmt(b: &mut FunctionBuilder, stmt: &Stmt, vars: &mut HashMap<String, VarInfo>, returns_err: bool, returned: &mut bool) {
@@ -192,13 +142,11 @@ fn emit_stmt(b: &mut FunctionBuilder, stmt: &Stmt, vars: &mut HashMap<String, Va
 fn emit_expr(b: &mut FunctionBuilder, expr: &Expr, vars: &HashMap<String, VarInfo>) -> Value {
     match expr {
         Expr::Number(n) => b.ins().f64const(*n),
-        Expr::Bool(v) => b.ins().iconst(types::I64, if *v { 1 } else { 0 }),
+        Expr::Bool(v) => b.ins().iconst(types::I8, if *v { 1 } else { 0 }),
         Expr::String(s) => {
-            // Leak a heap-allocated string and return the pointer
-            // TODO: proper refcounting/GC
-            let leaked = Box::leak(format!("{}\0", s).into_boxed_str());
-            let ptr = leaked.as_ptr() as i64;
-            b.ins().iconst(types::I64, ptr)
+            // Heap-allocate string — TODO: proper lifetime management
+            let leaked = Box::into_raw(format!("{}\0", s).into_boxed_str());
+            b.ins().iconst(types::I64, leaked as *const u8 as i64)
         }
         Expr::Ident(name) => {
             if let Some(var) = vars.get(name) {
