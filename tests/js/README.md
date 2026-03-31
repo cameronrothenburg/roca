@@ -1,17 +1,21 @@
-# JS Output Tests
+# JS Tests
 
-Tests that verify compiled JS output runs correctly against `@rocalang/runtime`.
+Two layers of testing for the JavaScript target:
 
-These tests require Node.js and are NOT run by `cargo test`. Run them with:
+## Layer 1: Runtime Tests (`runtime.test.js`)
+
+Tests `@rocalang/runtime` directly — does each stdlib contract work?
+
+## Layer 2: Compiler Output Tests (`compiler.test.js`)
+
+Tests that `roca build` produces correct JS — does the emitter output valid code that runs with the runtime?
+
+## Running
 
 ```bash
-./test.sh
+cd tests/js
+bun install
+bun test
 ```
 
-## Moved from verify/
-
-- `cross_module.rs` — tests cross-file imports produce working JS
-- `imports.rs` — tests import resolution in compiled output
-
-These were moved here because they require a JS runtime (Node/Bun) to execute.
-Native-only tests remain in `tests/verify/`.
+Uses the local `packages/runtime/` via `file:` dependency.
