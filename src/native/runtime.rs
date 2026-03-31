@@ -393,7 +393,7 @@ pub extern "C" fn roca_fs_read_file(path: i64) -> (i64, u8) {
                 std::io::ErrorKind::PermissionDenied => 2,
                 _ => 3,
             };
-            (alloc_str(""), tag)
+            (0, tag) // null on error — no allocation to leak
         }
     }
 }
@@ -438,7 +438,7 @@ pub extern "C" fn roca_fs_read_dir(path: i64) -> (i64, u8) {
                 std::io::ErrorKind::PermissionDenied => 2,
                 _ => 3,
             };
-            (roca_array_new(), tag)
+            (0, tag) // null on error — no allocation to leak
         }
     }
 }
