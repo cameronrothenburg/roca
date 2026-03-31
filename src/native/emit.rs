@@ -50,9 +50,6 @@ impl StructLayout {
     }
 }
 
-/// Global counter for unique closure names
-static CLOSURE_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-
 /// Everything needed during emission — avoids parameter sprawl
 struct EmitCtx {
     vars: HashMap<String, VarInfo>,
@@ -631,13 +628,16 @@ fn emit_stmt(b: &mut FunctionBuilder, stmt: &Stmt, ctx: &mut EmitCtx, returned: 
             let len = if let Some(f) = len_ref {
                 call_rt(b, f, &[arr])
             } else {
-                // Fallback: treat iter value as the count (convert f64 → i64)
                 if b.func.dfg.value_type(arr) == types::F64 {
                     b.ins().fcvt_to_sint(types::I64, arr)
                 } else {
                     arr
                 }
             };
+
+            // Store arr and len in slots so they survive across blocks
+            let arr_slot = alloc_slot(b, arr);
+            let len_slot = alloc_slot(b, len);
 
             // Index counter
             let zero_i64 = b.ins().iconst(types::I64, 0);
@@ -656,17 +656,19 @@ fn emit_stmt(b: &mut FunctionBuilder, stmt: &Stmt, ctx: &mut EmitCtx, returned: 
             b.switch_to_block(header);
 
             let idx = load_slot(b, idx_slot, types::I64);
-            let cond = b.ins().icmp(ir::condcodes::IntCC::SignedLessThan, idx, len);
+            let len_val = load_slot(b, len_slot, types::I64);
+            let cond = b.ins().icmp(ir::condcodes::IntCC::SignedLessThan, idx, len_val);
             b.ins().brif(cond, body_block, &[], exit, &[]);
 
             b.switch_to_block(body_block);
             b.seal_block(body_block);
 
             let idx_val = load_slot(b, idx_slot, types::I64);
+            let cur_arr = load_slot(b, arr_slot, types::I64);
             if let Some(f) = ctx.get_func("__array_get_f64") {
-                let elem = call_rt(b, *f, &[arr, idx_val]);
+                let elem = call_rt(b, *f, &[cur_arr, idx_val]);
                 let elem_slot = alloc_slot(b, elem);
-                ctx.set_var(binding.clone(), elem_slot, types::I64);
+                ctx.set_var_kind(binding.clone(), elem_slot, types::F64, ValKind::Number);
             } else {
                 let idx_f = b.ins().fcvt_from_sint(types::F64, idx_val);
                 let elem_slot = alloc_slot(b, idx_f);
@@ -775,6 +777,7 @@ fn emit_stmt(b: &mut FunctionBuilder, stmt: &Stmt, ctx: &mut EmitCtx, returned: 
         }
         Stmt::ReturnErr { name, .. } => {
             if ctx.returns_err {
+                emit_scope_cleanup(b, ctx, None);
                 let tag = (name.bytes().fold(1u8, |a, c| a.wrapping_add(c))).max(1);
                 let default_val = default_for_ir_type(b, ctx.return_type);
                 let err_tag = b.ins().iconst(types::I8, tag as i64);
@@ -1288,9 +1291,15 @@ fn emit_method_call(b: &mut FunctionBuilder, target: &Expr, method: &str, args: 
         }
     }
 
+    // Detect chained method calls that produce intermediate strings.
+    // e.g., s.trim().toUpperCase() — trim() creates a temp that must be freed
+    // after toUpperCase() consumes it.
+    let target_is_temp_string = !matches!(target, Expr::Ident(_) | Expr::String(_))
+        && infer_kind(target, ctx) == ValKind::String;
+
     let obj = emit_expr(b, target, ctx);
 
-    match method {
+    let result = match method {
         "push" => {
             if let Some(arg) = args.first() {
                 let val = emit_expr(b, arg, ctx);
@@ -1404,7 +1413,17 @@ fn emit_method_call(b: &mut FunctionBuilder, target: &Expr, method: &str, args: 
             }
         }
         _ => obj,
+    };
+
+    // Free intermediate string from chained method calls (e.g., trim() result
+    // after toUpperCase() has consumed it)
+    if target_is_temp_string {
+        if let Some(&f) = ctx.get_func("__rc_release") {
+            call_void(b, f, &[obj]);
+        }
     }
+
+    result
 }
 
 /// Inline map/filter: emit a loop that applies the closure body to each element.

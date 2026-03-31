@@ -750,7 +750,6 @@ mod tests {
     }
 
     #[test]
-    #[test]
     fn closure_as_value() {
         let mut m = jit(r#"
             pub fn apply() -> Number {
@@ -790,6 +789,7 @@ mod tests {
         assert_eq!(f(), 12.0);
     }
 
+    #[test]
     fn aot_produces_object() {
         let file = crate::parse::parse("pub fn add(a: Number, b: Number) -> Number { return a + b }");
         let bytes = compile_to_object(&file).unwrap();
@@ -1129,20 +1129,20 @@ mod tests {
         assert_eq!(allocs, frees, "loop reassign: {} allocs, {} frees", allocs, frees);
     });
 
-    mem_test!(mem_closure_strings_freed, {
-        // Closure that creates strings — all should be freed at scope exit
+    mem_test!(mem_const_strings_freed, {
+        // Const string locals — all should be freed at scope exit
         let mut m = jit(r#"
-            pub fn closure_test() -> Number {
+            pub fn const_test() -> Number {
                 const greeting = "hello"
                 const unused = "waste"
                 return 42
             }
         "#);
         runtime::MEM.reset();
-        let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "closure_test", 0)) };
+        let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "const_test", 0)) };
         assert_eq!(f(), 42.0);
         let (allocs, frees, _, _, _) = runtime::MEM.stats();
-        assert_eq!(allocs, frees, "closure context strings freed: {} allocs, {} frees", allocs, frees);
+        assert_eq!(allocs, frees, "const strings freed: {} allocs, {} frees", allocs, frees);
     });
 
     mem_test!(mem_closure_as_value_no_leak, {
@@ -1179,5 +1179,146 @@ mod tests {
         assert_eq!(f(), 12.0);
         let (allocs, frees, _, _, _) = runtime::MEM.stats();
         assert_eq!(allocs, frees, "closure arg no leak: {} allocs, {} frees", allocs, frees);
+    });
+
+    // ─── Feature coverage: for loop ──────────────────
+
+    #[test]
+    fn for_loop_over_array() {
+        let mut m = jit(r#"
+            pub fn sum_array() -> Number {
+                const arr = [10, 20, 30]
+                let total = 0
+                for item in arr {
+                    total = total + item
+                }
+                return total
+            }
+        "#);
+        let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "sum_array", 0)) };
+        assert_eq!(f(), 60.0);
+    }
+
+    // ─── Feature coverage: struct field mutation ─────
+
+    #[test]
+    fn struct_field_mutation() {
+        let mut m = jit(r#"
+            pub fn mutate_field() -> Number {
+                const p = Point { x: 10, y: 20 }
+                p.x = 99
+                return p.x + p.y
+            }
+        "#);
+        let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "mutate_field", 0)) };
+        assert_eq!(f(), 119.0); // 99 + 20
+    }
+
+    // ─── Memory: crash path cleanup ──────────────────
+
+    mem_test!(mem_crash_fallback_frees, {
+        // Crash fallback path must still free local strings
+        let mut m = jit(r#"
+            pub fn risky(n: Number) -> Number, err {
+                if n < 0 { return err.negative }
+                return n * 2
+            }
+            pub fn safe(n: Number) -> Number {
+                const label = "tracked"
+                return risky(n)
+            crash {
+                risky -> fallback(0)
+            }}
+        "#);
+        runtime::MEM.reset();
+        let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "safe", 1)) };
+
+        // OK path
+        runtime::MEM.reset();
+        assert_eq!(f(5.0), 10.0);
+        let (a1, f1, _, _, _) = runtime::MEM.stats();
+        assert_eq!(a1, f1, "ok path: {} allocs, {} frees", a1, f1);
+
+        // Error/fallback path
+        runtime::MEM.reset();
+        assert_eq!(f(-3.0), 0.0);
+        let (a2, f2, _, _, _) = runtime::MEM.stats();
+        assert_eq!(a2, f2, "fallback path: {} allocs, {} frees", a2, f2);
+    });
+
+    // ─── Memory: error-returning functions ────────────
+
+    mem_test!(mem_error_return_frees, {
+        // Functions that return errors must free their locals
+        let mut m = jit(r#"
+            pub fn validate(n: Number) -> Number, err {
+                const label = "validation"
+                if n < 0 { return err.negative }
+                return n * 2
+            }
+            pub fn caller(n: Number) -> Number {
+                let result, failed = validate(n)
+                if failed { return 0 }
+                return result
+            }
+        "#);
+        runtime::MEM.reset();
+        let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "caller", 1)) };
+
+        // OK path
+        runtime::MEM.reset();
+        assert_eq!(f(5.0), 10.0);
+        let (a1, f1, _, _, _) = runtime::MEM.stats();
+        assert_eq!(a1, f1, "ok path: {} allocs, {} frees", a1, f1);
+
+        // Error path
+        runtime::MEM.reset();
+        assert_eq!(f(-3.0), 0.0);
+        let (a2, f2, _, _, _) = runtime::MEM.stats();
+        assert_eq!(a2, f2, "error path: {} allocs, {} frees", a2, f2);
+    });
+
+    // ─── Memory: string method chains ─────────────────
+
+    mem_test!(mem_string_method_chain_frees, {
+        // Chained string methods create intermediates — all must be freed
+        let mut m = jit(r#"
+            pub fn process(s: String) -> Number {
+                const cleaned = s.trim().toUpperCase()
+                return cleaned.length
+            }
+        "#);
+        runtime::MEM.reset();
+        let mut sig = m.make_signature();
+        sig.params.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I64));
+        sig.returns.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::F64));
+        let id = m.declare_function("process", cranelift_module::Linkage::Export, &sig).unwrap();
+        let f = unsafe { std::mem::transmute::<_, fn(*const u8) -> f64>(m.get_finalized_function(id)) };
+        runtime::MEM.reset();
+        assert_eq!(f(b"  hello  \0".as_ptr()), 5.0);
+        let (allocs, frees, _, _, _) = runtime::MEM.stats();
+        assert_eq!(allocs, frees, "method chain: {} allocs, {} frees", allocs, frees);
+    });
+
+    // ─── Memory: for loop with strings ────────────────
+
+    mem_test!(mem_for_loop_no_leak, {
+        // For loop over array — loop-body locals freed each iteration
+        let mut m = jit(r#"
+            pub fn for_sum() -> Number {
+                const arr = [1, 2, 3]
+                let total = 0
+                for item in arr {
+                    const label = "iter"
+                    total = total + item
+                }
+                return total
+            }
+        "#);
+        runtime::MEM.reset();
+        let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "for_sum", 0)) };
+        assert_eq!(f(), 6.0);
+        let (allocs, frees, _, _, _) = runtime::MEM.stats();
+        assert_eq!(allocs, frees, "for loop: {} allocs, {} frees", allocs, frees);
     });
 }
