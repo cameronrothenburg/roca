@@ -410,10 +410,18 @@ pub extern "C" fn roca_free_array(ptr: i64) {
     MEM.live_bytes.fetch_sub(32, Ordering::SeqCst);
 }
 
-/// Free a struct (Vec<i64>) with n_fields heap fields to release first.
-pub extern "C" fn roca_free_struct(ptr: i64, _n_heap_fields: i64) {
+/// Free a struct (Vec<i64>). Releases the first n_heap_fields slots as RC pointers.
+pub extern "C" fn roca_free_struct(ptr: i64, n_heap_fields: i64) {
     if ptr == 0 { return; }
-    if MEM.is_debug() { eprintln!("  [mem] free_struct {:#x}", ptr); }
+    if MEM.is_debug() { eprintln!("  [mem] free_struct {:#x} (heap_fields={})", ptr, n_heap_fields); }
+    let v = unsafe { &*(ptr as *const Vec<i64>) };
+    // Cascade-release: free heap fields before freeing the struct
+    for i in 0..(n_heap_fields as usize).min(v.len()) {
+        let field_ptr = v[i];
+        if field_ptr != 0 {
+            roca_rc_release(field_ptr);
+        }
+    }
     let v = unsafe { Box::from_raw(ptr as *mut Vec<i64>) };
     let size = 24 + v.len() as i64 * 8;
     drop(v);

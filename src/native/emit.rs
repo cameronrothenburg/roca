@@ -36,6 +36,8 @@ pub enum ValKind {
     Bool,
     Array,
     Struct,
+    /// Algebraic enum variant — tagged struct with string tag at slot 0
+    EnumVariant,
     Other, // unknown — not freed at scope exit (safety: only free what we can identify)
 }
 
@@ -61,6 +63,8 @@ struct EmitCtx {
     crash_handlers: HashMap<String, CrashHandlerKind>,
     /// Function name → return kind (for tracking what kind of value a call produces)
     func_return_kinds: HashMap<String, ValKind>,
+    /// Enum name → set of variant names (for recognizing Token.Plus as enum construction)
+    enum_variants: HashMap<String, Vec<String>>,
     live_heap_vars: Vec<String>,
     loop_heap_base: usize,
     loop_exit: Option<ir::Block>,
@@ -112,6 +116,20 @@ pub fn build_return_kind_map(source: &roca::SourceFile) -> HashMap<String, ValKi
                 map.insert(ef.name.clone(), type_ref_to_kind(&ef.return_type));
             }
             _ => {}
+        }
+    }
+    map
+}
+
+/// Build a map of enum name → variant names from the source file.
+pub fn build_enum_variant_map(source: &roca::SourceFile) -> HashMap<String, Vec<String>> {
+    let mut map = HashMap::new();
+    for item in &source.items {
+        if let roca::Item::Enum(e) = item {
+            if e.is_algebraic {
+                let variants = e.variants.iter().map(|v| v.name.clone()).collect();
+                map.insert(e.name.clone(), variants);
+            }
         }
     }
     map
@@ -193,6 +211,7 @@ pub fn compile_closures<M: Module>(
             var_struct_type: HashMap::new(),
             crash_handlers: HashMap::new(),
             func_return_kinds: func_return_kinds.clone(),
+            enum_variants: HashMap::new(),
             live_heap_vars: Vec::new(),
             loop_heap_base: 0,
             loop_exit: None,
@@ -270,6 +289,7 @@ pub fn compile_function<M: Module>(
     rt: &RuntimeFuncs,
     compiled: &mut CompiledFuncs,
     func_return_kinds: &HashMap<String, ValKind>,
+    enum_variants: &HashMap<String, Vec<String>>,
 ) -> Result<FuncId, String> {
     // Build signature
     let mut sig = module.make_signature();
@@ -312,6 +332,7 @@ pub fn compile_function<M: Module>(
         var_struct_type: HashMap::new(),
         crash_handlers,
         func_return_kinds: func_return_kinds.clone(),
+        enum_variants: enum_variants.clone(),
         live_heap_vars: Vec::new(),
         loop_heap_base: 0,
         loop_exit: None,
@@ -398,6 +419,7 @@ pub fn compile_mock_stub<M: Module>(
         var_struct_type: HashMap::new(),
         crash_handlers: HashMap::new(),
         func_return_kinds: HashMap::new(),
+        enum_variants: HashMap::new(),
         live_heap_vars: Vec::new(),
         loop_heap_base: 0,
         loop_exit: None,
@@ -466,6 +488,14 @@ fn infer_kind(expr: &Expr, ctx: &EmitCtx) -> ValKind {
                     return kind;
                 }
             }
+            // Enum data variant call: Token.Number(42)
+            if let Expr::FieldAccess { target: obj, field } = target.as_ref() {
+                if let Expr::Ident(name) = obj.as_ref() {
+                    if ctx.enum_variants.get(name).map_or(false, |vs| vs.contains(&field.to_string())) {
+                        return ValKind::EnumVariant;
+                    }
+                }
+            }
             // Method call — infer from method name
             if let Expr::FieldAccess { field, .. } = target.as_ref() {
                 return match field.as_str() {
@@ -481,7 +511,7 @@ fn infer_kind(expr: &Expr, ctx: &EmitCtx) -> ValKind {
             ValKind::Other
         }
         Expr::StructLit { .. } => ValKind::Struct,
-        Expr::EnumVariant { .. } => ValKind::Struct,
+        Expr::EnumVariant { .. } => ValKind::EnumVariant,
         Expr::Match { arms, .. } => {
             // Match returns the kind of its first non-default arm
             for arm in arms {
@@ -492,6 +522,15 @@ fn infer_kind(expr: &Expr, ctx: &EmitCtx) -> ValKind {
             ValKind::Other
         }
         Expr::Ident(name) => ctx.get_var(name).map(|v| v.kind).unwrap_or(ValKind::Other),
+        // Token.Plus (unit variant via field access)
+        Expr::FieldAccess { target, field } => {
+            if let Expr::Ident(name) = target.as_ref() {
+                if ctx.enum_variants.get(name).map_or(false, |vs| vs.contains(&field.to_string())) {
+                    return ValKind::EnumVariant;
+                }
+            }
+            ValKind::Other
+        }
         Expr::Null => ValKind::Other,
         _ => ValKind::Other,
     }
@@ -529,6 +568,13 @@ fn emit_free_by_kind(
             if let Some(f) = free_struct {
                 let zero = b.ins().iconst(types::I64, 0);
                 call_void(b, f, &[ptr, zero]);
+            }
+        }
+        ValKind::EnumVariant => {
+            // Enum variants have tag string at slot 0 — cascade-release it
+            if let Some(f) = free_struct {
+                let one = b.ins().iconst(types::I64, 1);
+                call_void(b, f, &[ptr, one]);
             }
         }
         // Other/Number/Bool — don't free (either not heap or ambiguous)
@@ -908,6 +954,9 @@ fn emit_expr(b: &mut FunctionBuilder, expr: &Expr, ctx: &mut EmitCtx) -> Value {
         Expr::StringInterp(parts) => emit_string_interp(b, parts, ctx),
         Expr::Match { value, arms } => emit_match(b, value, arms, ctx),
         Expr::FieldAccess { target, field } => emit_field_access(b, target, field, ctx),
+        Expr::EnumVariant { enum_name: _, variant, args } => {
+            emit_enum_variant(b, variant, args, ctx)
+        }
         _ => b.ins().iconst(types::I64, 0),
     }
 }
@@ -990,39 +1039,112 @@ fn emit_string_interp(b: &mut FunctionBuilder, parts: &[StringPart], ctx: &mut E
 fn emit_match(b: &mut FunctionBuilder, value: &Expr, arms: &[roca::MatchArm], ctx: &mut EmitCtx) -> Value {
     let scrutinee = emit_expr(b, value, ctx);
     let is_float = b.func.dfg.value_type(scrutinee) == types::F64;
+    let has_variant_patterns = arms.iter().any(|a| matches!(&a.pattern, Some(roca::MatchPattern::Variant { .. })));
+
+    // Result type: infer from the default/wildcard arm value.
+    // The default arm is always a concrete expression (no unbound bindings).
+    // This correctly handles:
+    //   match code { 1 => Shape.Circle(5), _ => Shape.Empty }  → I64 (struct)
+    //   match shape { Shape.Circle(r) => r * r, _ => 0 }       → F64 (number)
+    //   match n { 1 => 100, 2 => 200, _ => 0 }                 → F64 (number)
+    let default_arm = arms.iter().find(|a| a.pattern.is_none());
+    let result_type = if let Some(arm) = default_arm {
+        let kind = infer_kind(&arm.value, ctx);
+        if kind == ValKind::Number { types::F64 } else { types::I64 }
+    } else if is_float {
+        types::F64
+    } else {
+        types::I64
+    };
+
     let merge = b.create_block();
-    // Match result via block param
-    let result_type = if is_float { types::F64 } else { types::I64 };
     b.append_block_param(merge, result_type);
 
     let mut remaining_arms: Vec<_> = arms.iter().collect();
     let default_arm = remaining_arms.iter().position(|a| a.pattern.is_none());
     let default = default_arm.map(|i| remaining_arms.remove(i));
 
+    // Store scrutinee in a slot so it survives across blocks
+    let scrutinee_slot = alloc_slot(b, scrutinee);
+
     for arm in &remaining_arms {
-        if let Some(roca::MatchPattern::Value(pattern)) = &arm.pattern {
-            let pat_val = emit_expr(b, pattern, ctx);
-            let cond = if is_float {
-                let cmp = b.ins().fcmp(ir::condcodes::FloatCC::Equal, scrutinee, pat_val);
-                b.ins().uextend(types::I64, cmp)
-            } else if let Some(f) = ctx.get_func("__string_eq") {
-                let eq = call_rt(b, *f, &[scrutinee, pat_val]);
-                b.ins().uextend(types::I64, eq)
-            } else {
-                icmp_to_i64(b, ir::condcodes::IntCC::Equal, scrutinee, pat_val)
-            };
+        match &arm.pattern {
+            Some(roca::MatchPattern::Value(pattern)) => {
+                let scr = load_slot(b, scrutinee_slot, if is_float { types::F64 } else { types::I64 });
+                let pat_val = emit_expr(b, pattern, ctx);
+                let cond = if is_float {
+                    let cmp = b.ins().fcmp(ir::condcodes::FloatCC::Equal, scr, pat_val);
+                    b.ins().uextend(types::I64, cmp)
+                } else if let Some(f) = ctx.get_func("__string_eq") {
+                    let eq = call_rt(b, *f, &[scr, pat_val]);
+                    b.ins().uextend(types::I64, eq)
+                } else {
+                    icmp_to_i64(b, ir::condcodes::IntCC::Equal, scr, pat_val)
+                };
 
-            let then_block = b.create_block();
-            let next_block = b.create_block();
-            b.ins().brif(cond, then_block, &[], next_block, &[]);
+                let then_block = b.create_block();
+                let next_block = b.create_block();
+                b.ins().brif(cond, then_block, &[], next_block, &[]);
 
-            b.switch_to_block(then_block);
-            b.seal_block(then_block);
-            let result = emit_expr(b, &arm.value, ctx);
-            b.ins().jump(merge, &[BlockArg::Value(result)]);
+                b.switch_to_block(then_block);
+                b.seal_block(then_block);
+                let result = emit_expr(b, &arm.value, ctx);
+                b.ins().jump(merge, &[BlockArg::Value(result)]);
 
-            b.switch_to_block(next_block);
-            b.seal_block(next_block);
+                b.switch_to_block(next_block);
+                b.seal_block(next_block);
+            }
+            Some(roca::MatchPattern::Variant { variant, bindings, .. }) => {
+                // Load scrutinee (enum variant struct pointer)
+                let scr = load_slot(b, scrutinee_slot, types::I64);
+
+                // Compare tag (slot 0) with variant name
+                let zero_idx = b.ins().iconst(types::I64, 0);
+                let tag_ptr = if let Some(&f) = ctx.get_func("__struct_get_ptr") {
+                    call_rt(b, f, &[scr, zero_idx])
+                } else { b.ins().iconst(types::I64, 0) };
+
+                let variant_str = leak_cstr(b, variant);
+                let variant_rc = if let Some(&f) = ctx.get_func("__string_new") {
+                    call_rt(b, f, &[variant_str])
+                } else { variant_str };
+
+                let cond = if let Some(&f) = ctx.get_func("__string_eq") {
+                    let eq = call_rt(b, f, &[tag_ptr, variant_rc]);
+                    b.ins().uextend(types::I64, eq)
+                } else { b.ins().iconst(types::I64, 0) };
+
+                // Free the temporary variant name string
+                if let Some(&f) = ctx.get_func("__rc_release") {
+                    call_void(b, f, &[variant_rc]);
+                }
+
+                let then_block = b.create_block();
+                let next_block = b.create_block();
+                b.ins().brif(cond, then_block, &[], next_block, &[]);
+
+                b.switch_to_block(then_block);
+                b.seal_block(then_block);
+
+                // Bind destructured fields: bindings[i] = struct_get(scrutinee, i+1)
+                let scr2 = load_slot(b, scrutinee_slot, types::I64);
+                for (i, binding) in bindings.iter().enumerate() {
+                    let field_idx = b.ins().iconst(types::I64, (i + 1) as i64);
+                    // Default to f64 for numeric fields
+                    let val = if let Some(&f) = ctx.get_func("__struct_get_f64") {
+                        call_rt(b, f, &[scr2, field_idx])
+                    } else { b.ins().f64const(0.0) };
+                    let slot = alloc_slot(b, val);
+                    ctx.set_var_kind(binding.clone(), slot, types::F64, ValKind::Number);
+                }
+
+                let result = emit_expr(b, &arm.value, ctx);
+                b.ins().jump(merge, &[BlockArg::Value(result)]);
+
+                b.switch_to_block(next_block);
+                b.seal_block(next_block);
+            }
+            None => {} // default handled below
         }
     }
 
@@ -1054,6 +1176,13 @@ fn target_kind(expr: &Expr, ctx: &mut EmitCtx) -> ValKind {
 
 fn emit_field_access(b: &mut FunctionBuilder, target: &Expr, field: &str, ctx: &mut EmitCtx) -> Value {
     let kind = target_kind(target, ctx);
+
+    // Check if target is an enum name — Token.Plus constructs a unit variant
+    if let Expr::Ident(name) = target {
+        if ctx.enum_variants.get(name).map_or(false, |vs| vs.contains(&field.to_string())) {
+            return emit_enum_variant(b, field, &[], ctx);
+        }
+    }
 
     // Check if target is a struct variable
     if let Expr::Ident(var_name) = target {
@@ -1288,6 +1417,48 @@ fn emit_struct_lit(b: &mut FunctionBuilder, name: &str, fields: &[(String, Expr)
     ptr
 }
 
+/// Construct an enum variant as a tagged struct.
+/// Layout: [tag_string_ptr, field_0, field_1, ...]
+/// Unit variants: [tag_ptr] (1 slot)
+/// Data variants: [tag_ptr, data_0, data_1, ...] (1+N slots)
+fn emit_enum_variant(b: &mut FunctionBuilder, variant: &str, args: &[Expr], ctx: &mut EmitCtx) -> Value {
+    let num_slots = 1 + args.len(); // tag + data fields
+    let num_slots_val = b.ins().iconst(types::I64, num_slots as i64);
+
+    let ptr = if let Some(&f) = ctx.get_func("__struct_alloc") {
+        call_rt(b, f, &[num_slots_val])
+    } else {
+        return b.ins().iconst(types::I64, 0);
+    };
+
+    // Slot 0: tag string
+    let tag = leak_cstr(b, variant);
+    let tag_str = if let Some(&f) = ctx.get_func("__string_new") {
+        call_rt(b, f, &[tag])
+    } else { tag };
+    let zero = b.ins().iconst(types::I64, 0);
+    if let Some(&f) = ctx.get_func("__struct_set_ptr") {
+        call_void(b, f, &[ptr, zero, tag_str]);
+    }
+
+    // Slots 1..N: data fields
+    for (i, arg) in args.iter().enumerate() {
+        let val = emit_expr(b, arg, ctx);
+        let idx = b.ins().iconst(types::I64, (i + 1) as i64);
+        let ty = b.func.dfg.value_type(val);
+        if ty == types::F64 {
+            if let Some(&f) = ctx.get_func("__struct_set_f64") {
+                call_void(b, f, &[ptr, idx, val]);
+            }
+        } else {
+            if let Some(&f) = ctx.get_func("__struct_set_ptr") {
+                call_void(b, f, &[ptr, idx, val]);
+            }
+        }
+    }
+    ptr
+}
+
 fn emit_closure(b: &mut FunctionBuilder, params: &[String], body: &Expr, ctx: &mut EmitCtx) -> Value {
     // Pre-compiled closures are registered with __closure_N names.
     // Look up the closure by matching params+body hash to find the right one.
@@ -1310,6 +1481,13 @@ fn closure_hash(params: &[String], body: &Expr) -> u64 {
 }
 
 fn emit_method_call(b: &mut FunctionBuilder, target: &Expr, method: &str, args: &[Expr], ctx: &mut EmitCtx) -> Value {
+    // Check if this is an enum data variant constructor: Token.Number(42)
+    if let Expr::Ident(name) = target {
+        if ctx.enum_variants.get(name).map_or(false, |vs| vs.contains(&method.to_string())) {
+            return emit_enum_variant(b, method, args, ctx);
+        }
+    }
+
     let kind = target_kind(target, ctx);
 
     // Inline map/filter before evaluating target — they need the closure

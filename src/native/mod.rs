@@ -28,8 +28,9 @@ pub fn compile_all<M: Module>(
     let rt = runtime::declare_runtime(module);
     let mut compiled = emit::CompiledFuncs::new();
 
-    // Build function return kind map from all definitions
+    // Build metadata maps from source
     let func_return_kinds = emit::build_return_kind_map(source);
+    let enum_variants = emit::build_enum_variant_map(source);
 
     // Pass 1: Declare all functions (signatures only) for forward references
     emit::declare_all_functions(module, source, &mut compiled)?;
@@ -49,7 +50,7 @@ pub fn compile_all<M: Module>(
     // Pass 2: Define all function bodies
     for item in &source.items {
         if let crate::ast::Item::Function(f) = item {
-            emit::compile_function(module, f, &rt, &mut compiled, &func_return_kinds)?;
+            emit::compile_function(module, f, &rt, &mut compiled, &func_return_kinds, &enum_variants)?;
         }
     }
     Ok(())
@@ -795,6 +796,81 @@ mod tests {
 
     #[test]
     // ─── Integration Tests (real coding patterns) ──────
+
+    #[test]
+    fn enum_variant_unit() {
+        let mut m = jit(r#"
+            enum Token { Number(Number) Plus Minus }
+            pub fn test_unit() -> Number {
+                const t = Token.Plus
+                return match t {
+                    Token.Plus => 1
+                    _ => 0
+                }
+            }
+        "#);
+        let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "test_unit", 0)) };
+        assert_eq!(f(), 1.0);
+    }
+
+    #[test]
+    fn enum_variant_with_data() {
+        let mut m = jit(r#"
+            enum Token { Number(Number) Plus Minus }
+            pub fn test_data() -> Number {
+                const t = Token.Number(42)
+                return match t {
+                    Token.Number(n) => n
+                    _ => 0
+                }
+            }
+        "#);
+        let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "test_data", 0)) };
+        assert_eq!(f(), 42.0);
+    }
+
+    #[test]
+    fn enum_variant_multiple_arms() {
+        let mut m = jit(r#"
+            enum Shape { Circle(Number) Rect(Number, Number) Empty }
+            pub fn describe(code: Number) -> Number {
+                const shape = match code {
+                    1 => Shape.Circle(5)
+                    2 => Shape.Rect(3, 4)
+                    _ => Shape.Empty
+                }
+                return match shape {
+                    Shape.Circle(r) => r * r
+                    Shape.Rect(w, h) => w * h
+                    Shape.Empty => 0
+                    _ => 0
+                }
+            }
+        "#);
+        let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "describe", 1)) };
+        assert_eq!(f(1.0), 25.0);
+        assert_eq!(f(2.0), 12.0);
+        assert_eq!(f(3.0), 0.0);
+    }
+
+    #[test]
+    fn enum_variant_in_function_chain() {
+        let mut m = jit(r#"
+            enum Token { Number(Number) Plus }
+            pub fn make_token(n: Number) -> Number {
+                const t = Token.Number(n)
+                return extract(t)
+            }
+            pub fn extract(t: Token) -> Number {
+                return match t {
+                    Token.Number(v) => v
+                    _ => 0
+                }
+            }
+        "#);
+        let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "make_token", 1)) };
+        assert_eq!(f(99.0), 99.0);
+    }
 
     #[test]
     fn forward_reference_calls() {
@@ -1599,5 +1675,24 @@ mod tests {
         assert_eq!(f(), 10.0);
         let (allocs, frees, _, _, _) = runtime::MEM.stats();
         assert_eq!(allocs, frees, "closures + strings: {} allocs, {} frees", allocs, frees);
+    });
+
+    mem_test!(mem_enum_variant_freed, {
+        let mut m = jit(r#"
+            enum Token { Number(Number) Plus }
+            pub fn test_enum() -> Number {
+                const t = Token.Number(42)
+                return match t {
+                    Token.Number(n) => n
+                    _ => 0
+                }
+            }
+        "#);
+        runtime::MEM.reset();
+        // runtime::MEM.set_debug(true); // uncomment to trace memory ops
+        let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "test_enum", 0)) };
+        assert_eq!(f(), 42.0);
+        let (allocs, frees, _, _, _) = runtime::MEM.stats();
+        assert_eq!(allocs, frees, "enum variant freed: {} allocs, {} frees", allocs, frees);
     });
 }
