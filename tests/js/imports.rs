@@ -99,7 +99,7 @@ fn cross_file_execution() {
         "{}\n{}\nconst {{ value: v, err: e }} = create_email(\"cam@test.com\");\nconsole.log(v);\nconsole.log(e);",
         types_inline, main_inline
     );
-    let (stdout, _) = roca::cli::runtime::run_tests(&test_code);
+    let stdout = { let output = std::process::Command::new("node").arg("--input-type=module").arg("-e").arg(&test_code).output().expect("node failed"); String::from_utf8_lossy(&output.stdout).to_string() };
     let stdout = stdout.trim().to_string();
 
     // Clean up

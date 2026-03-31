@@ -117,7 +117,11 @@ fn eval_expr(input: &str, defs: &[String]) {
 }
 
 fn run_bun(js: &str) {
-    super::runtime::run_js(js);
+    let _ = std::process::Command::new("node")
+        .arg("--input-type=module")
+        .arg("-e")
+        .arg(js)
+        .status();
 }
 
 fn is_definition(s: &str) -> bool {

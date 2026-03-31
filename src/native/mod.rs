@@ -7,7 +7,19 @@ pub mod emit;
 #[allow(dead_code)]
 pub mod test_runner;
 
+use crate::ast;
 use cranelift_jit::{JITBuilder, JITModule};
+
+fn default_expr_for_type(ty: &ast::TypeRef) -> ast::Expr {
+    match ty {
+        ast::TypeRef::String => ast::Expr::String("".into()),
+        ast::TypeRef::Number => ast::Expr::Number(0.0),
+        ast::TypeRef::Bool => ast::Expr::Bool(false),
+        ast::TypeRef::Ok => ast::Expr::Null,
+        ast::TypeRef::Generic(name, _) if name == "Array" => ast::Expr::Array(vec![]),
+        _ => ast::Expr::Null,
+    }
+}
 use cranelift_module::Module;
 use cranelift_object::{ObjectBuilder, ObjectModule};
 
@@ -36,7 +48,12 @@ pub fn compile_all<M: Module>(
     for item in &source.items {
         match item {
             crate::ast::Item::ExternFn(ef) => {
-                let mock = crate::emit::test_harness::values::auto_mock_def_for_extern_fn(ef);
+                let mock = crate::ast::MockDef {
+                    entries: vec![crate::ast::MockEntry {
+                        method: ef.name.clone(),
+                        value: default_expr_for_type(&ef.return_type),
+                    }],
+                };
                 emit::compile_mock_stub(module, ef, &mock, &rt, &mut compiled)?;
             }
             crate::ast::Item::ExternContract(c) => {

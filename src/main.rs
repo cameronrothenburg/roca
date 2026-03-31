@@ -107,8 +107,20 @@ fn main() {
                 std::process::exit(1);
             });
 
-            if !cli::runtime::run_js(&code) {
-                std::process::exit(1);
+            // Run compiled JS via node
+            let status = std::process::Command::new("node")
+                .arg("--input-type=module")
+                .arg("-e")
+                .arg(&code)
+                .status();
+            match status {
+                Ok(s) if !s.success() => std::process::exit(1),
+                Err(e) => {
+                    eprintln!("error: could not run node: {}", e);
+                    eprintln!("install Node.js or Bun to use 'roca run'");
+                    std::process::exit(1);
+                }
+                _ => {}
             }
         }
         "search" => {

@@ -164,7 +164,7 @@ fn cross_module_method_on_imported_type() {
     // Run inline: inline email.js + test code (strip exports/imports)
     let inline_js = email_js.replace("export ", "");
     let test_code = format!("{}\nconst e = Email.create(\" cam@test.com \");\nconsole.log(e.trim());", inline_js);
-    let (stdout, _) = roca::cli::runtime::run_tests(&test_code);
+    let stdout = { let output = std::process::Command::new("node").arg("--input-type=module").arg("-e").arg(&test_code).output().expect("node failed"); String::from_utf8_lossy(&output.stdout).to_string() };
     let stdout = stdout.trim().to_string();
     let _ = fs::remove_dir_all(&dir);
 

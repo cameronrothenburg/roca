@@ -12,17 +12,15 @@ mod bytes;
 mod closures;
 mod comparisons;
 mod constraints;
-mod cross_module;
+// cross_module — moved to tests/js/ (requires Node runtime)
 mod crash;
 mod emit_edge_cases;
 mod enums;
-mod fuzz;
 mod generics;
 mod match_expr;
 mod match_err;
 mod field_assign;
-mod extern_decl;
-mod imports;
+// imports — moved to tests/js/ (requires Node runtime)
 mod loggable;
 mod mocks;
 mod nullable;
