@@ -852,8 +852,10 @@ fn emit_expr(b: &mut FunctionBuilder, expr: &Expr, ctx: &mut EmitCtx) -> Value {
         }
         Expr::BinOp { left, op, right } => {
             // Check if left is a temp string (concat intermediate, not a variable)
+            // String literals are RC-allocated (via __string_new) and must be freed after concat.
+            // Only Ident (variable reference) is excluded — variables are freed at scope exit.
             let l_is_temp_string = matches!(op, BinOp::Add)
-                && !matches!(left.as_ref(), Expr::Ident(_) | Expr::Number(_) | Expr::Bool(_) | Expr::Null | Expr::String(_))
+                && !matches!(left.as_ref(), Expr::Ident(_) | Expr::Number(_) | Expr::Bool(_) | Expr::Null)
                 && infer_kind(left, ctx) == ValKind::String;
             let l = emit_expr(b, left, ctx);
             let r = emit_expr(b, right, ctx);

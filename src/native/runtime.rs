@@ -127,6 +127,9 @@ fn alloc_str(s: &str) -> i64 {
     unsafe {
         std::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr as *mut u8, bytes.len());
     }
+    if MEM.is_debug() {
+        eprintln!("  [mem] alloc_str \"{}\" -> {:#x}", s, ptr);
+    }
     ptr
 }
 
@@ -293,12 +296,14 @@ extern "C" fn roca_struct_get_ptr(ptr: i64, idx: i64) -> i64 {
 // Payload is accessed at ptr + 8.
 
 /// Global memory tracker for testing — counts allocs, frees, retains, releases.
+/// Set `debug` to true to print every memory operation.
 pub struct MemTracker {
     pub allocs: AtomicU64,
     pub frees: AtomicU64,
     pub retains: AtomicU64,
     pub releases: AtomicU64,
     pub live_bytes: AtomicI64,
+    pub debug: std::sync::atomic::AtomicBool,
 }
 
 pub static MEM: MemTracker = MemTracker {
@@ -307,12 +312,21 @@ pub static MEM: MemTracker = MemTracker {
     retains: AtomicU64::new(0),
     releases: AtomicU64::new(0),
     live_bytes: AtomicI64::new(0),
+    debug: std::sync::atomic::AtomicBool::new(false),
 };
 
 /// Lock for serializing memory tests. Hold this while running a test that checks MEM.
 pub static MEM_TEST_LOCK: Mutex<()> = Mutex::new(());
 
 impl MemTracker {
+    pub fn set_debug(&self, on: bool) {
+        self.debug.store(on, Ordering::SeqCst);
+    }
+
+    fn is_debug(&self) -> bool {
+        self.debug.load(Ordering::SeqCst)
+    }
+
     pub fn reset(&self) {
         self.allocs.store(0, Ordering::SeqCst);
         self.frees.store(0, Ordering::SeqCst);
@@ -378,14 +392,18 @@ pub extern "C" fn roca_rc_retain(ptr: i64) {
     if ptr == 0 { return; }
     let header = rc_header(ptr);
     unsafe { *header += 1; }
+    let new_rc = unsafe { *header };
     MEM.retains.fetch_add(1, Ordering::SeqCst);
+    if MEM.is_debug() {
+        let s = read_cstr(ptr);
+        eprintln!("  [mem] retain {:#x} rc={} \"{}\"", ptr, new_rc, s);
+    }
 }
 
 /// Free an array (Vec<i64>) and track it.
-/// Note: live_bytes tracks only the initial Vec overhead (32 bytes, set in roca_array_new).
-/// Element storage is managed by Rust's Vec allocator and not separately tracked.
 pub extern "C" fn roca_free_array(ptr: i64) {
     if ptr == 0 { return; }
+    if MEM.is_debug() { eprintln!("  [mem] free_array {:#x}", ptr); }
     let v = unsafe { Box::from_raw(ptr as *mut Vec<i64>) };
     drop(v);
     MEM.frees.fetch_add(1, Ordering::SeqCst);
@@ -395,9 +413,9 @@ pub extern "C" fn roca_free_array(ptr: i64) {
 /// Free a struct (Vec<i64>) with n_fields heap fields to release first.
 pub extern "C" fn roca_free_struct(ptr: i64, _n_heap_fields: i64) {
     if ptr == 0 { return; }
+    if MEM.is_debug() { eprintln!("  [mem] free_struct {:#x}", ptr); }
     let v = unsafe { Box::from_raw(ptr as *mut Vec<i64>) };
     let size = 24 + v.len() as i64 * 8;
-    // TODO: cascade-release heap fields using _n_heap_fields
     drop(v);
     MEM.frees.fetch_add(1, Ordering::SeqCst);
     MEM.live_bytes.fetch_sub(size, Ordering::SeqCst);
@@ -410,6 +428,10 @@ pub extern "C" fn roca_rc_release(ptr: i64) {
     let header = rc_header(ptr);
     let rc = unsafe { &mut *header };
     *rc -= 1;
+    if MEM.is_debug() {
+        let s = read_cstr(ptr);
+        eprintln!("  [mem] release {:#x} rc={} \"{}\" {}", ptr, *rc, s, if *rc <= 0 { "→ FREE" } else { "" });
+    }
     if *rc <= 0 {
         let total_size = unsafe { *header.add(1) } as usize;
         if total_size < RC_HEADER_SIZE {

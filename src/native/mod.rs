@@ -790,6 +790,133 @@ mod tests {
     }
 
     #[test]
+    // ─── Integration Tests (real coding patterns) ──────
+
+    #[test]
+    fn integration_validate_and_transform() {
+        // Real pattern: validate input, transform, return or error
+        let mut m = jit(r#"
+            pub fn validate(n: Number) -> Number, err {
+                if n < 0 { return err.negative }
+                if n > 1000 { return err.too_large }
+                return n
+            }
+            pub fn process(n: Number) -> Number {
+                let result, failed = validate(n)
+                if failed { return 0 }
+                const doubled = result * 2
+                return doubled
+            }
+        "#);
+        let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "process", 1)) };
+        assert_eq!(f(5.0), 10.0);
+        assert_eq!(f(-1.0), 0.0);
+        assert_eq!(f(2000.0), 0.0);
+    }
+
+    #[test]
+    fn integration_loop_with_early_return() {
+        // Real pattern: search a collection, return early on match
+        let mut m = jit(r#"
+            pub fn find_threshold(limit: Number) -> Number {
+                let total = 0
+                let i = 0
+                while i < 20 {
+                    total = total + i
+                    if total > limit { return i }
+                    i = i + 1
+                }
+                return i
+            }
+        "#);
+        let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "find_threshold", 1)) };
+        assert_eq!(f(10.0), 5.0); // 0+1+2+3+4+5=15 > 10 at i=5
+        assert_eq!(f(100.0), 14.0); // 0+1+...+14=105 > 100 at i=14
+    }
+
+    #[test]
+    fn integration_string_processing_pipeline() {
+        // Real pattern: chain string operations, build result
+        let mut m = jit(r#"
+            pub fn process_name(raw: String) -> String {
+                const trimmed = raw.trim()
+                const upper = trimmed.toUpperCase()
+                return upper
+            }
+        "#);
+        let mut sig = m.make_signature();
+        sig.params.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I64));
+        sig.returns.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I64));
+        let id = m.declare_function("process_name", cranelift_module::Linkage::Export, &sig).unwrap();
+        let f = unsafe { std::mem::transmute::<_, fn(*const u8) -> *const u8>(m.get_finalized_function(id)) };
+        let result = f(b"  hello  \0".as_ptr());
+        assert_eq!(unsafe { std::ffi::CStr::from_ptr(result as *const i8) }.to_str().unwrap(), "HELLO");
+    }
+
+    #[test]
+    fn integration_closure_with_functions() {
+        // Real pattern: pass closures to utility functions
+        let mut m = jit(r#"
+            pub fn apply_twice(n: Number, f: fn(Number) -> Number) -> Number {
+                return f(f(n))
+            }
+            pub fn run() -> Number {
+                const inc = fn(x) -> x + 1
+                const dbl = fn(x) -> x * 2
+                const a = apply_twice(3, inc)
+                const b = apply_twice(3, dbl)
+                return a + b
+            }
+        "#);
+        let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "run", 0)) };
+        assert_eq!(f(), 17.0); // apply_twice(3,inc)=5, apply_twice(3,dbl)=12, 5+12=17
+    }
+
+    #[test]
+    fn integration_multi_function_with_strings() {
+        // Real pattern: multiple functions sharing string data
+        let mut m = jit(r#"
+            pub fn greet(name: String) -> String {
+                return "hello " + name
+            }
+            pub fn shout(msg: String) -> String {
+                return msg.toUpperCase()
+            }
+            pub fn pipeline(name: String) -> String {
+                const greeting = greet(name)
+                return shout(greeting)
+            }
+        "#);
+        let mut sig = m.make_signature();
+        sig.params.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I64));
+        sig.returns.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I64));
+        let id = m.declare_function("pipeline", cranelift_module::Linkage::Export, &sig).unwrap();
+        let f = unsafe { std::mem::transmute::<_, fn(*const u8) -> *const u8>(m.get_finalized_function(id)) };
+        let result = f(b"world\0".as_ptr());
+        assert_eq!(unsafe { std::ffi::CStr::from_ptr(result as *const i8) }.to_str().unwrap(), "HELLO WORLD");
+    }
+
+    #[test]
+    fn integration_match_with_computation() {
+        // Real pattern: match on value, compute differently per case
+        let mut m = jit(r#"
+            pub fn score(grade: Number) -> Number {
+                const points = match grade {
+                    1 => 100
+                    2 => 85
+                    3 => 70
+                    _ => 50
+                }
+                return points * 2
+            }
+        "#);
+        let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "score", 1)) };
+        assert_eq!(f(1.0), 200.0);
+        assert_eq!(f(2.0), 170.0);
+        assert_eq!(f(99.0), 100.0);
+    }
+
+    #[test]
     fn aot_produces_object() {
         let file = crate::parse::parse("pub fn add(a: Number, b: Number) -> Number { return a + b }");
         let bytes = compile_to_object(&file).unwrap();
@@ -1320,5 +1447,99 @@ mod tests {
         assert_eq!(f(), 6.0);
         let (allocs, frees, _, _, _) = runtime::MEM.stats();
         assert_eq!(allocs, frees, "for loop: {} allocs, {} frees", allocs, frees);
+    });
+
+    // ─── Integration Memory Tests ─────────────────────
+
+    mem_test!(mem_integration_validate_transform, {
+        let mut m = jit(r#"
+            pub fn validate(n: Number) -> Number, err {
+                if n < 0 { return err.negative }
+                return n
+            }
+            pub fn process(n: Number) -> Number {
+                const label = "processing"
+                let result, failed = validate(n)
+                if failed { return 0 }
+                return result * 2
+            }
+        "#);
+        runtime::MEM.reset();
+        let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "process", 1)) };
+        assert_eq!(f(5.0), 10.0);
+        let (a1, f1, _, _, _) = runtime::MEM.stats();
+        assert_eq!(a1, f1, "OK path: {} allocs, {} frees", a1, f1);
+        runtime::MEM.reset();
+        assert_eq!(f(-1.0), 0.0);
+        let (a2, f2, _, _, _) = runtime::MEM.stats();
+        assert_eq!(a2, f2, "error path: {} allocs, {} frees", a2, f2);
+    });
+
+    mem_test!(mem_integration_string_pipeline, {
+        let mut m = jit(r#"
+            pub fn greet(name: String) -> String {
+                return "hello " + name
+            }
+            pub fn shout(msg: String) -> String {
+                return msg.toUpperCase()
+            }
+            pub fn pipeline(name: String) -> String {
+                const greeting = greet(name)
+                return shout(greeting)
+            }
+        "#);
+        let mut sig = m.make_signature();
+        sig.params.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I64));
+        sig.returns.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I64));
+        let id = m.declare_function("pipeline", cranelift_module::Linkage::Export, &sig).unwrap();
+        let f = unsafe { std::mem::transmute::<_, fn(*const u8) -> *const u8>(m.get_finalized_function(id)) };
+        runtime::MEM.reset();
+        // runtime::MEM.set_debug(true); // uncomment to trace memory ops
+        let result = f(b"world\0".as_ptr());
+        assert!(!result.is_null());
+        let (allocs, frees, _, _, _) = runtime::MEM.stats();
+        assert_eq!(frees, allocs - 1, "pipeline: {} allocs, {} frees (1 returned)", allocs, frees);
+    });
+
+    mem_test!(mem_integration_loop_early_return, {
+        let mut m = jit(r#"
+            pub fn search() -> Number {
+                let i = 0
+                while i < 10 {
+                    const msg = "checking"
+                    if i == 3 {
+                        const found = "found it"
+                        return i
+                    }
+                    i = i + 1
+                }
+                return i
+            }
+        "#);
+        runtime::MEM.reset();
+        let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "search", 0)) };
+        assert_eq!(f(), 3.0);
+        let (allocs, frees, _, _, _) = runtime::MEM.stats();
+        assert_eq!(allocs, frees, "early return from loop: {} allocs, {} frees", allocs, frees);
+    });
+
+    mem_test!(mem_integration_closures_strings, {
+        let mut m = jit(r#"
+            pub fn apply(n: Number, transform: fn(Number) -> Number) -> Number {
+                const label = "applying"
+                return transform(n)
+            }
+            pub fn run() -> Number {
+                const tag = "runner"
+                const double = fn(x) -> x * 2
+                const result = apply(5, double)
+                return result
+            }
+        "#);
+        runtime::MEM.reset();
+        let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "run", 0)) };
+        assert_eq!(f(), 10.0);
+        let (allocs, frees, _, _, _) = runtime::MEM.stats();
+        assert_eq!(allocs, frees, "closures + strings: {} allocs, {} frees", allocs, frees);
     });
 }
