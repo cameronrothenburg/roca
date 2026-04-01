@@ -480,7 +480,7 @@ pub fn compile_struct_method<M: Module>(
     let self_slot = alloc_slot(&mut builder, block_params[0]);
     // self is borrowed — store in vars but NOT in live_heap_vars (don't free at scope exit)
     emit_ctx.vars.insert("self".to_string(), VarInfo {
-        slot: self_slot, cranelift_type: types::I64, kind: ValKind::Struct, is_heap: false,
+        slot: self_slot, cranelift_type: types::I64, kind: ValKind::Struct(struct_name.to_string()), is_heap: false,
     });
 
     for (i, p) in func.params.iter().enumerate() {

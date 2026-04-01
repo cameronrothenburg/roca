@@ -65,7 +65,7 @@ pub fn emit_stmt(b: &mut FunctionBuilder, stmt: &Stmt, ctx: &mut EmitCtx, return
                 let slot = var.slot;
                 let is_heap = var.is_heap;
                 let cl_type = var.cranelift_type;
-                let kind = var.kind;
+                let kind = var.kind.clone();
                 if is_heap {
                     let refs = FreeRefs::from_ctx(ctx);
                     emit_free_by_kind(b, slot, cl_type, kind, &refs);
@@ -307,7 +307,7 @@ fn emit_let_result(
                     let err = results[1];
                     let cl_type = b.func.dfg.value_type(val);
                     let val_slot = alloc_slot(b, val);
-                    let kind = if cl_type == types::F64 { ValKind::Number } else { ValKind::Other };
+                    let kind = if cl_type == types::F64 { ValKind::Number } else { ValKind::Unknown };
                     ctx.set_var_kind(name.to_string(), val_slot, cl_type, kind);
                     let err_slot = alloc_slot(b, err);
                     ctx.set_var_kind(err_name.to_string(), err_slot, types::I8, ValKind::Bool);

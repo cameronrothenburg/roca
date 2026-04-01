@@ -4,6 +4,8 @@ use std::collections::HashMap;
 use cranelift_codegen::ir::{self, types, StackSlot, Type, FuncRef};
 
 use roca_ast::{self as roca, crash::CrashHandlerKind};
+use roca_types::RocaType;
+use crate::cranelift_type::CraneliftType;
 
 /// Tracks compiled functions for cross-function references
 pub struct CompiledFuncs {
@@ -14,36 +16,21 @@ impl CompiledFuncs {
     pub fn new() -> Self { Self { funcs: HashMap::new() } }
 }
 
+/// Deprecated — use RocaType directly. Kept as alias during migration.
+pub type ValKind = RocaType;
+
 #[derive(Clone)]
 pub struct VarInfo {
     pub slot: StackSlot,
     pub cranelift_type: Type,
-    pub kind: ValKind,
+    pub kind: RocaType,
     pub is_heap: bool,
-}
-
-#[derive(Clone, Copy, PartialEq)]
-pub enum ValKind {
-    Number,
-    String,
-    Bool,
-    Array,
-    Struct,
-    /// Algebraic enum variant — tagged struct with string tag at slot 0
-    EnumVariant,
-    /// Box-allocated opaque types — freed by roca_box_free
-    Json,
-    Url,
-    HttpResp,
-    /// Array of boxed JSON values — each element freed by roca_box_free, then Vec dropped
-    JsonArray,
-    Other, // unknown — not freed at scope exit (safety: only free what we can identify)
 }
 
 /// Tracks struct field layouts for field access by index and type.
 #[derive(Clone)]
 pub struct StructLayout {
-    pub fields: Vec<(std::string::String, ValKind)>,
+    pub fields: Vec<(std::string::String, RocaType)>,
 }
 
 impl StructLayout {
@@ -51,8 +38,8 @@ impl StructLayout {
         self.fields.iter().position(|(f, _)| f == name)
     }
 
-    pub fn field_kind(&self, name: &str) -> ValKind {
-        self.fields.iter().find(|(f, _)| f == name).map(|(_, k)| *k).unwrap_or(ValKind::Other)
+    pub fn field_kind(&self, name: &str) -> RocaType {
+        self.fields.iter().find(|(f, _)| f == name).map(|(_, k)| k.clone()).unwrap_or(RocaType::Unknown)
     }
 }
 
@@ -65,8 +52,8 @@ pub struct EmitCtx {
     pub struct_layouts: HashMap<String, StructLayout>,
     pub var_struct_type: HashMap<String, String>,
     pub crash_handlers: HashMap<String, CrashHandlerKind>,
-    /// Function name → return kind (for tracking what kind of value a call produces)
-    pub func_return_kinds: HashMap<String, ValKind>,
+    /// Function name → return type (for tracking what kind of value a call produces)
+    pub func_return_kinds: HashMap<String, RocaType>,
     /// Enum name → set of variant names (for recognizing Token.Plus as enum construction)
     pub enum_variants: HashMap<String, Vec<String>>,
     /// Struct name → field definitions (for constraint validation)
@@ -85,9 +72,9 @@ impl EmitCtx {
     pub fn set_var(&mut self, name: String, slot: StackSlot, ty: Type) {
         let is_heap = ty == types::I64;
         let kind = match ty {
-            t if t == types::F64 => ValKind::Number,
-            t if t == types::I8 => ValKind::Bool,
-            _ => ValKind::Other,
+            t if t == types::F64 => RocaType::Number,
+            t if t == types::I8 => RocaType::Bool,
+            _ => RocaType::Unknown,
         };
         if is_heap && !self.live_heap_vars.contains(&name) {
             self.live_heap_vars.push(name.clone());
@@ -95,7 +82,7 @@ impl EmitCtx {
         self.vars.insert(name, VarInfo { slot, cranelift_type: ty, kind, is_heap });
     }
 
-    pub fn set_var_kind(&mut self, name: String, slot: StackSlot, ty: Type, kind: ValKind) {
+    pub fn set_var_kind(&mut self, name: String, slot: StackSlot, ty: Type, kind: RocaType) {
         let is_heap = ty == types::I64;
         if is_heap && !self.live_heap_vars.contains(&name) {
             self.live_heap_vars.push(name.clone());
