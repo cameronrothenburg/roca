@@ -409,16 +409,21 @@ pub extern "C" fn roca_crypto_random_uuid() -> i64 {
 
 pub extern "C" fn roca_crypto_sha256(data: i64) -> i64 {
     use sha2::Digest;
-    let input = read_cstr(data);
-    let hash = sha2::Sha256::digest(input.as_bytes());
-    let hex: String = hash.iter().map(|b| format!("{:02x}", b)).collect(); alloc_str(&hex)
+    let hash = sha2::Sha256::digest(read_cstr(data).as_bytes());
+    alloc_str(&to_hex(&hash))
 }
 
 pub extern "C" fn roca_crypto_sha512(data: i64) -> i64 {
     use sha2::Digest;
-    let input = read_cstr(data);
-    let hash = sha2::Sha512::digest(input.as_bytes());
-    let hex: String = hash.iter().map(|b| format!("{:02x}", b)).collect(); alloc_str(&hex)
+    let hash = sha2::Sha512::digest(read_cstr(data).as_bytes());
+    alloc_str(&to_hex(&hash))
+}
+
+fn to_hex(bytes: &[u8]) -> String {
+    use std::fmt::Write;
+    let mut hex = String::with_capacity(bytes.len() * 2);
+    for &b in bytes { let _ = write!(hex, "{:02x}", b); }
+    hex
 }
 
 // ─── Url ────────────────────────────────────────────
@@ -492,12 +497,10 @@ pub extern "C" fn roca_url_to_string(ptr: i64) -> i64 {
 }
 
 pub extern "C" fn roca_url_get_param(ptr: i64, name: i64) -> i64 {
-    if ptr == 0 { return 0; }
-    let url = unsafe { &*(ptr as *const url::Url) };
-    match url.query_pairs().find(|(k, _)| k == read_cstr(name)) {
+    with_url(ptr, |u| match u.query_pairs().find(|(k, _)| k == read_cstr(name)) {
         Some((_, v)) => alloc_str(&v),
         None => 0,
-    }
+    })
 }
 
 pub extern "C" fn roca_url_has_param(ptr: i64, name: i64) -> u8 {
@@ -703,19 +706,17 @@ pub extern "C" fn roca_http_ok(resp: i64) -> u8 {
 
 #[allow(improper_ctypes_definitions)]
 pub extern "C" fn roca_http_text(resp: i64) -> (i64, u8) {
-    if resp == 0 { return (0, 1); }
     with_resp(resp, (0, 1), |r| (alloc_str(&r.body), 0))
 }
 
 #[allow(improper_ctypes_definitions)]
 pub extern "C" fn roca_http_json(resp: i64) -> (i64, u8) {
-    if resp == 0 { return (0, 1); }
-    // Parse body directly without intermediate alloc_str
-    let body = &unsafe { &*(resp as *const HttpResponse) }.body;
-    match serde_json::from_str::<serde_json::Value>(body) {
-        Ok(value) => (Box::into_raw(Box::new(value)) as i64, 0),
-        Err(_) => (0, 1),
-    }
+    with_resp(resp, (0, 1), |r| {
+        match serde_json::from_str::<serde_json::Value>(&r.body) {
+            Ok(value) => (Box::into_raw(Box::new(value)) as i64, 0),
+            Err(_) => (0, 1),
+        }
+    })
 }
 
 pub extern "C" fn roca_http_header(resp: i64, name: i64) -> i64 {

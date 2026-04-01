@@ -32,6 +32,14 @@ mod helpers {
         m.get_finalized_function(id)
     }
 
+    /// Read a native string pointer as &str for test assertions.
+    pub fn read_native_str(ptr: i64) -> &'static str {
+        if ptr == 0 { return ""; }
+        unsafe { std::ffi::CStr::from_ptr(ptr as *const i8) }
+            .to_str()
+            .unwrap_or("")
+    }
+
     macro_rules! mem_test {
         ($name:ident, $body:block) => {
             #[test]

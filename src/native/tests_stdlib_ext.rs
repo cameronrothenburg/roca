@@ -159,28 +159,28 @@ fn math_functions() {
 #[test]
 fn path_join_test() {
     let result = runtime::roca_path_join(b"src\0".as_ptr() as i64, b"main.roca\0".as_ptr() as i64);
-    let s = unsafe { std::ffi::CStr::from_ptr(result as *const i8) }.to_str().unwrap();
+    let s = super::test_helpers::read_native_str(result);
     assert_eq!(s, "src/main.roca");
 }
 
 #[test]
 fn path_dirname_test() {
     let result = runtime::roca_path_dirname(b"src/native/mod.rs\0".as_ptr() as i64);
-    let s = unsafe { std::ffi::CStr::from_ptr(result as *const i8) }.to_str().unwrap();
+    let s = super::test_helpers::read_native_str(result);
     assert_eq!(s, "src/native");
 }
 
 #[test]
 fn path_basename_test() {
     let result = runtime::roca_path_basename(b"src/native/mod.rs\0".as_ptr() as i64);
-    let s = unsafe { std::ffi::CStr::from_ptr(result as *const i8) }.to_str().unwrap();
+    let s = super::test_helpers::read_native_str(result);
     assert_eq!(s, "mod.rs");
 }
 
 #[test]
 fn path_extension_test() {
     let result = runtime::roca_path_extension(b"main.roca\0".as_ptr() as i64);
-    let s = unsafe { std::ffi::CStr::from_ptr(result as *const i8) }.to_str().unwrap();
+    let s = super::test_helpers::read_native_str(result);
     assert_eq!(s, ".roca");
 }
 
@@ -188,7 +188,7 @@ fn path_extension_test() {
 fn process_cwd_test() {
     let result = runtime::roca_process_cwd();
     assert_ne!(result, 0);
-    let s = unsafe { std::ffi::CStr::from_ptr(result as *const i8) }.to_str().unwrap();
+    let s = super::test_helpers::read_native_str(result);
     assert!(!s.is_empty());
 }
 
@@ -486,7 +486,7 @@ fn param_constraint_multiple_params() {
 #[test]
 fn crypto_random_uuid_length() {
     let uuid = runtime::roca_crypto_random_uuid();
-    let s = unsafe { std::ffi::CStr::from_ptr(uuid as *const i8) }.to_str().unwrap();
+    let s = super::test_helpers::read_native_str(uuid);
     assert_eq!(s.len(), 36, "UUID should be 36 chars: {}", s);
 }
 
@@ -494,8 +494,8 @@ fn crypto_random_uuid_length() {
 fn crypto_uuid_unique() {
     let a = runtime::roca_crypto_random_uuid();
     let b = runtime::roca_crypto_random_uuid();
-    let a_str = unsafe { std::ffi::CStr::from_ptr(a as *const i8) }.to_str().unwrap();
-    let b_str = unsafe { std::ffi::CStr::from_ptr(b as *const i8) }.to_str().unwrap();
+    let a_str = super::test_helpers::read_native_str(a);
+    let b_str = super::test_helpers::read_native_str(b);
     assert_ne!(a_str, b_str, "two UUIDs should be different");
 }
 
@@ -503,7 +503,7 @@ fn crypto_uuid_unique() {
 fn crypto_sha256_known_hash() {
     let input = runtime::alloc_str("");
     let hash = runtime::roca_crypto_sha256(input);
-    let s = unsafe { std::ffi::CStr::from_ptr(hash as *const i8) }.to_str().unwrap();
+    let s = super::test_helpers::read_native_str(hash);
     assert!(s.starts_with("e3b0c44"), "SHA-256 of empty string: {}", s);
     assert_eq!(s.len(), 64, "SHA-256 hex should be 64 chars");
 }
@@ -512,7 +512,7 @@ fn crypto_sha256_known_hash() {
 fn crypto_sha512_known_hash() {
     let input = runtime::alloc_str("");
     let hash = runtime::roca_crypto_sha512(input);
-    let s = unsafe { std::ffi::CStr::from_ptr(hash as *const i8) }.to_str().unwrap();
+    let s = super::test_helpers::read_native_str(hash);
     assert!(s.starts_with("cf83e1"), "SHA-512 of empty string: {}", s);
     assert_eq!(s.len(), 128, "SHA-512 hex should be 128 chars");
 }
@@ -527,23 +527,23 @@ fn url_parse_valid() {
     assert_ne!(ptr, 0);
 
     let hostname = runtime::roca_url_hostname(ptr);
-    let h = unsafe { std::ffi::CStr::from_ptr(hostname as *const i8) }.to_str().unwrap();
+    let h = super::test_helpers::read_native_str(hostname);
     assert_eq!(h, "example.com");
 
     let protocol = runtime::roca_url_protocol(ptr);
-    let p = unsafe { std::ffi::CStr::from_ptr(protocol as *const i8) }.to_str().unwrap();
+    let p = super::test_helpers::read_native_str(protocol);
     assert_eq!(p, "https:");
 
     let pathname = runtime::roca_url_pathname(ptr);
-    let pa = unsafe { std::ffi::CStr::from_ptr(pathname as *const i8) }.to_str().unwrap();
+    let pa = super::test_helpers::read_native_str(pathname);
     assert_eq!(pa, "/path");
 
     let search = runtime::roca_url_search(ptr);
-    let s = unsafe { std::ffi::CStr::from_ptr(search as *const i8) }.to_str().unwrap();
+    let s = super::test_helpers::read_native_str(search);
     assert_eq!(s, "?q=1");
 
     let hash = runtime::roca_url_hash(ptr);
-    let f = unsafe { std::ffi::CStr::from_ptr(hash as *const i8) }.to_str().unwrap();
+    let f = super::test_helpers::read_native_str(hash);
     assert_eq!(f, "#frag");
 }
 
@@ -569,7 +569,7 @@ fn url_get_param_works() {
     let (ptr, _) = runtime::roca_url_parse(raw);
     let key = runtime::alloc_str("foo");
     let val = runtime::roca_url_get_param(ptr, key);
-    let v = unsafe { std::ffi::CStr::from_ptr(val as *const i8) }.to_str().unwrap();
+    let v = super::test_helpers::read_native_str(val);
     assert_eq!(v, "bar");
 
     let missing = runtime::alloc_str("nope");
@@ -593,7 +593,7 @@ fn encoding_btoa_hello() {
     let input = runtime::alloc_str("hello");
     let (result, err) = runtime::roca_encoding_btoa(input);
     assert_eq!(err, 0);
-    let s = unsafe { std::ffi::CStr::from_ptr(result as *const i8) }.to_str().unwrap();
+    let s = super::test_helpers::read_native_str(result);
     assert_eq!(s, "aGVsbG8=");
 }
 
@@ -602,7 +602,7 @@ fn encoding_atob_hello() {
     let input = runtime::alloc_str("aGVsbG8=");
     let (result, err) = runtime::roca_encoding_atob(input);
     assert_eq!(err, 0);
-    let s = unsafe { std::ffi::CStr::from_ptr(result as *const i8) }.to_str().unwrap();
+    let s = super::test_helpers::read_native_str(result);
     assert_eq!(s, "hello");
 }
 
@@ -611,7 +611,7 @@ fn encoding_roundtrip() {
     let input = runtime::alloc_str("test data 123");
     let (encoded, _) = runtime::roca_encoding_btoa(input);
     let (decoded, _) = runtime::roca_encoding_atob(encoded);
-    let s = unsafe { std::ffi::CStr::from_ptr(decoded as *const i8) }.to_str().unwrap();
+    let s = super::test_helpers::read_native_str(decoded);
     assert_eq!(s, "test data 123");
 }
 
@@ -633,7 +633,7 @@ fn json_parse_valid() {
 
     let name_key = runtime::alloc_str("name");
     let name = runtime::roca_json_get_string(ptr, name_key);
-    let n = unsafe { std::ffi::CStr::from_ptr(name as *const i8) }.to_str().unwrap();
+    let n = super::test_helpers::read_native_str(name);
     assert_eq!(n, "cam");
 
     let age_key = runtime::alloc_str("age");
@@ -657,7 +657,7 @@ fn json_stringify_roundtrip() {
     let text = runtime::alloc_str(r#"{"a":1}"#);
     let (ptr, _) = runtime::roca_json_parse(text);
     let output = runtime::roca_json_stringify(ptr);
-    let s = unsafe { std::ffi::CStr::from_ptr(output as *const i8) }.to_str().unwrap();
+    let s = super::test_helpers::read_native_str(output);
     assert!(s.contains("\"a\""), "should contain key: {}", s);
     assert!(s.contains("1"), "should contain value: {}", s);
 }
@@ -671,7 +671,7 @@ fn json_nested_get() {
     assert_ne!(user, 0);
     let name_key = runtime::alloc_str("name");
     let name = runtime::roca_json_get_string(user, name_key);
-    let n = unsafe { std::ffi::CStr::from_ptr(name as *const i8) }.to_str().unwrap();
+    let n = super::test_helpers::read_native_str(name);
     assert_eq!(n, "cam");
 }
 
