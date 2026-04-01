@@ -650,6 +650,18 @@ pub extern "C" fn roca_json_get_array(json: i64, key: i64) -> i64 {
     })
 }
 
+/// Free an array of boxed JSON values: roca_box_free each element, then drop the Vec.
+pub extern "C" fn roca_free_json_array(ptr: i64) {
+    if ptr == 0 { return; }
+    let v = unsafe { &*(ptr as *const Vec<i64>) };
+    for &elem in v.iter() {
+        roca_box_free(elem);
+    }
+    // Drop the Vec itself (same as roca_free_array)
+    unsafe { drop(Box::from_raw(ptr as *mut Vec<i64>)); }
+    MEM.track_free(32);
+}
+
 pub extern "C" fn roca_json_to_string(json: i64) -> i64 {
     roca_json_stringify(json)
 }

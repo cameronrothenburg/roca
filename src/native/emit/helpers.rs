@@ -52,6 +52,7 @@ pub fn infer_kind(expr: &Expr, ctx: &EmitCtx) -> ValKind {
                     // Stdlib calls returning boxed types
                     match (name.as_str(), field.as_str()) {
                         ("JSON", "parse") | ("JSON", "get") => return ValKind::Json,
+                        ("JSON", "getArray") => return ValKind::JsonArray,
                         ("Url", "parse") => return ValKind::Url,
                         ("Http", "get") | ("Http", "post") | ("Http", "put")
                         | ("Http", "patch") | ("Http", "delete") => return ValKind::HttpResp,
@@ -101,6 +102,7 @@ pub fn infer_kind(expr: &Expr, ctx: &EmitCtx) -> ValKind {
 pub fn emit_scope_cleanup(b: &mut FunctionBuilder, ctx: &EmitCtx, skip_name: Option<&str>) {
     let rc_release = ctx.func_refs.get("__rc_release").copied();
     let free_array = ctx.func_refs.get("__free_array").copied();
+    let free_json_array = ctx.func_refs.get("__free_json_array").copied();
     let free_struct = ctx.func_refs.get("__free_struct").copied();
     let box_free = ctx.func_refs.get("__box_free").copied();
 
@@ -108,7 +110,7 @@ pub fn emit_scope_cleanup(b: &mut FunctionBuilder, ctx: &EmitCtx, skip_name: Opt
         if skip_name == Some(var_name.as_str()) { continue; }
         if let Some(var) = ctx.vars.get(var_name) {
             if !var.is_heap { continue; }
-            emit_free_by_kind(b, var.slot, var.cranelift_type, var.kind, rc_release, free_array, free_struct, box_free);
+            emit_free_by_kind(b, var.slot, var.cranelift_type, var.kind, rc_release, free_array, free_json_array, free_struct, box_free);
         }
     }
 }
@@ -120,6 +122,7 @@ pub fn emit_free_by_kind(
     kind: ValKind,
     rc_release: Option<FuncRef>,
     free_array: Option<FuncRef>,
+    free_json_array: Option<FuncRef>,
     free_struct: Option<FuncRef>,
     box_free: Option<FuncRef>,
 ) {
@@ -127,6 +130,7 @@ pub fn emit_free_by_kind(
     match kind {
         ValKind::String => { if let Some(f) = rc_release { call_void(b, f, &[ptr]); } }
         ValKind::Array => { if let Some(f) = free_array { call_void(b, f, &[ptr]); } }
+        ValKind::JsonArray => { if let Some(f) = free_json_array { call_void(b, f, &[ptr]); } }
         ValKind::Struct => {
             if let Some(f) = free_struct {
                 let zero = b.ins().iconst(types::I64, 0);
@@ -150,13 +154,14 @@ pub fn emit_free_by_kind(
 pub fn emit_loop_body_cleanup(b: &mut FunctionBuilder, ctx: &EmitCtx) {
     let rc_release = ctx.func_refs.get("__rc_release").copied();
     let free_array = ctx.func_refs.get("__free_array").copied();
+    let free_json_array = ctx.func_refs.get("__free_json_array").copied();
     let free_struct = ctx.func_refs.get("__free_struct").copied();
     let box_free = ctx.func_refs.get("__box_free").copied();
 
     for var_name in ctx.live_heap_vars.iter().skip(ctx.loop_heap_base) {
         if let Some(var) = ctx.vars.get(var_name) {
             if !var.is_heap { continue; }
-            emit_free_by_kind(b, var.slot, var.cranelift_type, var.kind, rc_release, free_array, free_struct, box_free);
+            emit_free_by_kind(b, var.slot, var.cranelift_type, var.kind, rc_release, free_array, free_json_array, free_struct, box_free);
         }
     }
 }

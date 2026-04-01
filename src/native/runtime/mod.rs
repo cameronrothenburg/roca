@@ -220,6 +220,7 @@ runtime_funcs! {
     (rc_retain,         "roca_rc_retain",         roca_rc_retain,         [types::I64],                                []),
     (rc_release,        "roca_rc_release",        roca_rc_release,        [types::I64],                                []),
     (free_array,        "roca_free_array",        roca_free_array,        [types::I64],                                []),
+    (free_json_array,   "roca_free_json_array",   roca_free_json_array,   [types::I64],                                []),
     (free_struct,       "roca_free_struct",       roca_free_struct,       [types::I64, types::I64],                    []),
 }
 
