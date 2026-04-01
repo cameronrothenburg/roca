@@ -443,10 +443,14 @@ pub extern "C" fn roca_url_parse(raw: i64) -> (i64, u8) {
 
 const BOX_HEADER: usize = 16;
 
+/// Alignment for all box allocations. 16 ensures the payload (at BOX_HEADER offset)
+/// is correctly aligned for any type up to 16-byte alignment (covers all stdlib types).
+const BOX_ALIGN: usize = 16;
+
 fn box_alloc_inner(size: usize) -> i64 {
     if size == 0 { return 0; }
     let total = BOX_HEADER + size;
-    let layout = std::alloc::Layout::from_size_align(total, 8).unwrap();
+    let layout = std::alloc::Layout::from_size_align(total, BOX_ALIGN).unwrap();
     unsafe {
         let base = std::alloc::alloc(layout);
         if base.is_null() { return 0; }
@@ -472,7 +476,7 @@ pub extern "C" fn roca_box_free(ptr: i64) {
             let dropper: fn(*mut u8) = std::mem::transmute(drop_fn);
             dropper(ptr as *mut u8);
         }
-        let layout = std::alloc::Layout::from_size_align_unchecked(total, 8);
+        let layout = std::alloc::Layout::from_size_align_unchecked(total, BOX_ALIGN);
         MEM.track_free(total as i64);
         std::alloc::dealloc(base, layout);
     }
@@ -482,12 +486,13 @@ fn drop_trampoline<T>(ptr: *mut u8) {
     unsafe { std::ptr::drop_in_place(ptr as *mut T); }
 }
 
-fn box_value<T>(value: T) -> i64 {
+pub(crate) fn box_value<T>(value: T) -> i64 {
+    assert!(std::mem::align_of::<T>() <= BOX_ALIGN, "box_value: type alignment exceeds BOX_ALIGN");
     let ptr = box_alloc_inner(std::mem::size_of::<T>());
     if ptr == 0 { return 0; }
     unsafe {
         let base = (ptr as *mut u8).sub(BOX_HEADER);
-        *(base as *mut u64) = drop_trampoline::<T> as u64;
+        *(base as *mut u64) = drop_trampoline::<T> as *const () as u64;
         std::ptr::write(ptr as *mut T, value);
     }
     ptr

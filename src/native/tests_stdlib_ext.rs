@@ -747,25 +747,31 @@ fn box_alloc_different_sizes_no_corruption() {
 
 // ─── Box allocator: destructor & MEM tracking regressions ───
 
-/// roca_box_free must run Drop for typed values allocated via box_value.
-/// We test indirectly through roca_json_parse which uses box_value<serde_json::Value>.
-/// A JSON object with nested strings exercises inner heap allocations.
+/// roca_box_free must invoke the drop trampoline for typed values.
 #[test]
 fn box_free_runs_drop_on_owned_type() {
-    // Parse JSON with heap-owning fields (strings, nested objects)
-    let json_str = runtime::alloc_str(r#"{"a":"hello","b":{"c":"world","d":"!"}}"#);
-    let (ptr, err) = runtime::roca_json_parse(json_str);
-    assert_eq!(err, 0);
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    static DROPPED: AtomicBool = AtomicBool::new(false);
+
+    struct Witness(String);
+    impl Drop for Witness {
+        fn drop(&mut self) {
+            DROPPED.store(true, Ordering::SeqCst);
+        }
+    }
+
+    DROPPED.store(false, Ordering::SeqCst);
+
+    let ptr = runtime::box_value(Witness("hello".to_string()));
     assert_ne!(ptr, 0);
 
-    // Stringify before free to prove the value is alive
-    let s = runtime::roca_json_stringify(ptr);
-    let text = unsafe { std::ffi::CStr::from_ptr(s as *const i8) }.to_str().unwrap();
-    assert!(text.contains("hello"), "JSON value should be readable before free");
-
-    // This must not crash — if drop glue isn't running, inner Strings leak
-    // (and under ASAN/miri this would be caught as a leak)
     runtime::roca_box_free(ptr);
+
+    assert!(
+        DROPPED.load(Ordering::SeqCst),
+        "roca_box_free did not run Drop — inner heap allocations leak"
+    );
 }
 
 /// Box allocs must participate in MEM tracking so assert_clean catches leaks.
