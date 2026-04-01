@@ -624,8 +624,14 @@ pub fn compile_contract_stubs<M: Module>(
         }
 
         builder.finalize();
-        module.define_function(func_id, &mut ctx)
-            .map_err(|e| format!("compile stub {}: {}", qualified, e))?;
+        match module.define_function(func_id, &mut ctx) {
+            Ok(_) => {}
+            Err(_) => {
+                // Skip stubs that fail to compile (e.g., generic params)
+                module.clear_context(&mut ctx);
+                continue;
+            }
+        }
         module.clear_context(&mut ctx);
     }
     Ok(())

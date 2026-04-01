@@ -181,17 +181,14 @@ const Url = (() => {
 const Crypto = (() => {
     const _crypto = globalThis.crypto;
     async function digest(algo, data) {
-        if (!_crypto?.subtle) throw Object.assign(new Error("crypto.subtle is not available"), { name: "platform" });
+        if (!_crypto?.subtle) throw new Error("crypto.subtle is not available");
         const buf = await _crypto.subtle.digest(algo, _te.encode(data));
         return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, "0")).join("");
     }
     return {
-        randomUUID: () => {
-            if (!_crypto?.randomUUID) return error("platform", "crypto.randomUUID is not available");
-            return ok(_crypto.randomUUID());
-        },
-        sha256: wrap(async (data) => await digest("SHA-256", data)),
-        sha512: wrap(async (data) => await digest("SHA-512", data)),
+        randomUUID: () => _crypto?.randomUUID ? _crypto.randomUUID() : "",
+        sha256: async (data) => await digest("SHA-256", data),
+        sha512: async (data) => await digest("SHA-512", data),
     };
 })();
 

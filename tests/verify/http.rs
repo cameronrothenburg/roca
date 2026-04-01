@@ -38,7 +38,7 @@ fn http_post_registered() {
 }
 
 #[test]
-fn http_js_wrapper_emitted() {
+fn http_js_uses_runtime() {
     let file = roca::parse::parse(r#"
         import { Http } from std::http
         /// Simple fetch
@@ -54,6 +54,6 @@ fn http_js_wrapper_emitted() {
         }
     "#);
     let js = roca::emit::emit(&file);
-    assert!(js.contains("const Http"), "Http wrapper should be emitted");
-    assert!(js.contains("globalThis.fetch"), "should use globalThis.fetch");
+    assert!(js.contains("import roca from \"@rocalang/runtime\""), "should import runtime: {}", js);
+    assert!(js.contains("roca.Http"), "should use roca.Http: {}", js);
 }

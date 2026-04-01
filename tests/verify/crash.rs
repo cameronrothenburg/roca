@@ -115,7 +115,7 @@ fn retry_on_success() {
         pub fn caller() -> String {
             const result = Flaky.call("ok")
             return result
-            crash { Flaky.call -> retry(3, 0) }
+            crash { Flaky.call -> retry(3, 0) |> fallback("failed") }
             test { self() == "ok" }
         }
         "#,
@@ -125,7 +125,7 @@ fn retry_on_success() {
 
 #[test]
 fn retry_exhausts_attempts_then_throws() {
-    // Function always fails — retry should try 3 times then throw
+    // Function always fails — retry should try 3 times then halt propagates error
     assert_eq!(run(
         r#"
         /// Always fails
@@ -142,23 +142,19 @@ fn retry_exhausts_attempts_then_throws() {
         }
 
         /// Calls always fail
-        pub fn caller() -> String {
+        pub fn caller() -> String, err {
+            if false { return err.broken }
             const result = AlwaysFail.call("")
             return result
-            crash { AlwaysFail.call -> retry(3, 0) }
-            test { self() == "should not reach" }
+            crash { AlwaysFail.call -> retry(3, 0) |> halt }
+            test { self() is Ok self() is err.broken }
         }
         "#,
         r#"
-            try {
-                caller();
-                console.log("should not reach");
-            } catch(e) {
-                console.log("caught after retries");
-                console.log(e.message);
-            }
+            const result = caller();
+            console.log(result.err ? result.err.name : "no error");
         "#,
-    ), "caught after retries\nbroken");
+    ), "broken");
 }
 
 #[test]

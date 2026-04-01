@@ -12,7 +12,6 @@ mod bytes;
 mod closures;
 mod comparisons;
 mod constraints;
-// cross_module — moved to tests/js/ (requires Node runtime)
 mod crash;
 mod emit_edge_cases;
 mod enums;
@@ -20,7 +19,6 @@ mod generics;
 mod match_expr;
 mod match_err;
 mod field_assign;
-// imports — moved to tests/js/ (requires Node runtime)
 mod loggable;
 mod nullable;
 mod safe_cast;
@@ -33,9 +31,6 @@ mod wait;
 mod while_loop;
 mod integration;
 mod repl;
-mod encoding;
-mod time;
-mod url;
-mod crypto;
 mod http;
 mod serialize;
+// crypto, encoding, time, url — moved to tests/js/stdlib.test.js (need @rocalang/runtime)

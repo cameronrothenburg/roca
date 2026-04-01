@@ -119,9 +119,9 @@ test("Url.isValid", () => {
 // ─── Crypto ───────────────────────────────────────
 
 test("Crypto.randomUUID", () => {
-    const r = roca.Crypto.randomUUID();
-    expect(r.err).toBeNull();
-    expect(r.value.length).toBe(36);
+    const id = roca.Crypto.randomUUID();
+    expect(typeof id).toBe("string");
+    expect(id.length).toBe(36);
 });
 
 // ─── Fs (Node/Bun) ────────────────────────────────
