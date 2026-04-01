@@ -27,7 +27,7 @@
           {
             "type": "command",
             "if": "Bash(gh pr create*)",
-            "command": "echo 'BLOCK: Run /roca-review before creating a PR. All checks must pass first.' >&2; exit 2"
+            "command": "if [ -f .claude/.review-passed ]; then rm -f .claude/.review-passed; exit 0; else echo 'BLOCK: Run /roca-review before creating a PR. All checks must pass first.' >&2; exit 2; fi"
           }
         ]
       }
