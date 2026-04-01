@@ -8,6 +8,7 @@ pub mod context;
 pub mod emit_helpers;
 pub mod registry;
 pub mod cranelift_type;
+pub mod builder;
 
 // Re-export key types for convenience
 pub use context::{CompiledFuncs, ValKind, VarInfo, StructLayout, EmitCtx};
