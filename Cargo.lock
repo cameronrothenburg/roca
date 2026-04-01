@@ -1343,7 +1343,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "roca"
+name = "rocalang"
 version = "0.3.0"
 dependencies = [
  "cranelift-codegen",
