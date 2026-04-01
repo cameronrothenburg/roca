@@ -156,55 +156,6 @@ runtime_funcs! {
     (fs_exists,         "roca_fs_exists",         roca_fs_exists,         [types::I64],                                [types::I8]),
     (fs_read_dir,       "roca_fs_read_dir",       roca_fs_read_dir,       [types::I64],                                [types::I64, types::I8]),
 
-    // Crypto
-    (crypto_random_uuid, "roca_crypto_random_uuid", roca_crypto_random_uuid, [],                                        [types::I64]),
-    (crypto_sha256,     "roca_crypto_sha256",     roca_crypto_sha256,     [types::I64],                                [types::I64]),
-    (crypto_sha512,     "roca_crypto_sha512",     roca_crypto_sha512,     [types::I64],                                [types::I64]),
-
-    // Url
-    (url_parse,         "roca_url_parse",         roca_url_parse,         [types::I64],                                [types::I64, types::I8]),
-    (url_is_valid,      "roca_url_is_valid",      roca_url_is_valid,      [types::I64],                                [types::I8]),
-    (url_hostname,      "roca_url_hostname",      roca_url_hostname,      [types::I64],                                [types::I64]),
-    (url_protocol,      "roca_url_protocol",      roca_url_protocol,      [types::I64],                                [types::I64]),
-    (url_pathname,      "roca_url_pathname",      roca_url_pathname,      [types::I64],                                [types::I64]),
-    (url_search,        "roca_url_search",        roca_url_search,        [types::I64],                                [types::I64]),
-    (url_hash,          "roca_url_hash",          roca_url_hash,          [types::I64],                                [types::I64]),
-    (url_host,          "roca_url_host",          roca_url_host,          [types::I64],                                [types::I64]),
-    (url_port,          "roca_url_port",          roca_url_port,          [types::I64],                                [types::I64]),
-    (url_origin,        "roca_url_origin",        roca_url_origin,        [types::I64],                                [types::I64]),
-    (url_href,          "roca_url_href",          roca_url_href,          [types::I64],                                [types::I64]),
-    (url_to_string,     "roca_url_to_string",     roca_url_to_string,     [types::I64],                                [types::I64]),
-    (url_get_param,     "roca_url_get_param",     roca_url_get_param,     [types::I64, types::I64],                    [types::I64]),
-    (url_has_param,     "roca_url_has_param",     roca_url_has_param,     [types::I64, types::I64],                    [types::I8]),
-
-    // Encoding
-    (encoding_btoa,     "roca_encoding_btoa",     roca_encoding_btoa,     [types::I64],                                [types::I64, types::I8]),
-    (encoding_atob,     "roca_encoding_atob",     roca_encoding_atob,     [types::I64],                                [types::I64, types::I8]),
-    (encoding_encode,   "roca_encoding_encode",   roca_encoding_encode,   [types::I64],                                [types::I64]),
-    (encoding_decode,   "roca_encoding_decode",   roca_encoding_decode,   [types::I64],                                [types::I64, types::I8]),
-
-    // JSON
-    (json_parse,        "roca_json_parse",        roca_json_parse,        [types::I64],                                [types::I64, types::I8]),
-    (json_stringify,    "roca_json_stringify",     roca_json_stringify,    [types::I64],                                [types::I64]),
-    (json_get,          "roca_json_get",          roca_json_get,          [types::I64, types::I64],                    [types::I64]),
-    (json_get_string,   "roca_json_get_string",   roca_json_get_string,   [types::I64, types::I64],                    [types::I64]),
-    (json_get_number,   "roca_json_get_number",   roca_json_get_number,   [types::I64, types::I64],                    [types::F64]),
-    (json_get_bool,     "roca_json_get_bool",     roca_json_get_bool,     [types::I64, types::I64],                    [types::I8]),
-    (json_get_array,    "roca_json_get_array",    roca_json_get_array,    [types::I64, types::I64],                    [types::I64]),
-    (json_to_string,    "roca_json_to_string",    roca_json_to_string,    [types::I64],                                [types::I64]),
-
-    // Http
-    (http_get,          "roca_http_get",          roca_http_get,          [types::I64],                                [types::I64, types::I8]),
-    (http_post,         "roca_http_post",         roca_http_post,         [types::I64, types::I64],                    [types::I64, types::I8]),
-    (http_put,          "roca_http_put",          roca_http_put,          [types::I64, types::I64],                    [types::I64, types::I8]),
-    (http_patch,        "roca_http_patch",        roca_http_patch,        [types::I64, types::I64],                    [types::I64, types::I8]),
-    (http_delete,       "roca_http_delete",       roca_http_delete,       [types::I64],                                [types::I64, types::I8]),
-    (http_status,       "roca_http_status",       roca_http_status,       [types::I64],                                [types::F64]),
-    (http_ok,           "roca_http_ok",           roca_http_ok,           [types::I64],                                [types::I8]),
-    (http_text,         "roca_http_text",         roca_http_text,         [types::I64],                                [types::I64, types::I8]),
-    (http_json,         "roca_http_json",         roca_http_json,         [types::I64],                                [types::I64, types::I8]),
-    (http_header,       "roca_http_header",       roca_http_header,       [types::I64, types::I64],                    [types::I64]),
-
     // Memory management
     (string_new,        "roca_string_new",        roca_string_new,        [types::I64],                                [types::I64]),
     (rc_alloc,          "roca_rc_alloc",          roca_rc_alloc,          [types::I64],                                [types::I64]),

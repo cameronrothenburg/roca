@@ -29,5 +29,3 @@ cranelift-module = "0.130"
 cranelift-jit = "0.130"
 cranelift-native = "0.130"
 cranelift-object = "0.130"
-base64 = "0.22"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
