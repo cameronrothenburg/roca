@@ -5,6 +5,6 @@ export default {
             "compiler", "runtime", "native", "checker", "emitter",
             "cli", "spec", "ci", "js", "deps",
         ]],
-        "scope-empty": [1, "never"],
+        "scope-empty": [2, "never"],
     },
 };
