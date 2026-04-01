@@ -221,19 +221,6 @@ fn check_test_coverage(f: &FnDef, declared_errors: &[ErrDecl], qn: &str, errors:
         return;
     }
 
-    // ok-on-infallible: using `is Ok` on a function that doesn't return errors
-    if !f.returns_err {
-        for case in &test.cases {
-            if let TestCase::IsOk { .. } = case {
-                errors.push(RuleError::new(
-                    errors::OK_ON_INFALLIBLE,
-                    format!("'{}' does not return errors — `is Ok` is meaningless here", f.name),
-                    Some(qn.to_string()),
-                ));
-            }
-        }
-    }
-
     // Check test expected values match return type
     for (i, case) in test.cases.iter().enumerate() {
         if let TestCase::Equals { expected, .. } = case {
@@ -252,7 +239,17 @@ fn check_test_coverage(f: &FnDef, declared_errors: &[ErrDecl], qn: &str, errors:
         all_error_names.insert(name);
     }
 
+    // ok-on-infallible: `is Ok` on a function with no error paths
     if all_error_names.is_empty() && !f.returns_err {
+        for case in &test.cases {
+            if let TestCase::IsOk { .. } = case {
+                errors.push(RuleError::new(
+                    errors::OK_ON_INFALLIBLE,
+                    format!("'{}' does not return errors — `is Ok` is meaningless here", f.name),
+                    Some(qn.to_string()),
+                ));
+            }
+        }
         return;
     }
 

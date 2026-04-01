@@ -1,0 +1,8 @@
+pub fn compute() -> Number {
+            const a = 10
+            const b = 20
+            let result = a + b
+            result = result * 2
+            return result
+            test { self() == 60 }
+        }

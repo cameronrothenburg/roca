@@ -107,6 +107,9 @@ test("Time.parse invalid", () => {
 test("Url.parse valid", () => {
     const r = roca.Url.parse("https://example.com/path");
     expect(r.err).toBeNull();
+    expect(r.value.hostname()).toBe("example.com");
+    expect(r.value.pathname()).toBe("/path");
+    expect(r.value.protocol()).toBe("https:");
 });
 test("Url.parse invalid", () => {
     expect(roca.Url.parse("not a url").err).not.toBeNull();
@@ -131,7 +134,8 @@ test("Fs.readFile missing", () => {
     expect(r.err).not.toBeNull();
 });
 test("Fs.exists", () => {
-    expect(roca.Fs.exists("package.json")).toBe(true);
+    const thisFile = new URL(import.meta.url).pathname;
+    expect(roca.Fs.exists(thisFile)).toBe(true);
     expect(roca.Fs.exists("/nope")).toBe(false);
 });
 

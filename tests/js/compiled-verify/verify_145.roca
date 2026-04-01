@@ -1,0 +1,35 @@
+contract Stringable { to_string() -> String }
+
+        pub struct Email {
+            value: String
+            validate(raw: String) -> Email, err {
+                err missing = "value is required"
+                err invalid = "format is not valid"
+            }
+        }{
+            pub fn validate(raw: String) -> Email, err {
+                if raw == "" { return err.missing }
+                return Email { value: raw }
+                test {
+                    self("a@b.com") is Ok
+                    self("") is err.missing
+                    self("x") is err.invalid
+                }
+            }
+        }
+
+        Email satisfies Stringable {
+            fn to_string() -> String {
+                return self.value
+                test { self() == "a@b.com" }
+            }
+        }
+
+        pub fn format_email(raw: String) -> String {
+            const result = Email.validate(raw)
+            return "ok"
+            crash { Email.validate -> fallback(fn(e) -> "error") }
+            test {
+                self("a@b.com") == "ok"
+            }
+        }

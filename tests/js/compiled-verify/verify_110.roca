@@ -1,0 +1,8 @@
+pub fn never() -> Number {
+            let x = 0
+            while false {
+                x = 999
+            }
+            return x
+            test { self() == 0 }
+        }

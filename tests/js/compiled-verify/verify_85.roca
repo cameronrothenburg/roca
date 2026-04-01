@@ -1,0 +1,15 @@
+/// Finds an item by id
+        pub struct Find {
+            call(id: String) -> String, err {
+                err not_found = "not_found"
+            }
+        }{
+            pub fn call(id: String) -> String, err {
+                if id == "" { return err.not_found }
+                return "found: " + id
+                test {
+                    self("1") == "found: 1"
+                    self("") is err.not_found
+                }
+            }
+        }

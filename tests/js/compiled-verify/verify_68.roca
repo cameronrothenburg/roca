@@ -1,0 +1,14 @@
+pub enum Role {
+            admin = "admin"
+            user = "user"
+        }
+
+        pub struct Account {
+            name: String
+            role: String
+        }{}
+
+        pub fn is_admin(a: Account) -> Bool {
+            return a.role == Role.admin
+            test { self(Account { name: "cam", role: "admin" }) == true }
+        }

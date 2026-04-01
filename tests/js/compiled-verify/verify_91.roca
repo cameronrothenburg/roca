@@ -1,0 +1,8 @@
+pub struct Config {
+            get_default() -> Number
+        }{
+            fn get_default() -> Number {
+                return 42
+                test { self() == 42 }
+            }
+        }

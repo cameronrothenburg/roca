@@ -1,0 +1,12 @@
+pub fn greet(lang: String) -> String {
+            return match lang {
+                "en" => "hello"
+                "es" => "hola"
+                "de" => "hallo"
+                _ => "hi"
+            }
+            test {
+                self("en") == "hello"
+                self("fr") == "hi"
+            }
+        }

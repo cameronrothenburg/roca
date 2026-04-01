@@ -1,0 +1,7 @@
+import { Encoding } from std::encoding
+        pub fn from_b64(s: String) -> String {
+            const result = Encoding.atob(s)
+            return result
+            crash { Encoding.atob -> fallback("") }
+            test { self("aGVsbG8=") == "hello" }
+        }

@@ -1,0 +1,5 @@
+pub fn convert(b: Bool) -> String {
+            return String(b)
+            crash { String -> skip }
+            test { self(true) == "true" }
+        }

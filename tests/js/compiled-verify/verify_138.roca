@@ -1,0 +1,5 @@
+pub fn convert(s: String) -> Number {
+            return Number(s)
+            crash { Number -> skip }
+            test { self("42") == 42 }
+        }

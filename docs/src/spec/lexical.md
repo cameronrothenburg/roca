@@ -12,7 +12,7 @@ Roca source files MUST be encoded as UTF-8. A conforming implementation MUST rej
 
 Source files SHOULD use the `.roca` file extension.
 
-```
+```roca
 // Valid: UTF-8 encoded source
 pub fn greet(name: String) -> String {
     return "hello {name}"

@@ -1,0 +1,13 @@
+pub fn double_list() -> String {
+            const items = [1, 2, 3]
+            let result = []
+            for item in items {
+                result.push(item * 2)
+            }
+            return result.join(",")
+            crash {
+                result.push -> skip
+                result.join -> skip
+            }
+            test { self() == "2,4,6" }
+        }

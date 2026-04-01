@@ -46,6 +46,11 @@ jobs:
       - name: Run tests
         run: cargo test
 
+      - name: CLI smoke test
+        run: |
+          cargo install --path .
+          roca check tests/js/projects/api
+
       - name: Install bun
         uses: oven-sh/setup-bun@v2
 

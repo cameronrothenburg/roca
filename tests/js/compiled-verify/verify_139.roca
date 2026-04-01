@@ -1,0 +1,5 @@
+pub fn convert(b: Bool) -> Number {
+            return Number(b)
+            crash { Number -> skip }
+            test { self(true) == 1 }
+        }

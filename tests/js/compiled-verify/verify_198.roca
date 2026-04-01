@@ -1,0 +1,9 @@
+import { Url } from std::url
+        pub fn param(raw: String, name: String) -> String {
+            const url = Url.parse(raw)
+            const val = url.getParam(name)
+            if val == null { return "none" }
+            return "" + val
+            crash { Url.parse -> fallback(fn(e) -> "") }
+            test { self("https://x.com?a=1", "a") == "1" }
+        }

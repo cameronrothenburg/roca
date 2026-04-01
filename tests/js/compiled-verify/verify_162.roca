@@ -1,0 +1,31 @@
+contract Loggable { to_log() -> String }
+
+        pub struct CreditCard {
+            number: String
+            create(n: String) -> CreditCard
+        }{
+            pub fn create(n: String) -> CreditCard {
+                return CreditCard { number: n }
+                test {}
+            }
+        }
+
+        CreditCard satisfies Loggable {
+            fn to_log() -> String {
+                return "****" + self.number.slice(12)
+                crash { self.number.slice -> skip }
+                test {}
+            }
+        }
+
+        pub fn charge(card_num: String) -> String {
+            const card = CreditCard.create(card_num)
+            log(card.to_log())
+            return "charged"
+            crash {
+                CreditCard.create -> skip
+                card.to_log -> halt
+                log -> skip
+            }
+            test { self("4242424242421234") == "charged" }
+        }

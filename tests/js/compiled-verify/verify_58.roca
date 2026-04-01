@@ -1,0 +1,20 @@
+/// Risky operation
+        pub struct Risky {
+            call(s: String) -> String, err {
+                err boom = "boom"
+            }
+        }{
+            pub fn call(s: String) -> String, err {
+                if s == "" { return err.boom }
+                return s
+                test { self("ok") == "ok" self("") is err.boom }
+            }
+        }
+
+        /// Ignores errors
+        pub fn ignorer() -> String {
+            const result = Risky.call("")
+            return "continued"
+            crash { Risky.call -> skip }
+            test { self() == "continued" }
+        }

@@ -18,12 +18,12 @@ impl Rule for NoManualErrRule {
         let mut errors = Vec::new();
         let mut err_vars: Vec<String> = Vec::new();
 
-        // Struct methods may use let val, err = call() for inline mutation error handling
-        let is_struct_method = ctx.func.parent_struct.is_some();
+        // Struct methods that mutate state (contain let bindings) may use let val, err = call()
+        let is_mutation_method = ctx.func.parent_struct.is_some()
+            && ctx.func.def.body.iter().any(|s| matches!(s, crate::ast::Stmt::Let { .. } | crate::ast::Stmt::FieldAssign { .. }));
 
         for stmt in &ctx.func.def.body {
-            if !is_struct_method {
-                // Ban let val, err = call() — except safe casts (Number, String, Bool)
+            if !is_mutation_method {
                 check_let_result(stmt, &ctx.func.qualified_name, &mut errors);
             }
             collect_err_vars(stmt, &mut err_vars);

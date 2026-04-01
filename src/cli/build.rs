@@ -7,6 +7,45 @@ use crate::{emit, resolve};
 use super::config::*;
 use super::log::{log_event, LogEvent};
 
+/// Emit JS without native testing — used by verify tests and --emit-only flag.
+/// Skips non-critical diagnostics (missing-doc, missing-test, ok-on-infallible, reserved-name).
+pub fn emit_file(path: &Path) {
+    let path_str = path.display().to_string();
+    let project = resolve::resolve_file(path);
+    let file = match resolve_file_from_project_lenient(path, &project) {
+        Ok(f) => f,
+        Err(msg) => {
+            eprintln!("{}\n\n✗ errors — no JS emitted", msg);
+            std::process::exit(1);
+        }
+    };
+
+    let js = emit::emit(&file);
+    let out_dir = resolve_out_dir(path);
+    fs::create_dir_all(&out_dir).unwrap_or_else(|e| {
+        eprintln!("error creating {}: {}", out_dir.display(), e);
+        std::process::exit(1);
+    });
+
+    let name = path.file_stem().unwrap().to_str().unwrap();
+    let out_path = out_dir.join(format!("{}.js", name));
+    fs::write(&out_path, &js).unwrap_or_else(|e| {
+        eprintln!("error writing {}: {}", out_path.display(), e);
+        std::process::exit(1);
+    });
+
+    let dts = emit::emit_dts(&file);
+    if !dts.is_empty() {
+        let dts_path = out_dir.join(format!("{}.d.ts", name));
+        let _ = fs::write(&dts_path, &dts);
+    }
+
+    let checked = vec![(path.to_path_buf(), path_str.clone(), file)];
+    write_package_json(path.parent().unwrap_or(Path::new(".")), &out_dir, &checked);
+
+    println!("✓ emitted → {}", out_path.display());
+}
+
 pub fn build_file(path: &Path) {
     let path_str = path.display().to_string();
     let project = resolve::resolve_file(path);

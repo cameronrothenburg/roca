@@ -1,0 +1,8 @@
+fn helper(x: Number) -> Number {
+            return x + 1
+            test { self(0) == 1 }
+        }
+        pub fn use_helper(x: Number) -> Number {
+            return helper(x) + helper(x)
+            test { self(5) == 12 }
+        }

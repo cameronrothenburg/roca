@@ -59,9 +59,13 @@ fn main() {
             }
         }
         "build" => {
-            let path = resolve_path_arg(&args);
+            let emit_only = args.iter().any(|a| a == "--emit-only");
+            let path_args: Vec<String> = args.iter().filter(|a| !a.starts_with("--")).cloned().collect();
+            let path = resolve_path_arg(&path_args);
             if path.is_dir() {
                 build_directory(&path);
+            } else if emit_only {
+                cli::build::emit_file(&path);
             } else {
                 build_file(&path);
             }

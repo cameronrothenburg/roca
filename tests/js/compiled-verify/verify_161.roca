@@ -1,0 +1,30 @@
+contract Loggable { to_log() -> String }
+
+        pub struct Email {
+            value: String
+            create(v: String) -> Email
+        }{
+            pub fn create(v: String) -> Email {
+                return Email { value: v }
+                test {}
+            }
+        }
+
+        Email satisfies Loggable {
+            fn to_log() -> String {
+                return self.value
+                test {}
+            }
+        }
+
+        pub fn process(email_raw: String) -> String {
+            const email = Email.create(email_raw)
+            log(email.to_log())
+            return "done"
+            crash {
+                Email.create -> skip
+                email.to_log -> halt
+                log -> skip
+            }
+            test { self("cam@test.com") == "done" }
+        }

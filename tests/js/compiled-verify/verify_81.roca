@@ -1,0 +1,10 @@
+pub fn yesno(b: Bool) -> String {
+            return match b {
+                true => "yes"
+                false => "no"
+            }
+            test {
+                self(true) == "yes"
+                self(false) == "no"
+            }
+        }

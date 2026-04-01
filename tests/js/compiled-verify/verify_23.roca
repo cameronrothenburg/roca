@@ -1,0 +1,5 @@
+pub fn first_name() -> String {
+            const names = ["alice", "bob", "cam"]
+            return names[0]
+            test { self() == "alice" }
+        }

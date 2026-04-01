@@ -1,0 +1,12 @@
+contract Stringable { to_string() -> String }
+
+        pub struct Email {
+            value: String
+        }{}
+
+        Email satisfies Stringable {
+            fn to_string() -> String {
+                return self.value
+                test { self() == "test" }
+            }
+        }

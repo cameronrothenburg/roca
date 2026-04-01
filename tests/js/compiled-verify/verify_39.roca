@@ -1,0 +1,7 @@
+pub fn in_range(val: Number, min: Number, max: Number) -> Bool {
+            if val >= min {
+                if val <= max { return true }
+            }
+            return false
+            test { self(5, 0, 10) == true self(15, 0, 10) == false }
+        }

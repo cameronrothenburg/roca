@@ -1,0 +1,9 @@
+pub fn byte_work() -> Number {
+            const arr = Uint8Array(4)
+            return arr.byteLength
+            crash {
+                Uint8Array -> skip
+                arr.byteLength -> skip
+            }
+            test { self() == 4 }
+        }

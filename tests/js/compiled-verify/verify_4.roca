@@ -1,0 +1,8 @@
+pub fn double(x: Number) -> Number {
+            return x * 2
+            test { self(5) == 10 }
+        }
+        pub fn add_one(x: Number) -> Number {
+            return x + 1
+            test { self(5) == 6 }
+        }

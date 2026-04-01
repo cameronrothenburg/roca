@@ -1,0 +1,16 @@
+extern contract Database {
+            query(sql: String) -> String, err {
+                err failed = "query failed"
+            }
+        }
+
+        pub struct Runtime {
+            db: Database
+        }{}
+
+        pub fn get_user(rt: Runtime) -> String {
+            const result = rt.db.query("SELECT name FROM users")
+            return result
+            crash { rt.db.query -> fallback("unknown") }
+            test { self(Runtime { db: null }) == "alice" }
+        }

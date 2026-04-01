@@ -166,10 +166,10 @@ The `halt` strategy propagates the error to the calling function.
 
 ### 5.4.4 `skip`
 
-The `skip` strategy swallows the error. Execution continues with `null` (if the receiving type is nullable) or the type's default value.
+The `skip` strategy swallows the error. Execution continues with the type's default value (`""` for String, `0` for Number, `false` for Bool).
 
 - `skip` is terminal.
-- The receiving binding SHOULD be typed as nullable (`Type | null`) when using `skip`.
+- The receiving binding receives the type's zero value, not `null`.
 
 ### 5.4.5 `fallback(expr)`
 
@@ -221,8 +221,9 @@ In this example:
 
 ### 5.5.2 Chain Syntax
 
-```
+```roca
 CrashEntry  = CallTarget "->" CrashChain
+CallTarget  = Ident | Ident ("." Ident)+
 CrashChain  = Strategy ("|>" Strategy)*
 Strategy    = "log"
             | "halt"
@@ -232,7 +233,7 @@ Strategy    = "log"
             | "retry" "(" Number "," Number ")"
 ```
 
-The `CallTarget` identifies the error-returning function call. It MUST match a call that appears in the function body. The syntax is `TypeOrModule.methodName`.
+The `CallTarget` identifies the error-returning function call. It MUST match a call that appears in the function body. It MAY be a standalone function name (`validate`) or a qualified name (`Type.method`, `obj.field.method`).
 
 ---
 
@@ -259,7 +260,7 @@ crash {
 
 ### 5.6.2 Syntax
 
-```
+```roca
 DetailedCrash   = CallTarget "{" ErrorHandler+ "}"
 ErrorHandler    = "err." name "->" CrashChain
                 | "default" "->" CrashChain

@@ -1,0 +1,10 @@
+/// A user
+        pub struct User {
+            name: String
+        }{}
+        User satisfies Serializable {
+            fn toJson() -> String {
+                return self.name
+                test { self() == "test" }
+            }
+        }

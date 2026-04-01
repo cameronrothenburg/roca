@@ -1,0 +1,20 @@
+/// Risky operation
+        pub struct Risky {
+            call(s: String) -> String, err {
+                err boom = "boom"
+            }
+        }{
+            pub fn call(s: String) -> String, err {
+                if s == "" { return err.boom }
+                return s
+                test { self("ok") == "ok" self("") is err.boom }
+            }
+        }
+
+        /// Safe wrapper
+        pub fn safe() -> String {
+            const result = Risky.call("")
+            return result
+            crash { Risky.call -> log |> fallback("safe_default") }
+            test { self() == "safe_default" }
+        }

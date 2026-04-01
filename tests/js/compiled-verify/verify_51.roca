@@ -1,0 +1,5 @@
+/// Gets count
+        pub fn get_count() -> Number {
+            return 0
+            test { self() == 0 }
+        }

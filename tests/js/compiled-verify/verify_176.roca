@@ -1,0 +1,12 @@
+pub fn process(s: String) -> String {
+            const trimmed = s.trim()
+            const upper = trimmed.toUpperCase()
+            const has_a = upper.includes("A")
+            return upper
+            crash {
+                s.trim -> skip
+                trimmed.toUpperCase -> skip
+                upper.includes -> skip
+            }
+            test { self(" hello ") == "HELLO" }
+        }

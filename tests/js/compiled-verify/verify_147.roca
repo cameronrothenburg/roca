@@ -1,0 +1,26 @@
+pub struct Point {
+            x: Number
+            y: Number
+            create(x: Number, y: Number) -> Point
+        }{
+            pub fn create(x: Number, y: Number) -> Point {
+                return Point { x: x, y: y }
+                test { self(1, 2) == Point { x: 1, y: 2 } }
+            }
+        }
+
+        pub struct Line {
+            start: Point
+            end: Point
+            create(x1: Number, y1: Number, x2: Number, y2: Number) -> Line
+        }{
+            pub fn create(x1: Number, y1: Number, x2: Number, y2: Number) -> Line {
+                const s = Point.create(x1, y1)
+                const e = Point.create(x2, y2)
+                return Line { start: s, end: e }
+                crash {
+                    Point.create -> skip
+                }
+                test { self(0, 0, 1, 1) == Line { start: Point { x: 0, y: 0 }, end: Point { x: 1, y: 1 } } }
+            }
+        }

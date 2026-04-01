@@ -1,0 +1,8 @@
+pub fn count() -> Number {
+            let x = 0
+            x = x + 1
+            x = x + 1
+            x = x + 1
+            return x
+            test { self() == 3 }
+        }

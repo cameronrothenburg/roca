@@ -1,0 +1,14 @@
+{
+  "name": "roca-package",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "main.js",
+  "types": "main.d.ts",
+  "exports": {
+    ".": "./main.js"
+  },
+  "files": [
+    "*.js",
+    "*.d.ts"
+  ]
+}

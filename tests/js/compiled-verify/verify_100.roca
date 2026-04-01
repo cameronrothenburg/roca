@@ -1,0 +1,5 @@
+pub fn intro(name: String, age: Number) -> String {
+            return "{name} is {age}"
+            crash { age.toString -> skip }
+            test { self("cam", 25) == "cam is 25" }
+        }

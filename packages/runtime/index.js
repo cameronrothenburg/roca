@@ -159,19 +159,27 @@ const Http = (() => {
 })();
 
 const Url = (() => {
+    function wrapUrl(u) {
+        return {
+            host: () => u?.host ?? "",
+            hostname: () => u?.hostname ?? "",
+            port: () => u?.port ?? "",
+            protocol: () => u?.protocol ?? "",
+            pathname: () => u?.pathname ?? "",
+            search: () => u?.search ?? "",
+            hash: () => u?.hash ?? "",
+            origin: () => u?.origin ?? "",
+            href: () => u?.href ?? "",
+            toString: () => u?.href ?? "",
+            getParam: (name) => u?.searchParams?.get(name) ?? null,
+            hasParam: (name) => u?.searchParams?.has(name) ?? false,
+        };
+    }
     return {
-        parse: wrap((raw) => new URL(raw)),
-        host: (u) => u?.host ?? "",
-        hostname: (u) => u?.hostname ?? "",
-        port: (u) => u?.port ?? "",
-        protocol: (u) => u?.protocol ?? "",
-        pathname: (u) => u?.pathname ?? "",
-        search: (u) => u?.search ?? "",
-        hash: (u) => u?.hash ?? "",
-        origin: (u) => u?.origin ?? "",
-        toString: (u) => u?.href ?? "",
-        getParam: (u, name) => u?.searchParams?.get(name) ?? null,
-        hasParam: (u, name) => u?.searchParams?.has(name) ?? false,
+        parse: (raw) => {
+            try { return ok(wrapUrl(new URL(raw))); }
+            catch (e) { return error("parse_failed", e.message); }
+        },
         isValid: (raw) => { try { new URL(raw); return true; } catch { return false; } },
     };
 })();

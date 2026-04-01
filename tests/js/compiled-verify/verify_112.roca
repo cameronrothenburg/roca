@@ -1,0 +1,6 @@
+pub fn parse(s: String) -> Number {
+            let n, err = Number(s)
+            return n
+            crash { Number -> fallback(-1) }
+            test { self("hello") == -1 self("42") == 42 }
+        }

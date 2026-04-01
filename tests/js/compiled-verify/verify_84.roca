@@ -1,0 +1,10 @@
+pub struct Config {
+            name: String
+            description: Optional<String>
+        }{}
+
+        pub fn display(c: Config) -> String {
+            if c.description == null { return c.name }
+            return c.name + ": " + c.description
+            test { self(Config { name: "app", description: null }) == "app" }
+        }

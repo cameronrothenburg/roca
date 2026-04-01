@@ -1,0 +1,23 @@
+/// Safe division
+        pub struct SafeDivide {
+            call(a: Number, b: Number) -> Number, err {
+                err div_zero = "div_zero"
+            }
+        }{
+            pub fn call(a: Number, b: Number) -> Number, err {
+                if b == 0 { return err.div_zero }
+                return a / b
+                test {
+                    self(10, 2) == 5
+                    self(10, 0) is err.div_zero
+                }
+            }
+        }
+
+        /// Computes division result
+        pub fn compute(a: Number, b: Number) -> String {
+            const result = SafeDivide.call(a, b)
+            return "result: " + result
+            crash { SafeDivide.call -> fallback(fn(e) -> "error: " + e.message) }
+            test { self(10, 2) == "result: 5" }
+        }

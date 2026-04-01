@@ -62,7 +62,10 @@ pub fn emit(file: &ast::SourceFile) -> String {
                 ast::ImportSource::Std(None) => {}
             },
             Item::ExternContract(c) => {
-                stdlib_names.insert(c.name.clone());
+                // Only stdlib contracts get roca. prefix — user-defined extern contracts don't
+                if crate::constants::RESERVED_NAMES.contains(&c.name.as_str()) {
+                    stdlib_names.insert(c.name.clone());
+                }
             }
             _ => {}
         }
