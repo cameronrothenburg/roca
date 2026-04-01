@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, "../..");
 const OUT = join(__dirname, "compiled-verify");
-const ROCA = `cargo run --quiet --manifest-path ${ROOT}/Cargo.toml --`;
+const ROCA = process.env.ROCA_BIN || `cargo run --quiet --manifest-path ${ROOT}/Cargo.toml --`;
 const RUNTIME = join(ROOT, "packages/runtime/index.js");
 
 beforeAll(() => {

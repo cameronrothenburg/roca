@@ -33,21 +33,19 @@ jobs:
             ${{ runner.os }}-cargo-
 
       - name: Build
-        run: cargo build
+        run: cargo build --release
 
-      - name: Run tests
-        run: cargo test
+      - name: Run Rust tests
+        run: cargo test --release
+
+      - name: CLI smoke test
+        run: ./target/release/roca check tests/js/projects/api
 
       - name: Install bun
         uses: oven-sh/setup-bun@v2
-
-      - name: CLI smoke test
-        run: |
-          cargo install --path .
-          roca check tests/js/projects/api
 
       - name: Run JS tests
         run: |
           cd tests/js
           bun install
-          bun test
+          ROCA_BIN="${{ github.workspace }}/target/release/roca" bun test

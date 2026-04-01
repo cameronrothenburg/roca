@@ -48,16 +48,17 @@ jobs:
       - name: Install bun
         uses: oven-sh/setup-bun@v2
 
+      - name: Build release binary
+        run: cargo build --release
+
+      - name: CLI smoke test
+        run: ./target/release/roca check tests/js/projects/api
+
       - name: Run JS tests
         run: |
           cd tests/js
           bun install
-          bun test
-
-      - name: CLI smoke test
-        run: |
-          cargo build --release
-          ./target/release/roca check tests/js/projects/api
+          ROCA_BIN="${{ github.workspace }}/target/release/roca" bun test
 
       # ─── Publish ────────────────────────────
       - name: Create GitHub Release
