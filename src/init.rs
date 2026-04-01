@@ -148,7 +148,18 @@ roca --version
 uname -a
 ```
 
-## Filing
+## Before filing
+
+Search for existing open issues that match the bug you found:
+
+```bash
+gh issue list --repo cameronrothenburg/roca --state open --search "[keywords from the bug]"
+```
+
+- If a **matching issue exists**: add a comment with your reproduction case and environment info instead of creating a new issue. This groups similar reports together.
+- If **no match**: create a new issue.
+
+## Filing a new issue
 
 Each bug gets its **own issue**. One bug, one ticket — easier to triage, label, assign, and close.
 
