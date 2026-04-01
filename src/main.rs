@@ -31,6 +31,12 @@ fn main() {
         std::process::exit(1);
     }
 
+    // Handle --help/-h on any subcommand
+    if args.len() >= 3 && (args[2] == "--help" || args[2] == "-h") {
+        print_subcommand_help(&args[1]);
+        return;
+    }
+
     match args[1].as_str() {
         "init" => {
             if args.len() < 3 {
@@ -204,6 +210,27 @@ fn resolve_path_arg(args: &[String]) -> PathBuf {
         PathBuf::from(&args[2])
     } else {
         resolve_src_dir(Path::new("."))
+    }
+}
+
+fn print_subcommand_help(cmd: &str) {
+    match cmd {
+        "init" => println!("roca init <project-name>\n\nCreate a new Roca project with roca.toml, src/, and a starter file."),
+        "check" => println!("roca check [path]\n\nParse and type-check .roca files without emitting JS.\nDefaults to src/ from roca.toml if no path given."),
+        "build" => println!("roca build [path] [--emit-only]\n\nCompile .roca files to JS with proof tests.\n  --emit-only  Skip native tests, emit JS directly."),
+        "test" => println!("roca test [path]\n\nBuild and run proof tests, then clean output."),
+        "run" => println!("roca run [path]\n\nBuild and execute via Node.js."),
+        "repl" => println!("roca repl [--native]\n\nInteractive REPL.\n  --native  Use Cranelift JIT instead of Node.js."),
+        "search" => println!("roca search <query>\n\nSearch stdlib and project for types, methods, and functions."),
+        "gen-extern" => println!("roca gen-extern <file.d.ts> [--out <path>]\n\nGenerate extern contracts from TypeScript declarations."),
+        "skills" => println!("roca skills [--claude]\n\nGenerate AI assistant skills.\n  --claude  Include Claude Code integration files."),
+        "lsp" => println!("roca lsp\n\nStart the language server (stdio transport)."),
+        "man" => println!("roca man\n\nPrint the full language manual."),
+        "patterns" => println!("roca patterns\n\nShow coding patterns and JS integration examples."),
+        _ => {
+            eprintln!("unknown command: {}", cmd);
+            std::process::exit(1);
+        }
     }
 }
 
