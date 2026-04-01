@@ -278,16 +278,6 @@ pub extern "C" fn roca_time_now() -> f64 {
         .unwrap_or(0.0)
 }
 
-/// Call a function pointer on a new thread and return the f64 result.
-/// Used by waitAll/waitFirst to run JIT functions in parallel.
-/// fn_ptr is a JIT function pointer (extern "C" fn() -> f64).
-#[allow(dead_code)]
-pub extern "C" fn roca_thread_call_f64(fn_ptr: i64) -> f64 {
-    if fn_ptr == 0 { return 0.0; }
-    let fp: extern "C" fn() -> f64 = unsafe { std::mem::transmute(fn_ptr) };
-    fp()
-}
-
 /// Shared tokio runtime for wait operations — created once, reused across calls.
 fn tokio_rt() -> &'static tokio::runtime::Runtime {
     static RT: std::sync::LazyLock<tokio::runtime::Runtime> = std::sync::LazyLock::new(|| {

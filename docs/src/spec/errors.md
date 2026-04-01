@@ -45,7 +45,7 @@ get(url: String) -> HttpResponse, err {
 
 - Struct method signatures (in the header block) MAY define error declarations.
 - Extern contract method signatures MAY define error declarations.
-- Standalone `pub fn` functions MUST NOT define new error names in their signatures. They MAY use `, err` and return errors declared by the types they call.
+- Standalone `pub fn` functions MAY define error declarations and return named errors.
 
 ### 5.2.2 Error Name Rules
 
@@ -97,6 +97,34 @@ test {
 - A conforming compiler MUST reject any function that calls an error-returning function without a corresponding crash handler (the **missing-crash rule**).
 - Every error-returning call in the function body MUST have a matching entry in the crash block.
 - A conforming compiler SHOULD produce a clear diagnostic identifying the uncovered call.
+
+### 5.3.3 Inline Error Handling in Mutation Methods
+
+Struct methods that mutate state MAY use `let val, err = call()` inline instead of crash blocks. This allows branching on errors during mutation sequences where crash blocks do not fit naturally.
+
+```roca
+pub struct Account {
+    balance: Number
+    deposit(amount: Number) -> Ok, err {
+        err invalid = "invalid amount"
+    }
+}{
+    pub fn deposit(amount: Number) -> Ok, err {
+        if amount <= 0 { return err.invalid }
+        self.balance = self.balance + amount
+        return Ok
+    test {
+        self(100) is Ok
+        self(-1) is err.invalid
+    }
+    }
+}
+```
+
+**Rules:**
+- `let val, err = call()` is permitted inside struct methods.
+- Standalone `pub fn` functions MUST use crash blocks for error handling.
+- Safe casts (`Number()`, `String()`, `Bool()`) MAY use `let val, err` in any context.
 
 ---
 

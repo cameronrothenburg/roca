@@ -113,7 +113,7 @@ When the tokenizer encounters `/`, it MUST apply the following rules in order:
 
 ## 1.4 Keywords
 
-The following 36 words are reserved keywords. A conforming tokenizer MUST emit the corresponding keyword token when any of these words appear as an identifier. Keywords are case-sensitive and MUST match exactly.
+The following 39 words are reserved keywords. A conforming tokenizer MUST emit the corresponding keyword token when any of these words appear as an identifier. Keywords are case-sensitive and MUST match exactly.
 
 | Category | Keywords |
 |---|---|

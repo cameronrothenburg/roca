@@ -51,11 +51,3 @@ pub enum CrashStep {
     /// fallback(value) — use a default
     Fallback(Expr),
 }
-
-/// Does this step consume the error (no propagation)?
-#[allow(dead_code)]
-impl CrashStep {
-    pub fn is_handled(&self) -> bool {
-        matches!(self, CrashStep::Fallback(_) | CrashStep::Skip | CrashStep::Panic)
-    }
-}

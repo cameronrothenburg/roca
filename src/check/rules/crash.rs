@@ -159,6 +159,49 @@ mod tests {
     }
 
     #[test]
+    fn chain_ending_with_log_rejected() {
+        let e = errors(r#"
+            /// Risky
+            pub fn risky(s: String) -> String, err {
+                err fail = "fail"
+                return s
+                test { self("a") == "a" self("") is err.fail }
+            }
+            /// Calls risky
+            pub fn caller() -> String {
+                const r = risky("x")
+                return r
+                crash { risky -> log }
+                test { self() == "x" }
+            }
+        "#);
+        assert!(e.iter().any(|e| e.code == "nonterminal-chain"),
+            "expected nonterminal-chain for log-only chain, got: {:?}", e);
+    }
+
+    #[test]
+    fn chain_log_then_halt_ok() {
+        let e = errors(r#"
+            /// Risky
+            pub fn risky(s: String) -> String, err {
+                err fail = "fail"
+                return s
+                test { self("a") == "a" self("") is err.fail }
+            }
+            /// Calls risky
+            pub fn caller() -> String, err {
+                err fail = "fail"
+                const r = risky("x")
+                return r
+                crash { risky -> log |> halt }
+                test { self() == "x" }
+            }
+        "#);
+        assert!(!e.iter().any(|e| e.code == "nonterminal-chain"),
+            "log |> halt should be fine, got: {:?}", e);
+    }
+
+    #[test]
     fn halt_no_panic_warning() {
         let e = errors(r#"
             /// Does something risky
@@ -260,14 +303,23 @@ impl Rule for CrashRule {
                 }
             }
 
-            // Warn on panic usage
-            let has_panic = match &handler.strategy {
-                CrashHandlerKind::Simple(chain) => chain.iter().any(|s| matches!(s, CrashStep::Panic)),
+            // Check chain validity: nonterminal ending + panic warning in one pass
+            let (ends_nonterminal, has_panic) = match &handler.strategy {
+                CrashHandlerKind::Simple(chain) => (
+                    chain.last().map_or(false, |s| matches!(s, CrashStep::Log | CrashStep::Retry { .. })),
+                    chain.iter().any(|s| matches!(s, CrashStep::Panic)),
+                ),
                 CrashHandlerKind::Detailed { arms, default } => {
-                    arms.iter().any(|a| a.chain.iter().any(|s| matches!(s, CrashStep::Panic)))
-                        || default.as_ref().map_or(false, |c| c.iter().any(|s| matches!(s, CrashStep::Panic)))
+                    let nt = arms.iter().any(|a| a.chain.last().map_or(false, |s| matches!(s, CrashStep::Log | CrashStep::Retry { .. })))
+                        || default.as_ref().map_or(false, |c| c.last().map_or(false, |s| matches!(s, CrashStep::Log | CrashStep::Retry { .. })));
+                    let p = arms.iter().any(|a| a.chain.iter().any(|s| matches!(s, CrashStep::Panic)))
+                        || default.as_ref().map_or(false, |c| c.iter().any(|s| matches!(s, CrashStep::Panic)));
+                    (nt, p)
                 }
             };
+            if ends_nonterminal {
+                errors.push(RuleError::new(errors::NONTERMINAL_CHAIN, format!("crash chain for '{}' ends with a non-terminal strategy — must end with halt, fallback, skip, or panic", handler.call), Some(ctx.func.qualified_name.clone())));
+            }
             if has_panic {
                 errors.push(RuleError::new(errors::PANIC_WARNING, format!("'{}' uses panic — this will crash the process. Use halt or fallback unless this is truly unrecoverable", handler.call), Some(ctx.func.qualified_name.clone())));
             }

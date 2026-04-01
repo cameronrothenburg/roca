@@ -4,8 +4,10 @@ pub mod types;
 pub mod helpers;
 pub mod runtime;
 pub mod emit;
-#[allow(dead_code)]
 pub mod test_runner;
+pub mod property_tests;
+#[cfg(test)]
+mod test_helpers;
 
 use crate::ast;
 use cranelift_jit::{JITBuilder, JITModule};
@@ -48,13 +50,8 @@ pub fn compile_all<M: Module>(
     for item in &source.items {
         match item {
             crate::ast::Item::ExternFn(ef) => {
-                let mock = crate::ast::MockDef {
-                    entries: vec![crate::ast::MockEntry {
-                        method: ef.name.clone(),
-                        value: default_expr_for_type(&ef.return_type),
-                    }],
-                };
-                emit::compile_mock_stub(module, ef, &mock, &rt, &mut compiled)?;
+                let default_value = default_expr_for_type(&ef.return_type);
+                emit::compile_extern_fn_stub(module, ef, &default_value, &rt, &mut compiled)?;
             }
             crate::ast::Item::ExternContract(c) => {
                 emit::compile_contract_stubs(module, c, &rt, &mut compiled)?;

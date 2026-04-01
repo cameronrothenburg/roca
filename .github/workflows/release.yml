@@ -46,14 +46,14 @@ jobs:
       - name: Run tests
         run: cargo test
 
-      - name: Install CLI
-        run: cargo install --path .
+      - name: Install bun
+        uses: oven-sh/setup-bun@v2
 
-      - name: Check worker example
+      - name: Run JS tests
         run: |
-          cd examples/worker
-          roca check
-          roca build
+          cd tests/js
+          bun install
+          bun test
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

@@ -54,9 +54,25 @@ All error-returning functions MUST use this shape:
 - `err.name` MUST match the error name declared in the Roca contract
 - `err.message` MUST be a human-readable string
 
-### 8.2.3 The `wrap` Utility
+### 8.2.3 The `wrap`, `ok`, and `error` Utilities
 
-The runtime MUST export a `wrap` function that converts plain JS functions to the error tuple protocol:
+The runtime MUST export the following named functions:
+
+- `wrap` -- converts plain JS functions to the error tuple protocol (see below)
+- `ok(value)` -- returns `{ value: value, err: null }` (convenience for constructing success tuples)
+- `error(name, message)` -- returns `{ value: null, err: { name: name, message: message } }` (convenience for constructing error tuples)
+
+```javascript
+import { wrap, ok, error } from "@rocalang/runtime";
+
+ok(42);           // { value: 42, err: null }
+error("not_found", "user does not exist");
+// { value: null, err: { name: "not_found", message: "user does not exist" } }
+```
+
+#### `wrap`
+
+The `wrap` function converts plain JS functions to the error tuple protocol:
 
 ```javascript
 import { wrap } from "@rocalang/runtime";

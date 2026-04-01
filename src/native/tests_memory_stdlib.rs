@@ -1,44 +1,12 @@
 //! Memory tests for self-hosting stdlib: Char, NumberParse, Map
 
-use cranelift_jit::JITModule;
-use cranelift_module::Module;
-use crate::native::{create_jit_module, compile_all, runtime};
-
-fn jit(source: &str) -> JITModule {
-    let file = crate::parse::parse(source);
-    let mut module = create_jit_module();
-    compile_all(&mut module, &file).unwrap();
-    module.finalize_definitions().unwrap();
-    module
-}
-
-fn sig_f64(m: &JITModule, params: usize) -> cranelift_codegen::ir::Signature {
-    let mut s = m.make_signature();
-    for _ in 0..params { s.params.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::F64)); }
-    s.returns.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::F64));
-    s
-}
-
-unsafe fn call_f64(m: &mut JITModule, name: &str, params: usize) -> *const u8 {
-    let sig = sig_f64(m, params);
-    let id = m.declare_function(name, cranelift_module::Linkage::Export, &sig).unwrap();
-    m.get_finalized_function(id)
-}
+use super::test_helpers::*;
+use crate::native::runtime;
 
 /// Create an RC-managed string from a static literal for testing
 fn test_str(s: &str) -> i64 {
     let leaked = Box::leak(format!("{}\0", s).into_boxed_str());
     runtime::roca_string_new(leaked.as_ptr() as i64)
-}
-
-macro_rules! mem_test {
-    ($name:ident, $body:block) => {
-        #[test]
-        fn $name() {
-            runtime::MEM.reset();
-            $body
-        }
-    };
 }
 
 // ─── charCodeAt memory ──────────────────────────

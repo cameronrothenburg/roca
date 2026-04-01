@@ -31,7 +31,7 @@ A `String` value MUST be valid UTF-8 text. String literals are written with doub
 | `charCodeAt` | `(index: Number) -> Number` | Return Unicode code point at index |
 | `replace` | `(search: String, replacement: String) -> String` | Replace first occurrence |
 | `repeat` | `(count: Number) -> String` | Repeat string count times |
-| `length` | `Number` | Number of characters (property, not method) |
+| `length` | `Number` | Number of characters (built-in property resolved by the checker, not defined in the stdlib contract file) |
 | `toString` | `() -> String` | Identity — returns self |
 
 ### 3.1.2 `Number`
@@ -410,7 +410,7 @@ Email satisfies Loggable {
 
 ## 3.10 Optional Types
 
-Roca does not have `null`. Values that may be absent use `Optional<T>`.
+`Optional<T>` is the preferred pattern for expressing absence in Roca code. The `null` keyword exists in the language for external interop and nullable type syntax (`Type | null`), but the checker warns on nullable usage in user code. Internal Roca code SHOULD use `Optional<T>` instead of `T | null`.
 
 ```roca
 contract Optional<T> {
@@ -460,13 +460,19 @@ Functions MUST NOT use `Optional` for failure cases. Use `-> T, err` with crash 
 
 ### 3.10.4 Null
 
-Roca does not use `null` in user code. The `null` value exists only to represent values returned by external APIs (JS globals, extern contracts). When an extern contract method returns a value that may be `null`, the contract SHOULD declare the return type as `Optional<T>`.
+The `null` keyword and `Type | null` syntax exist in Roca for external interop. Extern contracts that interact with JS APIs MAY use nullable types when the external API genuinely returns `null`. However, the checker SHOULD warn when user code uses `T | null` instead of `Optional<T>`, since `Optional<T>` is the idiomatic pattern.
 
 ```roca
+/// Extern contract — nullable is acceptable for JS interop
 pub extern contract Http {
-    /// Response header — null if header not present
-    header(name: String) -> Optional<String>
+    header(name: String) -> String | null
+}
+
+/// User code — prefer Optional<T>, checker warns on nullable
+pub struct UserProfile {
+    bio: Optional<String>    // correct
+    // bio: String | null    // warning: prefer Optional<T>
 }
 ```
 
-The compiler's internal type system has a `Nullable(Box<TypeRef>)` variant for interop, but user-facing Roca code models absence through `Optional<T>` and failure through `-> T, err`.
+The compiler's internal type system has a `Nullable(Box<TypeRef>)` variant to support both patterns, but user-facing Roca code SHOULD model absence through `Optional<T>` and failure through `-> T, err`.

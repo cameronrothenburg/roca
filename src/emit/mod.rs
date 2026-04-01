@@ -39,15 +39,13 @@ pub fn emit(file: &ast::SourceFile) -> String {
         }
     }
 
-    // Collect import lines (emitted as raw string prefix)
-    // Collect imports and detect stdlib usage
+    // Collect imports and detect stdlib usage in a single pass
     let mut import_lines = Vec::new();
-    let mut uses_stdlib = false;
     let mut stdlib_names: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     for item in &file.items {
-        if let Item::Import(imp) = item {
-            match &imp.source {
+        match item {
+            Item::Import(imp) => match &imp.source {
                 ast::ImportSource::Path(path) => {
                     let js_path = path.replace(".roca", ".js");
                     import_lines.push(format!(
@@ -57,30 +55,23 @@ pub fn emit(file: &ast::SourceFile) -> String {
                     ));
                 }
                 ast::ImportSource::Std(Some(_)) => {
-                    uses_stdlib = true;
                     for name in &imp.names {
                         stdlib_names.insert(name.clone());
                     }
                 }
                 ast::ImportSource::Std(None) => {}
+            },
+            Item::ExternContract(c) => {
+                stdlib_names.insert(c.name.clone());
             }
+            _ => {}
         }
     }
 
-    // Also detect stdlib contracts used without import (built-in)
-    for item in &file.items {
-        if let Item::ExternContract(c) = item {
-            stdlib_names.insert(c.name.clone());
-        }
-    }
-    if !stdlib_names.is_empty() { uses_stdlib = true; }
-
-    // Emit single runtime import if any stdlib is used
-    if uses_stdlib {
+    if !stdlib_names.is_empty() {
         import_lines.insert(0, "import roca from \"@rocalang/runtime\";".to_string());
     }
 
-    // Register stdlib names for roca. prefixing in JS output
     shapes::set_stdlib_contracts(stdlib_names);
 
     let mut body = ast.vec();

@@ -22,7 +22,6 @@ mod match_err;
 mod field_assign;
 // imports — moved to tests/js/ (requires Node runtime)
 mod loggable;
-mod mocks;
 mod nullable;
 mod safe_cast;
 mod satisfies_type;

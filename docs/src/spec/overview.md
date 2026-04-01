@@ -29,7 +29,7 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "S
 
 ## Design Principles
 
-1. **Happy path only.** Function bodies contain the success case. Errors are handled in crash blocks, never in the body.
+1. **Happy path only.** Function bodies contain the success case. Errors are handled in crash blocks. Mutation methods MAY use `let val, err = call()` inline when branching on errors is required.
 2. **Prove it works.** Every public function MUST have a test block with concrete input/output assertions.
 3. **Contracts, not classes.** Types are defined by what they can do (contracts), not what they are (inheritance).
 4. **Compile-time safety.** The compiler enforces error handling, type safety, and test coverage before any code runs.

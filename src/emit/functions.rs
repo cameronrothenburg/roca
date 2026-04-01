@@ -34,7 +34,7 @@ pub(crate) fn build_function<'a>(ast: &AstBuilder<'a>, f: &roca::FnDef) -> Funct
     }
     let body = function_body(ast, stmts);
 
-    let is_async = body_has_wait(&f.body);
+    let is_async = body_has_wait(&f.body) || crash_has_delay(&f.crash);
 
     ast.function(
         SPAN,
@@ -60,6 +60,30 @@ pub(crate) fn body_has_wait(stmts: &[roca::Stmt]) -> bool {
         roca::Stmt::While { condition, body } => expr_has_await(condition) || body_has_wait(body),
         _ => false,
     })
+}
+
+/// Check if a crash block contains retry with a delay, which emits await.
+fn crash_has_delay(crash: &Option<roca::CrashBlock>) -> bool {
+    let crash = match crash {
+        Some(c) => c,
+        None => return false,
+    };
+    for handler in &crash.handlers {
+        let chains: Vec<&[roca::CrashStep]> = match &handler.strategy {
+            roca::CrashHandlerKind::Simple(chain) => vec![chain],
+            roca::CrashHandlerKind::Detailed { arms, default } => {
+                let mut v: Vec<&[roca::CrashStep]> = arms.iter().map(|a| a.chain.as_slice()).collect();
+                if let Some(d) = default { v.push(d); }
+                v
+            }
+        };
+        for chain in chains {
+            if chain.iter().any(|s| matches!(s, roca::CrashStep::Retry { delay_ms, .. } if *delay_ms > 0)) {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 fn emit_param_guards<'a>(

@@ -71,7 +71,7 @@ import { UserProfile, Permissions } from "./types.js";
 import { DatabaseClient } from "./db/client.js";
 ```
 
-Standard library contracts (Math, Fs, Http, JSON, etc.) are NOT imported. They are built into the compiler and available in all Roca files automatically. See [Section 4](./modules.md) for details.
+Core type contracts (String, Number, Bool, Array, Map, Optional, Bytes) are always available -- no import needed. Module-specific stdlib contracts (Math, Fs, Http, JSON, etc.) MUST be imported with `import { Name } from std::module`. See [Section 4](./modules.md) for details.
 
 ### 2.2.2 Contract
 
@@ -371,6 +371,7 @@ The crash block declares error-handling strategies for dependencies that can fai
 ```
 CrashBlock = 'crash' '{' CrashHandler* '}'
 CrashHandler = DottedName '->' CrashChain
+             | DottedName '{' DetailedHandler+ '}'
 CrashChain = CrashStep ('|>' CrashStep)*
 CrashStep = 'retry' '(' Number ',' Number ')'
           | 'skip'
@@ -378,17 +379,17 @@ CrashStep = 'retry' '(' Number ',' Number ')'
           | 'panic'
           | 'log'
           | 'fallback' '(' Expr ')'
-          | 'default' '(' Expr ')'
-          | 'call' '{' (('err' '.' Ident | 'default') '->' CrashChain)+ '}'
+DetailedHandler = ('err' '.' Ident | 'default') '->' CrashChain
 ```
 
-Crash strategies MUST be one of: `retry`, `skip`, `halt`, `fallback`, `panic`, `default`, `log`, `call`.
+Crash strategies MUST be one of: `log`, `halt`, `skip`, `fallback`, `retry`, `panic`.
 
 - `retry(attempts, delay_ms)` takes exactly 2 arguments: the number of attempts and the delay in milliseconds.
 - `skip`, `halt`, `panic` are bare keywords with NO parentheses.
 - `log` is a non-terminal step that logs the error and passes to the next step in the chain.
-- `fallback(expr)` and `default(expr)` take a single expression argument.
-- `call { ... }` provides detailed error handlers that match specific error names or a `default` case.
+- `fallback(expr)` takes a single expression argument.
+
+The `default` keyword is NOT a strategy. It is a catch-all arm in detailed crash handlers (the `DottedName { ... }` form), where it matches any error not explicitly named. In that context, `default -> chain` routes unmatched errors to a crash chain.
 
 ```roca
 pub fn fetchUser(id: String) -> User, err {

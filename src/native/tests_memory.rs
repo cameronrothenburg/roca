@@ -1,39 +1,7 @@
 //! Memory management tests
 
-use cranelift_jit::JITModule;
-use cranelift_module::Module;
-use crate::native::{create_jit_module, compile_all, compile_to_object, runtime, test_runner};
-
-fn jit(source: &str) -> JITModule {
-    let file = crate::parse::parse(source);
-    let mut module = create_jit_module();
-    compile_all(&mut module, &file).unwrap();
-    module.finalize_definitions().unwrap();
-    module
-}
-
-fn sig_f64(m: &JITModule, params: usize) -> cranelift_codegen::ir::Signature {
-    let mut s = m.make_signature();
-    for _ in 0..params { s.params.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::F64)); }
-    s.returns.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::F64));
-    s
-}
-
-unsafe fn call_f64(m: &mut JITModule, name: &str, params: usize) -> *const u8 {
-    let sig = sig_f64(m, params);
-    let id = m.declare_function(name, cranelift_module::Linkage::Export, &sig).unwrap();
-    m.get_finalized_function(id)
-}
-
-macro_rules! mem_test {
-    ($name:ident, $body:block) => {
-        #[test]
-        fn $name() {
-            runtime::MEM.reset();
-            $body
-        }
-    };
-}
+use super::test_helpers::*;
+use crate::native::runtime;
 
 mem_test!(mem_let_reassign_frees_old, {
     let mut m = jit(r#"

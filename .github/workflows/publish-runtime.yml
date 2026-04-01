@@ -1,0 +1,42 @@
+name: Publish Runtime
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'packages/runtime/**'
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Check if version already published
+        id: check
+        working-directory: packages/runtime
+        run: |
+          PACKAGE_VERSION=$(node -p "require('./package.json').version")
+          PUBLISHED=$(npm view @rocalang/runtime version 2>/dev/null || echo "none")
+          if [ "$PACKAGE_VERSION" = "$PUBLISHED" ]; then
+            echo "skip=true" >> $GITHUB_OUTPUT
+            echo "v$PACKAGE_VERSION already published — skipping"
+          else
+            echo "skip=false" >> $GITHUB_OUTPUT
+            echo "Publishing v$PACKAGE_VERSION (current: $PUBLISHED)"
+          fi
+
+      - name: Publish to npm
+        if: steps.check.outputs.skip == 'false'
+        working-directory: packages/runtime
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

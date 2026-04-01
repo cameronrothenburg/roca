@@ -48,10 +48,11 @@ Import = 'import' '{' Ident (',' Ident)* '}' 'from' StringLit
 
 ### 4.2.1 Standard Library
 
-Stdlib contracts (Math, Fs, Http, JSON, etc.) are NOT imported. They are built into the compiler. The compiler recognizes stdlib contract names and emits the correct runtime calls automatically.
+Core type contracts (`String`, `Number`, `Bool`, `Array`, `Map`, `Optional`, `Bytes`) are always loaded and need no import. Module-specific stdlib contracts (Math, Fs, Http, JSON, etc.) MUST be imported with `import { Name } from std::module`. See [Section 4.6](#46-stdlib-modules) for the full list.
 
 ```roca
-/// No import needed — Math is a known stdlib contract
+import { Math } from std::math
+
 pub fn process(n: Number) -> Number {
     return Math.floor(n)
 test {
@@ -59,7 +60,7 @@ test {
 }}
 ```
 
-The compiler MUST know all stdlib contract names and their method signatures at compile time. Stdlib contracts are defined in `packages/stdlib/**/*.roca` and embedded in the compiler binary.
+The compiler MUST know all stdlib contract names and their method signatures at compile time. Stdlib contracts are defined in `packages/stdlib/**/*.roca` and embedded in the compiler binary. The compiler uses `std::` imports to detect which runtime contracts to wire up in the compiled output.
 
 ### 4.2.2 Reserved Names
 
@@ -339,6 +340,25 @@ This means:
 ---
 
 ## 4.6 Stdlib Modules
+
+The stdlib has two tiers:
+
+### 4.6.1 Core Type Contracts (always loaded)
+
+The following type contracts are ALWAYS available in every Roca file -- no import is needed. The compiler loads them unconditionally:
+
+`String`, `Number`, `Bool`, `Array`, `Map`, `Optional`, `Bytes`
+
+These define the primitive and structural types that all Roca code depends on.
+
+### 4.6.2 Module-Specific Stdlib (import required)
+
+Module-specific stdlib contracts MUST be imported with `import { Name } from std::module`. The compiler uses these imports to detect which runtime contracts to wire up in the compiled output.
+
+```roca
+import { Math } from std::math
+import { Fs } from std::fs
+```
 
 | Module | Import Path | Contract | Description |
 |--------|------------|----------|-------------|

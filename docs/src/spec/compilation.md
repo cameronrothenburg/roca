@@ -94,8 +94,7 @@ Crash blocks MUST emit try/catch with the declared strategy implementation:
 | `skip` | Return `undefined` / continue past the call |
 | `halt` | `throw` (re-throw the caught error) |
 | `fallback(value)` | Return the fallback value from the catch |
-| `panic(message)` | `throw new Error(message)` |
-| `default(value)` | Return the default value from the catch |
+| `panic` | `console.error("PANIC:", _err); process.exit(1)` |
 
 ### 7.2.6 Async Mapping
 

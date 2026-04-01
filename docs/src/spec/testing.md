@@ -175,41 +175,57 @@ test {
 
 ---
 
-## 6.5 Battle Tests
+## 6.5 Deep Property Testing
 
-Battle tests are compiler-generated adversarial test cases that run automatically alongside user-written tests. They verify that a function never throws an unexpected exception for any valid input.
+Deep property tests are compiler-generated adversarial test cases that run automatically alongside user-written tests. They verify that a `pub fn` never crashes for any valid input. Property tests run natively via the Cranelift JIT as part of `roca check` and `roca build`.
 
-### 6.5.1 Input Generation
+### 6.5.1 Scope
 
-The compiler MUST auto-generate randomized inputs based on the function's parameter types:
+Property tests run for every `pub fn` and `pub` struct method whose parameters are all generable types (`Number`, `String`, `Bool`). Functions with struct, contract, or generic params are skipped.
+
+### 6.5.2 Input Generation
+
+The compiler auto-generates randomized inputs based on parameter types:
 
 | Type | Generated Values |
 |------|-----------------|
-| `Number` | `0`, `-1`, `1`, `NaN`, `Infinity`, `-Infinity`, random integers, random floats |
-| `String` | `""`, `" "`, very long strings, strings with unicode, strings with special characters |
+| `Number` | `0`, `-1`, `1`, `0.5`, `-0.5`, `NaN`, `Infinity`, `-Infinity`, `MAX_SAFE_INTEGER`, `MIN_SAFE_INTEGER`, random floats |
+| `String` | `""`, `" "`, `"a"`, long strings (64 chars), XSS attempts, escape characters, numeric strings, keyword-like strings, random ASCII |
 | `Bool` | `true`, `false` |
-| `[T]` | `[]`, single-element arrays, large arrays, arrays with generated `T` values |
-| `Struct` | Structs with generated field values |
 
-### 6.5.2 Constrained Parameter Probing
+### 6.5.3 Constrained Parameter Probing
 
-For parameters with declared constraints (e.g., `min`, `max`), the compiler MUST generate boundary-probing values:
+For parameters with declared constraints (e.g., `min`, `max`, `minLen`, `maxLen`), the compiler MUST generate boundary-probing values:
 
-- One value below the minimum (`min - 1`)
-- The minimum value (`min`)
+- The boundary value itself (`min`, `max`, `minLen`, `maxLen`)
+- One value outside the boundary (`min - 1`, `max + 1`)
 - A midpoint value (`(min + max) / 2`)
-- The maximum value (`max`)
-- One value above the maximum (`max + 1`)
+- Random values within the valid range
 
-These boundary probes verify that constraints reject out-of-range inputs and accept in-range inputs.
+For `contains` constraints, the compiler generates strings that both match and don't match the substring.
 
-### 6.5.3 Execution Rules
+### 6.5.4 Invariants
 
-Battle tests MUST verify the following invariant: **the function either returns a valid result or returns a declared error.** An uncaught exception during a battle test is a failure.
+Each generated input set MUST verify:
 
-Battle tests MUST run automatically as part of `roca build`. A conforming implementation MAY allow skipping battle tests with a `--no-battle` flag, but the default behavior MUST include them.
+1. **No crash** — the function returns without panicking.
+2. **Type correctness** — the return value is the declared type.
+3. **Error discipline** — if the function returns `, err`, the error tag is either Ok or a valid error index.
 
-The number of randomized inputs per function SHOULD be at least 100. A conforming implementation MAY allow configuring this via a `--battle-rounds` flag.
+### 6.5.5 Execution
+
+Property tests run automatically — no flags or configuration needed. The compiler generates 50 input combinations per function using a deterministic PRNG seeded from the function name (reproducible failures).
+
+Output uses the `◆` marker to distinguish from explicit test cases:
+
+```
+  ✓ clamp(5, 0, 10) == 5
+  ✓ clamp(-1, 0, 10) == 0
+  ◆ clamp: 50 property tests passed
+  ◆ Validator.check: 50 property tests passed (12 returned errors)
+```
+
+A property test failure blocks JS emission, just like explicit test failures.
 
 ---
 
