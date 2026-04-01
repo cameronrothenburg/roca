@@ -1,4 +1,0 @@
-pub fn first(items: Array<String>) -> String {
-            return items[0]
-            test { self(["hello"]) == "hello" }
-        }

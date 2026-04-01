@@ -1,6 +1,0 @@
-pub fn check(b: Bool) -> Bool {
-            log(b)
-            return b
-            crash { log -> skip }
-            test { self(true) == true }
-        }

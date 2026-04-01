@@ -20,45 +20,6 @@ impl Parser {
     }
 
     fn parse_test_case(&mut self) -> ParseResult<TestCase> {
-        // Check for status mock: StatusCode.200 { mock ... }
-        if let Token::Ident(name) = self.peek().clone() {
-            if self.peek_ahead(1) == &Token::Dot {
-                // Could be a status mock like StatusCode.200
-                let saved_pos = self.pos;
-                self.advance(); // name
-                self.advance(); // dot
-                // Check if next is a number or ident followed by {
-                match self.peek().clone() {
-                    Token::NumberLit(n) => {
-                        self.advance();
-                        if self.at(&Token::LBrace) {
-                            self.advance();
-                            let status = format!("{}.{}", name, n as u32);
-                            let mocks = self.parse_test_mocks()?;
-                            self.expect(&Token::RBrace)?;
-                            return Ok(TestCase::StatusMock { status, mocks });
-                        }
-                        // Not a status mock, restore
-                        self.pos = saved_pos;
-                    }
-                    Token::Ident(val) => {
-                        self.advance();
-                        if self.at(&Token::LBrace) {
-                            self.advance();
-                            let status = format!("{}.{}", name, val);
-                            let mocks = self.parse_test_mocks()?;
-                            self.expect(&Token::RBrace)?;
-                            return Ok(TestCase::StatusMock { status, mocks });
-                        }
-                        self.pos = saved_pos;
-                    }
-                    _ => {
-                        self.pos = saved_pos;
-                    }
-                }
-            }
-        }
-
         // Regular test case: self(args) == expected  OR  self(args) is Ok/err.name
         self.expect(&Token::SelfKw)?;
         self.expect(&Token::LParen)?;
@@ -101,22 +62,6 @@ impl Parser {
         Ok(args)
     }
 
-    fn parse_test_mocks(&mut self) -> ParseResult<Vec<TestMock>> {
-        let mut mocks = Vec::new();
-        while self.at(&Token::Mock) {
-            self.advance();
-            // target -> value
-            let mut target = self.expect_ident()?;
-            while self.eat(&Token::Dot) {
-                let part = self.expect_ident()?;
-                target = format!("{}.{}", target, part);
-            }
-            self.expect(&Token::Arrow)?;
-            let value = self.parse_expr()?;
-            mocks.push(TestMock { target, value });
-        }
-        Ok(mocks)
-    }
 }
 
 #[cfg(test)]

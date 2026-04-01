@@ -71,7 +71,7 @@ impl Parser {
         Ok(SourceFile { items })
     }
 
-    /// Parse: extern fn name(params) -> ReturnType, err { err declarations, mock block }
+    /// Parse: extern fn name(params) -> ReturnType, err { err declarations }
     fn parse_extern_fn(&mut self) -> ParseResult<ExternFnDef> {
         self.expect(&Token::Fn)?;
         let name = self.expect_ident()?;
@@ -103,9 +103,6 @@ impl Parser {
                         other => return Err(self.err(format!("expected string for error message, got {:?}", other))),
                     };
                     errors.push(ErrDecl { name: err_name, message });
-                } else if self.at(&Token::Mock) {
-                    self.advance();
-                    self.skip_braced_block();
                 } else {
                     return Err(self.err(format!("expected err in extern fn block, got {:?}", self.peek())));
                 }

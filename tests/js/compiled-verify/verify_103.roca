@@ -1,4 +1,0 @@
-pub fn plain() -> String {
-            return "no interpolation here"
-            test { self() == "no interpolation here" }
-        }

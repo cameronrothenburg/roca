@@ -1,8 +1,0 @@
-import { Crypto } from std::crypto
-        /// Hashes data
-        pub fn hash(s: String) -> String {
-            const h = wait Crypto.sha256(s)
-            return h
-            crash { Crypto.sha256 -> skip }
-            test { self("test") == self("test") }
-        }

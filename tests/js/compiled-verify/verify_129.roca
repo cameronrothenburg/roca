@@ -1,5 +1,0 @@
-pub fn stringify(n: Number) -> String {
-            return n.toString()
-            crash { n.toString -> skip }
-            test { self(42) == "42" }
-        }

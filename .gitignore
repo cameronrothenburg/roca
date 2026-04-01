@@ -7,4 +7,5 @@
 !tests/js/*.js
 !docs/*.js
 !commitlint.config.js
+tests/js/compiled-verify/
 .claude/.review-passed

@@ -1,5 +1,0 @@
-pub fn msg() -> String {
-            const greeting = "hello"
-            return greeting
-            test { self() == "hello" }
-        }

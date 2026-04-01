@@ -342,29 +342,28 @@ fn check_method_call(type_name: &str, field: &str, args: &[Expr], ctx: &ExprCont
     }
 
     let trimmed = type_name.trim_end_matches('?');
-    let lookup_type = trimmed.strip_prefix("__mock_").unwrap_or(trimmed);
-    if !registry.has_method(lookup_type, field) {
-        let available = registry.available_methods(lookup_type);
+    if !registry.has_method(trimmed, field) {
+        let available = registry.available_methods(trimmed);
         let hint = if available.is_empty() { String::new() }
             else { format!("\n  available: {}", available.join(", ")) };
-        errors.push(RuleError::new(errors::UNKNOWN_METHOD, format!("'{}' has no method '{}'{}",lookup_type, field, hint), Some(qn.clone())));
-    } else if !registry.is_method_pub(lookup_type, field) {
+        errors.push(RuleError::new(errors::UNKNOWN_METHOD, format!("'{}' has no method '{}'{}",trimmed, field, hint), Some(qn.clone())));
+    } else if !registry.is_method_pub(trimmed, field) {
         // Check if caller is inside the same struct — self calls are allowed
         let caller_struct = qn.split('.').next().unwrap_or("");
-        if caller_struct != lookup_type {
-            errors.push(RuleError::new(errors::PRIVATE_METHOD, format!("'{}.{}' is not pub — cannot call from outside '{}'", lookup_type, field, lookup_type), Some(qn.clone())));
+        if caller_struct != trimmed {
+            errors.push(RuleError::new(errors::PRIVATE_METHOD, format!("'{}.{}' is not pub — cannot call from outside '{}'", trimmed, field, trimmed), Some(qn.clone())));
         }
     }
 
-    if lookup_type.contains('<') {
-        if let Some((sig, subs)) = registry.get_method(lookup_type, field) {
+    if trimmed.contains('<') {
+        if let Some((sig, subs)) = registry.get_method(trimmed, field) {
             if !subs.is_empty() {
                 for (i, param) in sig.params.iter().enumerate() {
                     if let Some(arg_expr) = args.get(i) {
                         let expected = substitute_type(&type_ref_to_name(&param.type_ref), &subs);
                         if let Some(actual) = resolve_type(arg_expr, ctx.scope) {
                             if !registry.type_accepts(&expected, &actual) {
-                                errors.push(RuleError::new(errors::GENERIC_MISMATCH, format!("{}.{}() expects {} but got {}", lookup_type, field, expected, actual), Some(qn.clone())));
+                                errors.push(RuleError::new(errors::GENERIC_MISMATCH, format!("{}.{}() expects {} but got {}", trimmed, field, expected, actual), Some(qn.clone())));
                             }
                         }
                     }
@@ -372,7 +371,7 @@ fn check_method_call(type_name: &str, field: &str, args: &[Expr], ctx: &ExprCont
             }
         }
 
-        for (arg, constraint, full_type) in registry.check_generic_constraints(lookup_type) {
+        for (arg, constraint, full_type) in registry.check_generic_constraints(trimmed) {
             errors.push(RuleError::new(errors::CONSTRAINT_VIOLATION, format!("'{}' does not satisfy constraint '{}' required by {}", arg, constraint, full_type), Some(qn.clone())));
         }
     }

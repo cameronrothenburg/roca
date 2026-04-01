@@ -1,4 +1,0 @@
-pub fn greater(a: Number, b: Number) -> Bool {
-            return a > b
-            test { self(10, 5) == true self(1, 10) == false }
-        }

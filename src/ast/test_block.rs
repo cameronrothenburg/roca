@@ -30,17 +30,4 @@ pub enum TestCase {
         args: Vec<Expr>,
         err_name: String,
     },
-    /// Status code mock test for handlers
-    /// StatusCode.200 { mock req.body -> Body.validate(...) }
-    StatusMock {
-        status: String,
-        mocks: Vec<TestMock>,
-    },
-}
-
-/// mock target -> value
-#[derive(Debug, Clone, PartialEq)]
-pub struct TestMock {
-    pub target: String,
-    pub value: Expr,
 }

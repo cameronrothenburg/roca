@@ -1,1 +1,0 @@
-contract Stringable { to_string() -> String }

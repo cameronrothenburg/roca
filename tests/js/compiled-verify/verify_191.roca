@@ -1,7 +1,0 @@
-import { Time } from std::time
-        pub fn parse_ts(s: String) -> Number {
-            const ts = Time.parse(s)
-            return ts
-            crash { Time.parse -> fallback(fn(e) -> 0) }
-            test { self("2026-01-01T00:00:00Z") == self("2026-01-01T00:00:00Z") }
-        }

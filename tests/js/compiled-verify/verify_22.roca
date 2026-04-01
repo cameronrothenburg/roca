@@ -1,5 +1,0 @@
-pub fn empty() -> Number {
-            const arr = []
-            return arr.length
-            test { self() == 0 }
-        }

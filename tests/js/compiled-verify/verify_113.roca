@@ -1,6 +1,0 @@
-pub fn parse_or_zero(val: String) -> Number {
-            let n, err = Number(val)
-            return n
-            crash { Number -> fallback(0) }
-            test { self("5") == 5 }
-        }
