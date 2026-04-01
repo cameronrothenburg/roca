@@ -694,3 +694,53 @@ fn http_get_bad_url() {
     let (_, err) = runtime::roca_http_get(url);
     assert_ne!(err, 0, "bad URL should return error");
 }
+
+// ─── Box allocator ──────────────────────────────────
+
+#[test]
+fn box_alloc_returns_nonzero() {
+    let ptr = runtime::roca_box_alloc(64);
+    assert_ne!(ptr, 0);
+    runtime::roca_box_free(ptr);
+}
+
+#[test]
+fn box_alloc_size_roundtrip() {
+    for size in [1, 8, 16, 64, 256, 1024, 4096] {
+        let ptr = runtime::roca_box_alloc(size);
+        assert_ne!(ptr, 0, "alloc of {} bytes returned null", size);
+        runtime::roca_box_free(ptr);
+    }
+}
+
+#[test]
+fn box_alloc_write_read() {
+    let ptr = runtime::roca_box_alloc(8);
+    unsafe {
+        *(ptr as *mut i64) = 0xDEADBEEF;
+        assert_eq!(*(ptr as *const i64), 0xDEADBEEF);
+    }
+    runtime::roca_box_free(ptr);
+}
+
+#[test]
+fn box_free_null_safe() {
+    runtime::roca_box_free(0);
+}
+
+#[test]
+fn box_alloc_different_sizes_no_corruption() {
+    let mut ptrs = Vec::new();
+    for i in 0..20i64 {
+        let size = (i + 1) * 8;
+        let ptr = runtime::roca_box_alloc(size);
+        unsafe { *(ptr as *mut i64) = i; }
+        ptrs.push((ptr, i));
+    }
+    for &(ptr, expected) in &ptrs {
+        assert_eq!(unsafe { *(ptr as *const i64) }, expected);
+    }
+    for (ptr, _) in ptrs {
+        runtime::roca_box_free(ptr);
+    }
+}

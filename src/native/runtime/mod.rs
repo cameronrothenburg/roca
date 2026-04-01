@@ -213,6 +213,7 @@ runtime_funcs! {
     (http_header,       "roca_http_header",       roca_http_header,       [types::I64, types::I64],                    [types::I64]),
 
     // Memory management
+    (box_alloc,         "roca_box_alloc",         roca_box_alloc,         [types::I64],                                [types::I64]),
     (box_free,          "roca_box_free",          roca_box_free,          [types::I64],                                []),
     (string_new,        "roca_string_new",        roca_string_new,        [types::I64],                                [types::I64]),
     (rc_alloc,          "roca_rc_alloc",          roca_rc_alloc,          [types::I64],                                [types::I64]),

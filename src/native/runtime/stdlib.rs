@@ -431,17 +431,44 @@ fn to_hex(bytes: &[u8]) -> String {
 #[allow(improper_ctypes_definitions)]
 pub extern "C" fn roca_url_parse(raw: i64) -> (i64, u8) {
     match url::Url::parse(read_cstr(raw)) {
-        Ok(parsed) => (Box::into_raw(Box::new(parsed)) as i64, 0),
+        Ok(parsed) => (box_value(parsed), 0),
         Err(_) => (0, 1),
     }
 }
 
-/// Free any Box-allocated opaque pointer (JSON, URL, HTTP response).
+// ─── Size-tagged Box allocator ──────────────────────
+// Layout: [alloc_size: u64][payload...]
+// roca_box_alloc returns pointer to payload.
+// roca_box_free reads size from header and deallocates correctly.
+
+pub extern "C" fn roca_box_alloc(size: i64) -> i64 {
+    if size <= 0 { return 0; }
+    let total = 8 + size as usize;
+    let layout = std::alloc::Layout::from_size_align(total, 8).unwrap();
+    unsafe {
+        let base = std::alloc::alloc(layout);
+        if base.is_null() { return 0; }
+        *(base as *mut u64) = total as u64;
+        base.add(8) as i64
+    }
+}
+
 pub extern "C" fn roca_box_free(ptr: i64) {
     if ptr == 0 { return; }
-    // All boxed types use the same deallocation: reconstruct Box and drop.
-    // Safe because all callers only pass pointers from Box::into_raw.
-    unsafe { drop(Box::from_raw(ptr as *mut u8)); }
+    unsafe {
+        let base = (ptr as *mut u8).sub(8);
+        let total = *(base as *const u64) as usize;
+        let layout = std::alloc::Layout::from_size_align_unchecked(total, 8);
+        std::alloc::dealloc(base, layout);
+    }
+}
+
+/// Helper: allocate and write a value using the tagged box allocator.
+fn box_value<T>(value: T) -> i64 {
+    let ptr = roca_box_alloc(std::mem::size_of::<T>() as i64);
+    if ptr == 0 { return 0; }
+    unsafe { std::ptr::write(ptr as *mut T, value); }
+    ptr
 }
 
 pub extern "C" fn roca_url_is_valid(raw: i64) -> u8 {
@@ -557,7 +584,7 @@ fn with_json<T, F: FnOnce(&serde_json::Value) -> T>(ptr: i64, default: T, f: F) 
 #[allow(improper_ctypes_definitions)]
 pub extern "C" fn roca_json_parse(text: i64) -> (i64, u8) {
     match serde_json::from_str::<serde_json::Value>(read_cstr(text)) {
-        Ok(value) => (Box::into_raw(Box::new(value)) as i64, 0),
+        Ok(value) => (box_value(value), 0),
         Err(_) => (0, 1),
     }
 }
@@ -569,7 +596,7 @@ pub extern "C" fn roca_json_stringify(json: i64) -> i64 {
 
 pub extern "C" fn roca_json_get(json: i64, key: i64) -> i64 {
     with_json(json, 0, |v| match v.get(read_cstr(key)) {
-        Some(inner) => Box::into_raw(Box::new(inner.clone())) as i64,
+        Some(inner) => box_value(inner.clone()),
         None => 0,
     })
 }
@@ -597,7 +624,7 @@ pub extern "C" fn roca_json_get_array(json: i64, key: i64) -> i64 {
         Some(arr) => {
             let result = roca_array_new();
             for item in arr {
-                let ptr = Box::into_raw(Box::new(item.clone())) as i64;
+                let ptr = box_value(item.clone());
                 roca_array_push_str(result, ptr);
             }
             result
@@ -657,7 +684,7 @@ fn http_request(method: &str, url_str: &str, body: Option<&str>) -> Result<HttpR
 
 fn box_response(result: Result<HttpResponse, String>) -> (i64, u8) {
     match result {
-        Ok(resp) => (Box::into_raw(Box::new(resp)) as i64, 0),
+        Ok(resp) => (box_value(resp), 0),
         Err(_) => (0, 1),
     }
 }
@@ -711,7 +738,7 @@ pub extern "C" fn roca_http_text(resp: i64) -> (i64, u8) {
 pub extern "C" fn roca_http_json(resp: i64) -> (i64, u8) {
     with_resp(resp, (0, 1), |r| {
         match serde_json::from_str::<serde_json::Value>(&r.body) {
-            Ok(value) => (Box::into_raw(Box::new(value)) as i64, 0),
+            Ok(value) => (box_value(value), 0),
             Err(_) => (0, 1),
         }
     })
