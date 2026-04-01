@@ -75,7 +75,7 @@ test {
 
 A type reference (TypeRef) identifies the type of a value, parameter, field, or return position. The grammar of type references is:
 
-```
+```text
 TypeRef = String | Number | Bool | Ok
         | Named(name)                    // User-defined: Email, ApiResponse
         | Generic(name, args)            // Array<String>, Map<Number>
@@ -106,7 +106,7 @@ const lookup: Map<String, Number> = Map.from([["a", 1], ["b", 2]])
 
 ### 3.2.4 Nullable References
 
-A nullable reference is written as `Type | null`. See [Section 3.10](#310-nullable-types).
+A nullable reference is written as `Type | null`. See [Section 3.10](#310-optional-types).
 
 ### 3.2.5 Function References
 
@@ -161,7 +161,7 @@ pub extern contract Http {
 
 A method signature within a contract declares the method name, parameter types, and return type.
 
-```
+```text
 MethodSig = name "(" Params ")" "->" TypeRef
            | name "(" Params ")" "->" TypeRef "," "err" ErrorDecl?
 ```

@@ -87,7 +87,7 @@ pub fn build_file(path: &Path) {
         println!("{} passed, {} failed", native_result.passed, native_result.failed);
 
         if native_result.failed > 0 {
-            let _ = fs::remove_file(&out_path);
+            let _ = fs::remove_dir_all(&out_dir);
             eprintln!("\n✗ proof tests failed — no JS emitted");
             log_event(&LogEvent::BuildFailed { file: &path_str, reason: "proof tests failed" });
             std::process::exit(1);
@@ -200,7 +200,8 @@ pub fn build_directory(dir: &Path) {
     println!("\n{} passed, {} failed across {} file(s)", total_passed, total_failed, files.len());
 
     if !failed_files.is_empty() {
-        eprintln!("\n✗ {} file(s) failed:", failed_files.len());
+        let _ = fs::remove_dir_all(&out_dir);
+        eprintln!("\n✗ {} file(s) failed — output removed:", failed_files.len());
         for f in &failed_files { eprintln!("  {}", f); }
         std::process::exit(1);
     }

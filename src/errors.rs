@@ -58,8 +58,9 @@ pub const MANUAL_ERR_CHECK: &str = "manual-err-check";
 pub const MISSING_DOC: &str = "missing-doc";
 // Reserved name rules
 pub const RESERVED_NAME: &str = "reserved-name";
-// Test rules (additional)
+// Test rules
 pub const OK_ON_INFALLIBLE: &str = "ok-on-infallible";
+// Crash rules (chain validation)
 pub const NONTERMINAL_CHAIN: &str = "nonterminal-chain";
 // Ownership rules
 pub const USE_AFTER_MOVE: &str = "use-after-move";

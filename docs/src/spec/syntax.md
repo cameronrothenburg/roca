@@ -10,7 +10,7 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "S
 
 A source file is a sequence of zero or more top-level items. A conforming parser MUST consume all tokens until `EOF` and produce a `SourceFile` node containing the ordered list of items.
 
-```
+```text
 SourceFile = Item*
 ```
 
@@ -34,7 +34,7 @@ Items MAY appear in any order. A source file MAY be empty.
 
 An item is a top-level declaration. The parser MUST recognize the following item forms:
 
-```
+```text
 Item = Import
      | Contract
      | ExternContract
@@ -49,7 +49,7 @@ Item = Import
 
 An import brings names from another `.roca` file into scope.
 
-```
+```text
 Import = 'import' '{' Ident (',' Ident)* '}' 'from' StringLit
 ```
 
@@ -77,7 +77,7 @@ Core type contracts (String, Number, Bool, Array, Map, Optional, Bytes) are alwa
 
 A contract declares a set of capabilities that a type must implement. It defines function signatures, fields, and optional type parameters.
 
-```
+```text
 Contract = 'pub'? 'contract' Ident TypeParams? '{' (FnSignature | Field)* '}'
 TypeParams = '<' TypeParam (',' TypeParam)* '>'
 TypeParam = Ident (':' Ident)?
@@ -105,7 +105,7 @@ contract Comparable<T: Orderable> {
 
 An extern contract declares a type provided by the runtime environment. It MUST NOT be emitted as generated code.
 
-```
+```text
 ExternContract = 'pub'? 'extern' 'contract' Ident TypeParams? '{' (FnSignature | Field)* '}'
 ```
 
@@ -122,7 +122,7 @@ pub extern contract Console {
 
 An enum defines a type with a fixed set of named variants. Enums come in two forms: flat (key-value) and algebraic (data-carrying).
 
-```
+```text
 Enum = 'pub'? 'enum' Ident '{' EnumVariants '}'
 EnumVariants = FlatVariants | AlgebraicVariants
 FlatVariants = Ident '=' (StringLit | NumberLit) (',' Ident '=' (StringLit | NumberLit))*
@@ -159,7 +159,7 @@ pub enum Result {
 
 A struct defines a named data type with fields, function signatures, and method implementations. Structs use a two-block syntax: the first block declares the contract (fields and signatures), the second block provides implementations.
 
-```
+```text
 Struct = 'pub'? 'struct' Ident '{' (Field | FnSignature)* '}' '{' FnDef* '}'
 ```
 
@@ -197,7 +197,7 @@ pub struct Counter {
 
 A satisfies block provides implementations of a contract for a specific struct.
 
-```
+```text
 Satisfies = Ident 'satisfies' Ident TypeArgs? '{' FnDef* '}'
 TypeArgs = '<' TypeRef (',' TypeRef)* '>'
 ```
@@ -235,7 +235,7 @@ A function is the primary unit of computation. See section 2.3 for the full defi
 
 An extern function declares a function provided by the runtime. The body contains only error declarations.
 
-```
+```text
 ExternFn = 'pub'? 'extern' 'fn' Ident '(' Params ')' '->' TypeRef (',' 'err')? '{' ErrDecl* '}'
 ```
 
@@ -259,7 +259,7 @@ pub extern fn readFile(path: String) -> String, err {
 
 A function definition is the primary executable item. It consists of a signature, a body, an optional crash block, and an optional test block.
 
-```
+```text
 FnDef = DocComment? 'pub'? 'fn' Ident TypeParams? '(' Params ')' '->' TypeRef (',' 'err')? '{'
             ErrDecl*
             Stmt*
@@ -292,7 +292,7 @@ fn helper(x: Number) -> Number {
 
 Parameters are a comma-separated list of name-type pairs. Each parameter MAY include constraints in curly braces after the type.
 
-```
+```text
 Params = (Param (',' Param)*)?
 Param = Ident ':' TypeRef ('{' Constraint (',' Constraint)* '}')?
 Constraint = Ident ':' (NumberLit | StringLit)
@@ -332,7 +332,7 @@ pub fn divide(a: Number, b: Number) -> Number, err {
 
 Error declarations name the errors a function can return, with a human-readable message.
 
-```
+```text
 ErrDecl = 'err' Ident '=' StringLit
 ```
 
@@ -368,7 +368,7 @@ The function body contains the happy-path logic. It MUST contain only statements
 
 The crash block declares error-handling strategies for dependencies that can fail. It appears after the body, inside the function's closing brace.
 
-```
+```text
 CrashBlock = 'crash' '{' CrashHandler* '}'
 CrashHandler = DottedName '->' CrashChain
              | DottedName '{' DetailedHandler+ '}'
@@ -426,7 +426,7 @@ crash {
 
 The test block contains proof assertions for the function. It appears after the crash block (or after the body if there is no crash block), inside the function's closing brace.
 
-```
+```text
 TestBlock = 'test' '{' TestCase* '}'
 TestCase = 'self' '(' Args ')' ('==' Expr | 'is' 'err' '.' Ident | 'is' 'Ok')
 ```
@@ -472,7 +472,7 @@ Crash and test blocks MAY appear in any order after the function body.
 
 Statements are the executable units within function bodies, control flow blocks, and struct methods.
 
-```
+```text
 Stmt = ConstDecl | LetDecl | Assignment | Return | If | While | For | Break | Continue
      | FieldAssignment | Wait | WaitAll | WaitFirst | ExprStmt
 ```
@@ -481,7 +481,7 @@ Stmt = ConstDecl | LetDecl | Assignment | Return | If | While | For | Break | Co
 
 An immutable binding. The value MUST NOT be reassigned after declaration.
 
-```
+```text
 ConstDecl = 'const' Ident (':' TypeRef)? '=' Expr
 ```
 
@@ -497,7 +497,7 @@ const result = add(1, 2)
 
 A mutable binding. The value MAY be reassigned.
 
-```
+```text
 LetDecl = 'let' Ident (':' TypeRef)? '=' Expr
         | 'let' Ident ',' Ident '=' Expr
 ```
@@ -516,7 +516,7 @@ let result, parseErr = parse(input)
 
 Reassignment of a `let` binding. The target MUST have been declared with `let`. Assigning to a `const` binding is a compile error.
 
-```
+```text
 Assignment = Ident '=' Expr
 ```
 
@@ -530,7 +530,7 @@ count = count * 2
 
 Returns a value from the enclosing function. A function body MUST contain at least one `return` statement on every code path.
 
-```
+```text
 Return = 'return' Expr
        | 'return' 'err' '.' Ident ('(' StringLit ')')?
 ```
@@ -549,7 +549,7 @@ return Ok(result)
 
 Conditional execution. The condition MUST be an expression. The `else` branch is OPTIONAL. The parser requires `{` after `else` — `else if` chaining is NOT supported. To express multi-branch conditions, use `match` or nest `if` inside `else`.
 
-```
+```text
 If = 'if' Expr '{' Stmt* '}' ('else' '{' Stmt* '}')?
 ```
 
@@ -570,7 +570,7 @@ if status == "active" {
 
 Repeated execution while a condition holds.
 
-```
+```text
 While = 'while' Expr '{' Stmt* '}'
 ```
 
@@ -589,7 +589,7 @@ while attempts < 3 {
 
 Iteration over a collection.
 
-```
+```text
 For = 'for' Ident 'in' Expr '{' Stmt* '}'
 ```
 
@@ -610,7 +610,7 @@ for i in range(0, 10) {
 
 `break` exits the nearest enclosing loop. `continue` skips to the next iteration.
 
-```
+```text
 Break = 'break'
 Continue = 'continue'
 ```
@@ -632,7 +632,7 @@ for item in items {
 
 Assigns a value to a field on a struct instance.
 
-```
+```text
 FieldAssignment = ('self' | Ident) '.' Ident '=' Expr
 ```
 
@@ -647,7 +647,7 @@ user.name = newName
 
 Async operations for concurrent execution.
 
-```
+```text
 Wait = 'wait' Expr
 WaitAllDestructure = 'let' Ident (',' Ident)* ',' Ident '=' 'waitAll' '{' Expr+ '}'
 WaitFirstDestructure = 'let' Ident (',' Ident)* ',' Ident '=' 'waitFirst' '{' Expr+ '}'
@@ -680,7 +680,7 @@ let primary, fallback, failed = waitFirst {
 
 Expressions produce values. They may appear on the right side of bindings, as function arguments, in conditions, and as return values.
 
-```
+```text
 Expr = Literal | Ident | Binary | Unary | Call | FieldAccess | Index
      | Match | StructLit | Closure | Interpolation | EnumVariant | Wait | Array
 ```
@@ -713,7 +713,7 @@ const y = userName
 
 A binary expression applies an operator to two operands. See section 2.7 for precedence rules.
 
-```
+```text
 Binary = Expr Op Expr
 Op = '+' | '-' | '*' | '/' | '==' | '!=' | '<' | '>' | '<=' | '>=' | '&&' | '||'
 ```
@@ -728,7 +728,7 @@ const combined = firstName + " " + lastName
 
 A unary expression applies a prefix operator to a single operand. Unary operators are `!` (logical not) and `-` (negation, desugared as `0 - expr`).
 
-```
+```text
 Unary = ('!' | '-') Expr
 ```
 
@@ -744,7 +744,7 @@ const inverted = -1 * factor
 
 A call expression invokes a function or method with arguments.
 
-```
+```text
 Call = Expr '(' (Expr (',' Expr)*)? ')'
 MethodCall = Expr '.' Ident '(' (Expr (',' Expr)*)? ')'
 ```
@@ -760,7 +760,7 @@ const chained = text.trim().toLowerCase()
 
 Accesses a field on a struct instance or module.
 
-```
+```text
 FieldAccess = Expr '.' Ident
 ```
 
@@ -774,7 +774,7 @@ const nested = response.body.data
 
 Accesses an element by numeric index.
 
-```
+```text
 Index = Expr '[' Expr ']'
 ```
 
@@ -788,7 +788,7 @@ const nested = matrix[row][col]
 
 A match expression selects a branch based on a value. Every match MUST include a wildcard (`_`) arm or be exhaustive over all enum variants. Arms are separated by whitespace (newlines). Commas between arms are OPTIONAL.
 
-```
+```text
 Match = 'match' Expr '{' MatchArm+ '}'
 MatchArm = MatchPattern '=>' Expr ','?
 MatchPattern = Literal | Ident '.' Ident ('(' Ident ')')? | '_'
@@ -812,7 +812,7 @@ const message = match result {
 
 Creates an instance of a struct with field values. The struct name MUST start with an uppercase letter. Empty struct literals (`Name {}`) are NOT supported; at least one field is required.
 
-```
+```text
 StructLit = UpperIdent '{' Ident ':' Expr (',' Ident ':' Expr)* '}'
 ```
 
@@ -826,7 +826,7 @@ const email = Email { value: "test@example.com" }
 
 An anonymous function expression. Closures use the `fn` keyword with an arrow expression body. Closure parameters are untyped — they do NOT have type annotations.
 
-```
+```text
 Closure = 'fn' '(' Ident (',' Ident)* ')' '->' Expr
 ```
 
@@ -850,7 +850,7 @@ const detail = "value: {obj.field}"
 
 Accesses a variant of an enum, optionally with data.
 
-```
+```text
 EnumVariant = Ident '.' Ident
 EnumVariantCall = Ident '.' Ident '(' (Expr (',' Expr)*)? ')'
 ```
@@ -865,7 +865,7 @@ const err = Result.Err("something went wrong")
 
 Waits for an async operation to complete. Produces the resolved value.
 
-```
+```text
 Await = 'wait' Expr
 ```
 
@@ -903,7 +903,7 @@ match name {
 
 Matches an enum variant, optionally binding its inner data to a name.
 
-```
+```text
 VariantPattern = Ident '.' Ident ('(' Ident ')')?
 ```
 

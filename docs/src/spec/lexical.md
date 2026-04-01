@@ -143,7 +143,7 @@ Note: `Ok` is the only keyword that begins with an uppercase letter. `waitAll` a
 
 An identifier begins with an ASCII letter or underscore and continues with ASCII letters, digits, or underscores.
 
-```
+```text
 identifier = [a-zA-Z_][a-zA-Z0-9_]*
 ```
 
@@ -190,7 +190,7 @@ pub fn validate(input: String) -> String, err {
 
 A number literal is a sequence of one or more ASCII digits, optionally followed by a decimal point and one or more ASCII digits. All numbers MUST be stored as 64-bit floating point (`f64`).
 
-```
+```text
 integer = [0-9]+
 float   = [0-9]+ '.' [0-9]+
 ```

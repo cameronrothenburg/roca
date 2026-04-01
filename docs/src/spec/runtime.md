@@ -95,7 +95,7 @@ The runtime MUST detect the environment and populate the stdlib map accordingly:
 | Stdlib | Node.js / Bun | Browser |
 |--------|---------------|---------|
 | Math | Pure JS | Pure JS |
-| Path | Pure JS | Pure JS |
+| Path | Pure JS (POSIX-normalized) | Pure JS (POSIX-normalized) |
 | Char | Pure JS | Pure JS |
 | JSON | `globalThis.JSON` | `globalThis.JSON` |
 | Encoding | `TextEncoder/Decoder` | `TextEncoder/Decoder` |
@@ -125,11 +125,13 @@ The native runtime provides `extern "C"` functions registered with Cranelift JIT
 
 ### 8.3.1 Naming Convention
 
-```
+```text
 roca_{module}_{function}
 ```
 
 ### 8.3.2 Type Mapping
+
+Note: `roca_string_len` and `roca_array_len` return `i64` (count), not `f64`. The caller converts to `f64` when the result is used as a Roca `Number`.
 
 | Roca Type | Cranelift | C |
 |-----------|-----------|---|
@@ -205,7 +207,7 @@ roca_{module}_{function}
 
 ### 8.4.1 RC Header Layout
 
-```
+```text
 [refcount: i64][total_size: i64][payload...]
 ```
 
@@ -235,7 +237,7 @@ At function exit, all live heap variables MUST be released. The return value MUS
 
 ### 8.5.2 Native Protocol
 
-```
+```text
 fn(args...) -> (value: T, err_tag: i8)
 // err_tag = 0 → success
 // err_tag > 0 → error variant (declaration order)

@@ -111,12 +111,20 @@ fn main() {
                 std::process::exit(1);
             });
 
-            // Run compiled JS via node
-            let status = std::process::Command::new("node")
+            // Run compiled JS via node (pipe via stdin to avoid arg size limits)
+            use std::io::Write;
+            let mut child = std::process::Command::new("node")
                 .arg("--input-type=module")
-                .arg("-e")
-                .arg(&code)
-                .status();
+                .arg("-")
+                .stdin(std::process::Stdio::piped())
+                .spawn()
+                .unwrap_or_else(|e| {
+                    eprintln!("error: could not run node: {}", e);
+                    eprintln!("install Node.js or Bun to use 'roca run'");
+                    std::process::exit(1);
+                });
+            child.stdin.take().unwrap().write_all(code.as_bytes()).unwrap();
+            let status = child.wait();
             match status {
                 Ok(s) if !s.success() => std::process::exit(1),
                 Err(e) => {

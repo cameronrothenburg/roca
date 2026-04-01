@@ -28,7 +28,7 @@ The compiler MUST reject any directory build that does not contain a `roca.toml`
 
 Roca source files live in `src/` by default. The compiler MUST search for `.roca` files in the `src/` directory relative to `roca.toml`.
 
-```
+```text
 my-app/
   roca.toml
   src/
@@ -42,7 +42,7 @@ my-app/
 
 ## 4.2 Imports
 
-```
+```text
 Import = 'import' '{' Ident (',' Ident)* '}' 'from' StringLit
 ```
 
@@ -126,11 +126,11 @@ The caller provides the real implementation at runtime. In tests, the compiler a
 
 ## 4.3 Runtime Package
 
-### 4.2.1 Package Identity
+### 4.3.1 Package Identity
 
 The stdlib runtime is published as an npm package:
 
-```
+```text
 Package name: @rocalang/runtime
 ```
 
@@ -144,7 +144,7 @@ roca.Fs.readFile(path);
 roca.Http.get(url);
 ```
 
-### 4.2.2 Runtime Map
+### 4.3.2 Runtime Map
 
 The runtime provides a map of stdlib implementations. Each entry is a wrapped version of the platform's native API (or a pure JS implementation where no native API exists):
 
@@ -161,7 +161,7 @@ export default {
 
 The `wrap` function converts each method to Roca's `{ value, err }` protocol. The runtime detects the environment and only populates what's available — `Fs` exists on Node/Bun, not in browsers.
 
-### 4.2.3 Installation
+### 4.3.3 Installation
 
 The compiler MUST add `@rocalang/runtime` as a dependency in the output `package.json` during `roca build`:
 
@@ -173,7 +173,7 @@ The compiler MUST add `@rocalang/runtime` as a dependency in the output `package
 }
 ```
 
-### 4.2.4 The `wrap` Utility
+### 4.3.4 The `wrap` Utility
 
 The runtime MUST export a `wrap` function that converts plain JS functions to Roca's error protocol:
 
@@ -204,7 +204,7 @@ This is how users bridge existing JS code into Roca's error protocol without rew
 
 ## 4.4 JS Compilation Output
 
-### 4.3.1 Stdlib Imports
+### 4.4.1 Stdlib Imports
 
 When a Roca file uses stdlib contracts, the compiled JS MUST import the runtime and access stdlib via the `roca` map:
 
@@ -234,7 +234,7 @@ The compiler MUST:
 2. Replace all stdlib contract references with `roca.ContractName`
 3. Only emit the runtime import if the file uses stdlib contracts
 
-### 4.3.2 Relative Imports
+### 4.4.2 Relative Imports
 
 Relative `.roca` imports compile to relative `.js` imports unchanged:
 
@@ -248,7 +248,7 @@ Compiles to:
 import { User } from "./types.js";
 ```
 
-### 4.3.3 Identifier Mapping
+### 4.4.3 Identifier Mapping
 
 The compiler MUST prefix stdlib contract names with `roca.` in all emitted JS:
 
@@ -266,7 +266,7 @@ This mapping applies ONLY to contracts imported via `std::`. User-defined types 
 
 The `@rocalang/runtime` package MUST work in two environments: Node.js/Bun and browsers.
 
-### 4.4.1 Node.js / Bun
+### 4.5.1 Node.js / Bun
 
 All modules available. The runtime uses native APIs:
 
@@ -314,7 +314,7 @@ crash {
 }
 ```
 
-### 4.4.3 Test Execution
+### 4.5.4 Test Execution
 
 Testing runs **natively** via the Cranelift JIT compiler. There is no JS test runner.
 

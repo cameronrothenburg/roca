@@ -158,7 +158,7 @@ pub fn validate(input: String) -> String, err {
 test {
     self("hello") == "hello"
     self("ab") is err.too_short
-    // Missing: self("a]long string...") is err.too_long
+    // Missing: self("a long string...") is err.too_long
 }}
 ```
 
@@ -218,7 +218,7 @@ Property tests run automatically — no flags or configuration needed. The compi
 
 Output uses the `◆` marker to distinguish from explicit test cases:
 
-```
+```text
   ✓ clamp(5, 0, 10) == 5
   ✓ clamp(-1, 0, 10) == 0
   ◆ clamp: 50 property tests passed
@@ -303,7 +303,7 @@ The test engine MUST:
 
 The compiler proves code correctness natively before emitting JS. If all tests pass on the native engine, the emitted JS is guaranteed correct by construction. The JS output is never tested directly — the native engine is the single source of truth.
 
-### 6.7.4 Test Isolation
+### 6.7.3 Test Isolation
 
 Each test assertion MUST execute in isolation. Side effects from one assertion MUST NOT affect subsequent assertions. A conforming implementation MUST ensure that:
 

@@ -202,6 +202,29 @@ mod tests {
     }
 
     #[test]
+    fn detailed_handler_nonterminal_rejected() {
+        let e = errors(r#"
+            /// Risky
+            pub fn risky(s: String) -> String, err {
+                err fail = "fail"
+                err timeout = "timeout"
+                return s
+                test { self("a") == "a" self("") is err.fail self("t") is err.timeout }
+            }
+            /// Calls risky with detailed handler
+            pub fn caller() -> String {
+                const r = risky("x")
+                return r
+                crash { risky { err.fail -> log err.timeout -> fallback("default") default -> fallback("") } }
+                test { self() == "x" }
+            }
+        "#);
+        // log as terminal in a detailed arm should trigger nonterminal-chain
+        assert!(e.iter().any(|e| e.code == "nonterminal-chain"),
+            "expected nonterminal-chain for detailed handler with log-only arm, got: {:?}", e);
+    }
+
+    #[test]
     fn halt_no_panic_warning() {
         let e = errors(r#"
             /// Does something risky

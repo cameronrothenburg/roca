@@ -173,7 +173,7 @@ The native target uses reference counting for heap-allocated values. This sectio
 
 Every heap-allocated object MUST use a 16-byte header followed by the payload:
 
-```
+```text
 [refcount: i64][total_size: i64][payload: ...]
 ```
 

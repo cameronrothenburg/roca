@@ -10,7 +10,7 @@ use crate::check::context::ItemContext;
 pub struct ReservedNameRule;
 
 impl Rule for ReservedNameRule {
-    fn name(&self) -> &'static str { "reserved-name" }
+    fn name(&self) -> &'static str { errors::RESERVED_NAME }
 
     fn check_item(&self, ctx: &ItemContext) -> Vec<RuleError> {
         let mut errs = Vec::new();

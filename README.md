@@ -7,7 +7,7 @@
 
 *Roca -- Spanish for rock, stone, cliff. Firme como una roca -- as solid as a rock.*
 
-A contractual language that compiles to JavaScript and native machine code. A language for the AI era.
+A contractual language that compiles to JavaScript. Code is proven correct natively via Cranelift JIT before JS emission. A language for the AI era.
 
 Our goal is simple: when you hear code was written in Roca, you trust it.
 
