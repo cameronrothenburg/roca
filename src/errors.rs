@@ -58,10 +58,9 @@ pub const MANUAL_ERR_CHECK: &str = "manual-err-check";
 pub const MISSING_DOC: &str = "missing-doc";
 // Reserved name rules
 pub const RESERVED_NAME: &str = "reserved-name";
-// Self-referential test rules
-pub const SELF_REFERENTIAL_TEST: &str = "self-referential-test";
 // Test rules
 pub const OK_ON_INFALLIBLE: &str = "ok-on-infallible";
+pub const SELF_REFERENTIAL_TEST: &str = "self-referential-test";
 // Crash rules (chain validation)
 pub const NONTERMINAL_CHAIN: &str = "nonterminal-chain";
 // Ownership rules

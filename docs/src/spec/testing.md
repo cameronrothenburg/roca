@@ -61,6 +61,8 @@ A test block MUST contain:
 
 An equality assertion calls `self` with arguments and compares the return value to an expected value using structural equality. For structs, all fields MUST match. For arrays, all elements MUST match in order and length.
 
+The expected value MUST NOT be a `self(...)` call. Comparing `self(args)` against `self(other_args)` proves nothing about correctness — the function is compared against itself. A conforming compiler MUST reject this with diagnostic `self-referential-test`.
+
 ```roca
 pub fn double(n: Number) -> Number {
     return n * 2

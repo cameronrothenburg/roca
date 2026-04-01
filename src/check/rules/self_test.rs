@@ -43,6 +43,13 @@ mod tests {
     }
 
     #[test]
+    fn self_vs_self_no_args_rejected() {
+        let e = errors(r#"fn ping() -> String { return "pong" test { self() == self() } }"#);
+        assert!(e.iter().any(|e| e.code == "self-referential-test"),
+            "expected self-referential-test for zero-arg self(), got: {:?}", e);
+    }
+
+    #[test]
     fn self_vs_different_args_still_rejected() {
         let e = errors(r#"fn hash(s: String) -> String { return s test { self("a") == self("b") } }"#);
         assert!(e.iter().any(|e| e.code == "self-referential-test"),
@@ -65,7 +72,7 @@ impl Rule for SelfTestRule {
                     if matches!(expected, Expr::Call { target, .. } if matches!(**target, Expr::SelfRef)) {
                         errs.push(RuleError::new(
                             errors::SELF_REFERENTIAL_TEST,
-                            format!("test assertion compares self() against self() — use a concrete expected value"),
+                            "test expected value is a self() call — use a concrete expected value".to_string(),
                             Some(ctx.func.qualified_name.clone()),
                         ));
                     }
