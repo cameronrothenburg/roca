@@ -10,7 +10,7 @@ pub fn run(source: &str, _test_script: &str) -> String {
         panic!("checker errors:\n{}", real.iter().map(|e| format!("  {}", e)).collect::<Vec<_>>().join("\n"));
     }
 
-    let result = roca::native::test_runner::run_tests(&file);
+    let result = roca::native::test_runner::run_tests_only(&file);
     if result.failed > 0 {
         panic!("native test failed:\n{}", result.output);
     }

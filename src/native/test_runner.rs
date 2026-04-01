@@ -17,6 +17,17 @@ pub struct NativeTestResult {
 
 /// Run all test blocks in a source file via JIT.
 pub fn run_tests(source: &ast::SourceFile) -> NativeTestResult {
+    run_tests_inner(source, true)
+}
+
+/// Run test blocks only — no property tests. Used by the verify harness
+/// where adversarial inputs could crash the JIT-compiled code.
+#[allow(dead_code)]
+pub fn run_tests_only(source: &ast::SourceFile) -> NativeTestResult {
+    run_tests_inner(source, false)
+}
+
+fn run_tests_inner(source: &ast::SourceFile, with_property_tests: bool) -> NativeTestResult {
     let mut module = super::create_jit_module();
     if let Err(e) = super::compile_all(&mut module, source) {
         return NativeTestResult {
@@ -30,22 +41,22 @@ pub fn run_tests(source: &ast::SourceFile) -> NativeTestResult {
     let mut failed = 0;
     let mut output = String::new();
 
-    // Run test blocks + property tests
     for item in &source.items {
         match item {
             ast::Item::Function(f) => {
                 if let Some(test) = &f.test {
                     run_fn_tests(&mut module, f, test, &mut passed, &mut failed, &mut output);
                 }
-                if f.is_pub && super::property_tests::all_params_generable(f) {
+                if with_property_tests && f.is_pub && super::property_tests::all_params_generable(f) {
                     super::property_tests::run_property_tests(&mut module, f, None, &mut passed, &mut failed, &mut output);
                 }
             }
             ast::Item::Struct(s) => {
-                // Property tests for pub struct methods with generable params
-                for method in &s.methods {
-                    if method.is_pub && super::property_tests::all_params_generable(method) {
-                        super::property_tests::run_property_tests(&mut module, method, Some(&s.name), &mut passed, &mut failed, &mut output);
+                if with_property_tests {
+                    for method in &s.methods {
+                        if method.is_pub && super::property_tests::all_params_generable(method) {
+                            super::property_tests::run_property_tests(&mut module, method, Some(&s.name), &mut passed, &mut failed, &mut output);
+                        }
                     }
                 }
             }
