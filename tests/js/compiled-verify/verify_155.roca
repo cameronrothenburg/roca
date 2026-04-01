@@ -1,6 +1,0 @@
-pub fn show(n: Number) -> Number {
-            log(n)
-            return n
-            crash { log -> skip }
-            test { self(42) == 42 }
-        }

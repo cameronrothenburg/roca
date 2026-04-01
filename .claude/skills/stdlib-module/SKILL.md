@@ -56,7 +56,7 @@ Rules:
 - Always `pub extern contract`
 - Doc comment on every method (`///`)
 - Error names are `lowercase_snake_case`
-- No mock blocks needed — compiler auto-generates stubs from return types
+- Auto-stubs are generated from return types
 
 ## 2. JS wrapper — `packages/stdlib/{name}.js`
 
@@ -111,7 +111,7 @@ Rules:
 - Add null guards: `if ptr == 0 { return 0; }`
 - Track memory: `MEM.track_alloc(size)` / `MEM.track_free(size)` for heap allocations
 - Add a free function if the type is heap-allocated (like Map)
-- For extern contracts: auto-stubs are generated from types — no mock blocks needed
+- For extern contracts: auto-stubs are generated from return types
 
 ## 4. Runtime bridge (V8 only) — `packages/runtime/{name}-bridge.js`
 

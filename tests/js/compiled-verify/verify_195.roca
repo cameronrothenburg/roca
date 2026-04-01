@@ -1,8 +1,0 @@
-import { Url } from std::url
-        pub fn try_host(raw: String) -> String, err {
-            if false { return err.parse_failed }
-            const url = Url.parse(raw)
-            return url.hostname()
-            crash { Url.parse -> halt }
-            test { self("https://example.com") == "example.com" self("bad") is err.parse_failed }
-        }

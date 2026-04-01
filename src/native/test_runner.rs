@@ -87,9 +87,6 @@ fn run_fn_tests(
             TestCase::IsErr { args, err_name } => {
                 run_err_test(module, func, args, err_name, passed, failed, output);
             }
-            TestCase::StatusMock { .. } => {
-                // Status mock tests not supported in native yet
-            }
         }
     }
 }

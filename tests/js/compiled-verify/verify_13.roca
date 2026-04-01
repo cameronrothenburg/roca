@@ -1,5 +1,0 @@
-pub fn check(x: Number) -> String {
-            if x > 0 { return "positive" }
-            return "not positive"
-            test { self(-1) == "not positive" }
-        }

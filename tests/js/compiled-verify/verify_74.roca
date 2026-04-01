@@ -1,5 +1,0 @@
-/// Adds two numbers
-        pub fn add(a: Number, b: Number) -> Number {
-            return a + b
-            test { self(1, 2) == 3 }
-        }

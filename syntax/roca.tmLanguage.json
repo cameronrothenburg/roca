@@ -85,7 +85,7 @@
         },
         {
           "name": "keyword.other.roca",
-          "match": "\\b(import|from|std|crash|test|mock|default)\\b"
+          "match": "\\b(import|from|std|crash|test|default)\\b"
         },
         {
           "name": "storage.modifier.roca",
@@ -178,7 +178,7 @@
         {
           "comment": "Function/method call — name(",
           "name": "entity.name.function.roca",
-          "match": "\\b(?!if|for|while|match|return|wait|waitAll|waitFirst|fn|pub|const|let|import|from|crash|test|mock|err|log|error|warn)([a-z_]\\w*)(?=\\s*\\()"
+          "match": "\\b(?!if|for|while|match|return|wait|waitAll|waitFirst|fn|pub|const|let|import|from|crash|test|err|log|error|warn)([a-z_]\\w*)(?=\\s*\\()"
         }
       ]
     },
@@ -217,12 +217,7 @@
     "constants": {
       "patterns": [
         { "name": "constant.language.roca", "match": "\\b(true|false|null|self|Ok)\\b" },
-        { "name": "variable.language.self.roca", "match": "\\bself\\b" },
-        {
-          "comment": "__mock_ references",
-          "name": "variable.other.mock.roca",
-          "match": "\\b__mock_\\w+\\b"
-        }
+        { "name": "variable.language.self.roca", "match": "\\bself\\b" }
       ]
     },
     "operators": {

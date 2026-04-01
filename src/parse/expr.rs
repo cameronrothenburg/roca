@@ -26,20 +26,6 @@ impl Parser {
         self.tokens.get(self.pos + n).unwrap_or(&Token::EOF)
     }
 
-    /// Skip a `{ ... }` block, handling nested braces. Assumes `{` is next.
-    pub fn skip_braced_block(&mut self) {
-        if !self.at(&Token::LBrace) { return; }
-        self.advance();
-        let mut depth = 1;
-        while depth > 0 && !self.at(&Token::EOF) {
-            match self.advance() {
-                Token::LBrace => depth += 1,
-                Token::RBrace => depth -= 1,
-                _ => {}
-            }
-        }
-    }
-
     pub fn advance(&mut self) -> Token {
         let tok = self.tokens.get(self.pos).cloned().unwrap_or(Token::EOF);
         self.pos += 1;

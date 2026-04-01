@@ -1,9 +1,0 @@
-import { Crypto } from std::crypto
-        /// Gets two UUIDs
-        pub fn two_ids() -> String {
-            const a = Crypto.randomUUID()
-            const b = Crypto.randomUUID()
-            if a == b { return "same" }
-            return "different"
-            test {}
-        }

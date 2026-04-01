@@ -98,10 +98,8 @@ pub fn infer_type_with_registry(expr: &Expr, scope: &Scope, registry: Option<&su
                         };
                     }
                     // Check registry for method return type on any resolved type
-                    // Auto-stubs (__mock_X) resolve to contract X
-                    let lookup_name = type_name.strip_prefix("__mock_").unwrap_or(&type_name);
                     if let Some(reg) = registry {
-                        if let Some(contract) = reg.get(lookup_name) {
+                        if let Some(contract) = reg.get(&type_name) {
                             if let Some(sig) = contract.functions.iter().find(|f| f.name == *field) {
                                 return Some(type_ref_to_name(&sig.return_type));
                             }

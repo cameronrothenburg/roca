@@ -1,6 +1,0 @@
-pub fn to_bool(s: String) -> Bool {
-            let b, err = Bool(s)
-            return b
-            crash { Bool -> fallback(false) }
-            test { self("hello") == true }
-        }

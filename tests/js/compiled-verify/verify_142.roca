@@ -1,4 +1,0 @@
-pub fn greet(first: String, last: String) -> String {
-            return first + " " + last
-            test { self("John", "Doe") == "John Doe" }
-        }

@@ -1,4 +1,0 @@
-pub fn hello() -> String {
-            return "hello"
-            test { self() == "hello" }
-        }

@@ -31,7 +31,6 @@ pub enum Token {
     // Blocks
     Crash,
     Test,
-    Mock,
 
     // Error
     Err,
@@ -279,7 +278,6 @@ fn tokenize_one(chars: &[char], i: &mut usize, _line: &mut usize) -> Option<Toke
             "continue" => Token::Continue,
             "crash" => Token::Crash,
             "test" => Token::Test,
-            "mock" => Token::Mock,
             "err" => Token::Err,
             "Ok" => Token::Ok,
             "null" => Token::Null,

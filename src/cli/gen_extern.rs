@@ -268,25 +268,8 @@ fn infer_error_name(method_name: &str) -> &str {
     }
 }
 
-fn mock_value(roca_type: &str, is_nullable: bool) -> String {
-    if is_nullable { return "\"mock\"".to_string(); }
-    match roca_type {
-        "String" => "\"mock\"".to_string(),
-        "Number" => "0".to_string(),
-        "Bool" => "true".to_string(),
-        "Ok" => "Ok".to_string(),
-        "Bytes" => "Bytes".to_string(),
-        t if t.starts_with("Array") => "\"mock\"".to_string(),
-        t if t.starts_with("Map") => "\"mock\"".to_string(),
-        // Known contract — use contract name as mock (self-referencing)
-        other => format!("{}", other),
-    }
-}
-
 fn generate_contract(iface: &TsInterface, known: &HashSet<String>) -> String {
     let mut out = String::new();
-    let _snake = to_snake_case(&iface.name);
-
     // Collect imports needed
     let mut imports: HashSet<String> = HashSet::new();
     for method in &iface.methods {
@@ -342,14 +325,7 @@ fn generate_contract(iface: &TsInterface, known: &HashSet<String>) -> String {
         }
     }
 
-    // Mock block
-    out.push_str("    mock {\n");
-    for method in &iface.methods {
-        let resolved = resolve_method_types(method, known);
-        let val = mock_value(&resolved.return_type, resolved.is_nullable);
-        out.push_str(&format!("        {} -> {}\n", resolved.name, val));
-    }
-    out.push_str("    }\n}\n");
+    out.push_str("}\n");
     out
 }
 
@@ -367,13 +343,3 @@ fn collect_type_refs(ty: &str, known: &HashSet<String>, imports: &mut HashSet<St
     }
 }
 
-fn to_snake_case(name: &str) -> String {
-    let mut result = String::new();
-    for (i, c) in name.chars().enumerate() {
-        if c.is_uppercase() && i > 0 {
-            result.push('_');
-        }
-        result.push(c.to_lowercase().next().unwrap());
-    }
-    result
-}

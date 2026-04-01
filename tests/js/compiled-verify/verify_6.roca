@@ -1,4 +1,0 @@
-pub fn math(a: Number, b: Number) -> Number {
-            return (a + b) * (a - b) / b
-            test { self(10, 5) == 15 }
-        }

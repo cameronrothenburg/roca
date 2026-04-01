@@ -66,26 +66,6 @@ fn parse_enum_contract() {
 }
 
 #[test]
-fn parse_contract_with_mock() {
-    let src = r#"
-        contract Database {
-            save(data: String) -> Ok, err {
-                err connection_lost = "connection lost"
-                err timeout = "timed out"
-            }
-            mock {
-                save -> Ok
-            }
-        }
-    "#;
-    let file = parse(src);
-    if let Item::Contract(c) = &file.items[0] {
-        assert_eq!(c.functions[0].errors.len(), 2);
-        // mock blocks are auto-generated from types — parsed but not stored
-    }
-}
-
-#[test]
 fn parse_full_example() {
     let src = r#"
         contract Stringable {
@@ -96,9 +76,6 @@ fn parse_full_example() {
             get(url: String) -> Response, err {
                 err timeout = "request timed out"
                 err not_found = "404 not found"
-            }
-            mock {
-                get -> Ok
             }
         }
 
@@ -210,27 +187,6 @@ fn parse_extern_fn_no_errors() {
         assert_eq!(f.name, "log");
         assert!(!f.returns_err);
         assert!(f.errors.is_empty());
-    } else {
-        panic!("expected ExternFn");
-    }
-}
-
-#[test]
-fn parse_extern_fn_with_legacy_mock() {
-    // mock blocks are parsed but ignored — auto-stubs replace them
-    let src = r#"
-        extern fn globalFetch(url: String) -> NativeResponse, err {
-            err network = "network error"
-            mock {
-                globalFetch -> NativeResponse { status: 200, body: "ok" }
-            }
-        }
-    "#;
-    let file = parse(src);
-    if let Item::ExternFn(f) = &file.items[0] {
-        assert_eq!(f.name, "globalFetch");
-        assert!(f.returns_err);
-        assert_eq!(f.errors.len(), 1);
     } else {
         panic!("expected ExternFn");
     }

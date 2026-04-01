@@ -1,5 +1,0 @@
-import { Time } from std::time
-        pub fn ts() -> Number {
-            return Time.now()
-            test {}
-        }

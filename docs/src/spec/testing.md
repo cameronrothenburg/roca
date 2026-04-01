@@ -233,7 +233,7 @@ A property test failure blocks JS emission, just like explicit test failures.
 
 ## 6.6 Auto-Stubs
 
-Functions that depend on `extern` contracts receive auto-generated stubs during test execution. The compiler derives stub return values from the contract's type signatures. No `mock` block is needed.
+Functions that depend on `extern` contracts receive auto-generated stubs during test execution. The compiler derives stub return values from the contract's type signatures.
 
 ### 6.6.1 Default Return Values
 
@@ -275,10 +275,6 @@ test {
     self(db, "") is err.not_found
 }}
 ```
-
-### 6.6.3 Stub Override
-
-A conforming implementation MAY support explicit stub overrides in test blocks for cases where default values are insufficient. The syntax and semantics of stub overrides are implementation-defined and are not specified in this version of the spec.
 
 ---
 

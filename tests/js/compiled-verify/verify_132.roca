@@ -1,6 +1,0 @@
-pub fn fixed() -> String {
-            const x = 42
-            return x.toString()
-            crash { x.toString -> skip }
-            test { self() == "42" }
-        }

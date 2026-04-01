@@ -119,15 +119,12 @@ generates real alloc/free code. JS gets the same checks but uses GC.
 
 CONTRACTS
 ---------
-Contracts declare what — signatures, errors, mocks. No implementation.
+Contracts declare what — signatures and errors. No implementation.
 
   contract HttpClient {
       get(url: String) -> String, err {
           err timeout = "request timed out"
           err not_found = "404 not found"
-      }
-      mock {
-          get -> "mock response"
       }
   }
 
@@ -366,14 +363,11 @@ Declare JS runtime types and functions. No JS emitted.
       query(sql: String) -> String, err {
           err query_failed = "database query failed"
       }
-      mock {
-          query -> "[]"
-      }
   }
 
   extern fn log(msg: String) -> Ok
 
-Mock blocks provide test doubles for proof tests.
+Auto-stubs provide test doubles for proof tests.
 
 EXTERN DEPENDENCIES
 -------------------
@@ -383,7 +377,6 @@ Pass external dependencies as explicit parameters — not bundled in an env bag:
       query(sql: String) -> String, err {
           err query_failed = "database query failed"
       }
-      mock { query -> "[]" }
   }
 
   pub fn get_users(db: Database) -> String, err {
@@ -394,7 +387,7 @@ Pass external dependencies as explicit parameters — not bundled in an env bag:
           db.query -> halt
       }
       test {
-          self(__mock_Database) is Ok
+          self(Database) is Ok
       }
   }
 
@@ -478,7 +471,6 @@ The compiler enforces:
   crash-on-safe        Crash entry on function that doesn't return errors
   panic-warning        panic will crash the process — use halt or fallback
   empty-struct         Struct has no methods — use a contract instead
-  invalid-mock-ref     __mock_X used but X has no mock block
   private-method       Calling non-pub struct method from outside
   use-after-move       Using a let variable after it was passed to a function
   move-in-loop         Moving an outer let inside a loop body
