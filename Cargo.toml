@@ -1,20 +1,33 @@
-[package]
-name = "rocalang"
+[workspace]
+members = [".", "crates/*"]
+resolver = "3"
+
+[workspace.package]
 version = "0.3.0"
 edition = "2024"
 license = "AGPL-3.0-only"
-description = "A contractual language for the AI era"
 repository = "https://github.com/cameronrothenburg/roca"
 
-[[bin]]
-name = "roca"
-path = "src/main.rs"
+[workspace.dependencies]
+# Internal crates
+roca-errors = { path = "crates/roca-errors" }
+roca-ast = { path = "crates/roca-ast" }
+roca-parse = { path = "crates/roca-parse" }
+roca-resolve = { path = "crates/roca-resolve" }
+roca-check = { path = "crates/roca-check" }
+roca-emit = { path = "crates/roca-emit" }
+roca-native = { path = "crates/roca-native" }
+roca-lsp = { path = "crates/roca-lsp" }
+roca-cli = { path = "crates/roca-cli" }
+roca-runtime = { path = "crates/roca-runtime" }
+roca-cranelift = { path = "crates/roca-cranelift" }
 
-[dependencies]
+# External dependencies
 oxc_allocator = "0.122"
 oxc_ast = "0.122"
 oxc_codegen = "0.122"
 oxc_span = "0.122"
+oxc_parser = "0.122"
 tower-lsp = "0.20"
 tokio = { version = "1", features = ["full"] }
 dashmap = "6"
@@ -22,7 +35,6 @@ uuid = { version = "1.23.0", features = ["v4"] }
 url = "2.5.8"
 serde_json = "1.0.149"
 sha2 = "0.11.0"
-oxc_parser = "0.122"
 cranelift-codegen = "0.130"
 cranelift-frontend = "0.130"
 cranelift-module = "0.130"
@@ -31,3 +43,27 @@ cranelift-native = "0.130"
 cranelift-object = "0.130"
 base64 = "0.22"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+
+[package]
+name = "rocalang"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "A contractual language for the AI era"
+repository.workspace = true
+
+[[bin]]
+name = "roca"
+path = "src/main.rs"
+
+[dependencies]
+tokio.workspace = true
+roca-errors.workspace = true
+roca-ast.workspace = true
+roca-parse.workspace = true
+roca-resolve.workspace = true
+roca-check.workspace = true
+roca-emit.workspace = true
+roca-native.workspace = true
+roca-lsp.workspace = true
+roca-cli.workspace = true

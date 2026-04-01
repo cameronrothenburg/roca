@@ -1,0 +1,15 @@
+[package]
+name = "roca-check"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Static analysis rules and type checking for the Roca compiler"
+repository.workspace = true
+
+[dependencies]
+roca-ast.workspace = true
+roca-errors.workspace = true
+roca-resolve.workspace = true
+
+[dev-dependencies]
+roca-parse.workspace = true

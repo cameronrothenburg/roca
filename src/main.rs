@@ -1,25 +1,13 @@
 //! CLI entry point for the Roca compiler.
 //! Handles `roca build`, `roca check`, `roca init`, and `roca lsp` commands.
 
-mod ast;
-mod constants;
-mod parse;
-mod check;
-mod cli;
-mod emit;
-mod errors;
-mod init;
-mod lsp;
-mod native;
-mod resolve;
-
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use cli::config::{resolve_src_dir, resolve_out_dir};
-use cli::build::{build_file, build_directory};
-use cli::check::{check_file, check_directory};
+use roca_cli::config::{resolve_src_dir, resolve_out_dir};
+use roca_cli::build::{build_file, build_directory};
+use roca_cli::check::{check_file, check_directory};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -37,18 +25,18 @@ fn main() {
                 eprintln!("usage: roca init <project-name>");
                 std::process::exit(1);
             }
-            init::init_project(&args[2]);
+            roca_cli::init::init_project(&args[2]);
         }
         "repl" => {
             if args.iter().any(|a| a == "--native") {
-                cli::repl::run_repl_native();
+                roca_cli::repl::run_repl_native();
             } else {
-                cli::repl::run_repl();
+                roca_cli::repl::run_repl();
             }
         }
         "skills" => {
             let with_claude = args.iter().any(|a| a == "--claude");
-            init::generate_skills(with_claude);
+            roca_cli::init::generate_skills(with_claude);
         }
         "check" => {
             let path = resolve_path_arg(&args);
@@ -65,7 +53,7 @@ fn main() {
             if path.is_dir() {
                 build_directory(&path);
             } else if emit_only {
-                cli::build::emit_file(&path);
+                roca_cli::build::emit_file(&path);
             } else {
                 build_file(&path);
             }
@@ -140,7 +128,7 @@ fn main() {
                 eprintln!("usage: roca search <query>");
                 std::process::exit(1);
             }
-            cli::search::run_search(&args[2]);
+            roca_cli::search::run_search(&args[2]);
         }
         "patterns" => {
             print!("{}", include_str!("patterns.txt"));
@@ -148,7 +136,7 @@ fn main() {
         "lsp" => {
             tokio::runtime::Runtime::new()
                 .expect("failed to create tokio runtime")
-                .block_on(lsp::run());
+                .block_on(roca_lsp::run());
         }
         "gen-extern" => {
             if args.len() < 3 {
@@ -168,7 +156,7 @@ fn main() {
                 dts_path.parent().unwrap_or(std::path::Path::new(".")).join(format!("{}.roca", stem))
             };
 
-            match cli::gen_extern::generate(dts_path) {
+            match roca_cli::gen_extern::generate(dts_path) {
                 Ok(content) => {
                     fs::write(&out_path, &content).unwrap_or_else(|e| {
                         eprintln!("error writing {}: {}", out_path.display(), e);
