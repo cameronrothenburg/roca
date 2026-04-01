@@ -744,3 +744,64 @@ fn box_alloc_different_sizes_no_corruption() {
         runtime::roca_box_free(ptr);
     }
 }
+
+// ─── Box allocator: destructor & MEM tracking regressions ───
+
+/// roca_box_free must run Drop for typed values allocated via box_value.
+/// We test indirectly through roca_json_parse which uses box_value<serde_json::Value>.
+/// A JSON object with nested strings exercises inner heap allocations.
+#[test]
+fn box_free_runs_drop_on_owned_type() {
+    // Parse JSON with heap-owning fields (strings, nested objects)
+    let json_str = runtime::alloc_str(r#"{"a":"hello","b":{"c":"world","d":"!"}}"#);
+    let (ptr, err) = runtime::roca_json_parse(json_str);
+    assert_eq!(err, 0);
+    assert_ne!(ptr, 0);
+
+    // Stringify before free to prove the value is alive
+    let s = runtime::roca_json_stringify(ptr);
+    let text = unsafe { std::ffi::CStr::from_ptr(s as *const i8) }.to_str().unwrap();
+    assert!(text.contains("hello"), "JSON value should be readable before free");
+
+    // This must not crash — if drop glue isn't running, inner Strings leak
+    // (and under ASAN/miri this would be caught as a leak)
+    runtime::roca_box_free(ptr);
+}
+
+/// Box allocs must participate in MEM tracking so assert_clean catches leaks.
+#[test]
+fn box_alloc_tracked_by_mem() {
+    runtime::MEM.reset();
+
+    let ptr = runtime::roca_box_alloc(64);
+    assert_ne!(ptr, 0);
+
+    let (allocs, _, _, _, live) = runtime::MEM.stats();
+    assert_eq!(allocs, 1, "BUG: roca_box_alloc not tracked — MEM blind to box leaks");
+    assert!(live > 0, "live bytes should reflect the allocation");
+
+    runtime::roca_box_free(ptr);
+
+    let (allocs, frees, _, _, live) = runtime::MEM.stats();
+    assert_eq!(frees, 1, "BUG: roca_box_free not tracked");
+    assert_eq!(allocs, frees, "alloc/free mismatch");
+    assert_eq!(live, 0, "live bytes should be 0 after free");
+}
+
+/// JSON parse + free must leave MEM clean (combines both issues).
+#[test]
+fn box_free_json_mem_clean() {
+    let json_str = runtime::alloc_str(r#"{"key": "value", "nested": {"a": 1}}"#);
+
+    // Reset after alloc_str so we only measure the box alloc/free
+    runtime::MEM.reset();
+
+    let (ptr, err) = runtime::roca_json_parse(json_str);
+    assert_eq!(err, 0, "JSON parse should succeed");
+    assert_ne!(ptr, 0);
+
+    runtime::roca_box_free(ptr);
+
+    let (allocs, frees, ..) = runtime::MEM.stats();
+    assert_eq!(allocs, frees, "BUG: JSON box alloc/free not tracked by MEM");
+}

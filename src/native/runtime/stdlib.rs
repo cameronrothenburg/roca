@@ -436,38 +436,56 @@ pub extern "C" fn roca_url_parse(raw: i64) -> (i64, u8) {
     }
 }
 
-// ─── Size-tagged Box allocator ──────────────────────
-// Layout: [alloc_size: u64][payload...]
-// roca_box_alloc returns pointer to payload.
-// roca_box_free reads size from header and deallocates correctly.
+// ─── Box allocator ─────────────────────────────────
+// Layout: [drop_fn: fn(*mut u8) | 0][alloc_size: u64][payload...]
+// roca_box_alloc returns pointer to payload (header is 16 bytes behind it).
+// roca_box_free calls drop_fn (if set) then deallocates.
+
+const BOX_HEADER: usize = 16;
 
 pub extern "C" fn roca_box_alloc(size: i64) -> i64 {
     if size <= 0 { return 0; }
-    let total = 8 + size as usize;
+    let total = BOX_HEADER + size as usize;
     let layout = std::alloc::Layout::from_size_align(total, 8).unwrap();
     unsafe {
         let base = std::alloc::alloc(layout);
         if base.is_null() { return 0; }
-        *(base as *mut u64) = total as u64;
-        base.add(8) as i64
+        *(base as *mut u64) = 0;
+        *((base as *mut u64).add(1)) = total as u64;
+        MEM.track_alloc(total as i64);
+        base.add(BOX_HEADER) as i64
     }
 }
 
 pub extern "C" fn roca_box_free(ptr: i64) {
     if ptr == 0 { return; }
     unsafe {
-        let base = (ptr as *mut u8).sub(8);
-        let total = *(base as *const u64) as usize;
+        let base = (ptr as *mut u8).sub(BOX_HEADER);
+        let drop_fn = *(base as *const u64);
+        let total = *((base as *const u64).add(1)) as usize;
+        if drop_fn != 0 {
+            let dropper: fn(*mut u8) = std::mem::transmute(drop_fn);
+            dropper(ptr as *mut u8);
+        }
         let layout = std::alloc::Layout::from_size_align_unchecked(total, 8);
+        MEM.track_free(total as i64);
         std::alloc::dealloc(base, layout);
     }
 }
 
-/// Helper: allocate and write a value using the tagged box allocator.
+fn drop_trampoline<T>(ptr: *mut u8) {
+    unsafe { std::ptr::drop_in_place(ptr as *mut T); }
+}
+
+/// Allocate via `roca_box_alloc`, write `value`, and register its destructor.
 fn box_value<T>(value: T) -> i64 {
     let ptr = roca_box_alloc(std::mem::size_of::<T>() as i64);
     if ptr == 0 { return 0; }
-    unsafe { std::ptr::write(ptr as *mut T, value); }
+    unsafe {
+        let base = (ptr as *mut u8).sub(BOX_HEADER);
+        *(base as *mut u64) = drop_trampoline::<T> as u64;
+        std::ptr::write(ptr as *mut T, value);
+    }
     ptr
 }
 
@@ -588,7 +606,6 @@ pub extern "C" fn roca_json_parse(text: i64) -> (i64, u8) {
         Err(_) => (0, 1),
     }
 }
-
 
 pub extern "C" fn roca_json_stringify(json: i64) -> i64 {
     with_json(json, alloc_str("null"), |v| alloc_str(&v.to_string()))
@@ -719,7 +736,6 @@ pub extern "C" fn roca_http_patch(url: i64, body: i64) -> (i64, u8) {
 pub extern "C" fn roca_http_delete(url: i64) -> (i64, u8) {
     box_response(http_request("DELETE", read_cstr(url), None))
 }
-
 
 pub extern "C" fn roca_http_status(resp: i64) -> f64 {
     with_resp(resp, 0.0, |r| r.status as f64)
