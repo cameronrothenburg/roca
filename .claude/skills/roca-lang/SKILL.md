@@ -59,7 +59,7 @@ pub fn get_users(db: Database) -> String, err {
     const data = wait db.query("SELECT * FROM users")
     return data
     crash { db.query -> halt }
-    test { self(Database) is Ok }
+    test { self(__mock_Database) is Ok }
 }
 ```
 

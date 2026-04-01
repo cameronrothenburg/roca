@@ -59,9 +59,11 @@ pub fn hello(name: String) -> String {{
 
 fn prompt_input(question: &str, default: &str) -> String {
     print!("{} [{}]: ", question, default);
-    io::stdout().flush().unwrap();
+    let _ = io::stdout().flush();
     let mut input = String::new();
-    io::stdin().lock().read_line(&mut input).unwrap();
+    if io::stdin().lock().read_line(&mut input).is_err() {
+        return default.to_string();
+    }
     let trimmed = input.trim();
     if trimmed.is_empty() { default.to_string() } else { trimmed.to_string() }
 }
@@ -84,7 +86,6 @@ pub fn generate_skills(with_claude_md: bool) {
     );
     println!("✓ .claude/skills/roca-lang/SKILL.md");
 
-    // Bug reporting consent
     println!();
     println!("Roca can automatically file bug reports when the AI hits");
     println!("compiler issues during development. Reports go to:");
@@ -161,7 +162,7 @@ Create a new issue:
 ```bash
 gh issue create --repo cameronrothenburg/roca \
   --title "Bug report: 1 issue found building [project name]" \
-  --label "bug,bug report,automatic_review" \
+  --label "bug,bug report,automatic_review,triage" \
   --body "[report body]"
 ```
 
