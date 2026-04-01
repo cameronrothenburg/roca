@@ -41,16 +41,9 @@ jobs:
           git add Cargo.toml Cargo.lock
           git commit -m "chore(deps): bump version to ${{ steps.version.outputs.VERSION }}"
 
-      - name: Build
-        run: cargo build --release
-
-      - name: Run tests
-        run: cargo test
-
-      - name: CLI smoke test
-        run: |
-          cargo install --path .
-          roca check tests/js/projects/api
+      # ─── Test ───────────────────────────────
+      - name: Run Rust tests
+        run: cargo test --release
 
       - name: Install bun
         uses: oven-sh/setup-bun@v2
@@ -61,6 +54,12 @@ jobs:
           bun install
           bun test
 
+      - name: CLI smoke test
+        run: |
+          cargo build --release
+          ./target/release/roca check tests/js/projects/api
+
+      # ─── Publish ────────────────────────────
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -74,18 +73,16 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_TOKEN }}
 
-      - name: Setup Node
+      - name: Setup npm registry
         uses: actions/setup-node@v4
         with:
           node-version: '22'
           registry-url: 'https://registry.npmjs.org'
 
-      - name: Set runtime version from tag
-        working-directory: packages/runtime
-        run: npm version ${{ steps.version.outputs.VERSION }} --no-git-tag-version
-
       - name: Publish runtime to npm
         working-directory: packages/runtime
-        run: npm publish --access public --provenance
+        run: |
+          npm version ${{ steps.version.outputs.VERSION }} --no-git-tag-version
+          npm publish --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
