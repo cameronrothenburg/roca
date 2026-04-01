@@ -30,7 +30,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "if echo \"$CLAUDE_BASH_COMMAND\" | grep -q '.review-passed' && echo \"$CLAUDE_BASH_COMMAND\" | grep -qE '(rm |mv |unlink |> )'; then echo 'BLOCK: Do not remove the review lock file directly'; exit 2; fi"
+            "command": "if echo \"$CLAUDE_BASH_COMMAND\" | grep -qF '.review-passed' && echo \"$CLAUDE_BASH_COMMAND\" | grep -qE '(rm |mv |unlink |truncate )'; then echo 'BLOCK: Cannot remove .review-passed directly — only gh pr create can consume it'; exit 2; fi"
           },
           {
             "type": "command",

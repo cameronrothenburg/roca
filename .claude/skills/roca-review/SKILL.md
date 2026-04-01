@@ -57,6 +57,7 @@ Compile a unified report:
 
 ### Step 5: Fix or proceed
 
-- If **all clear**: write the lock file `.claude/.review-passed` with content "passed" using Bash (`echo passed > .claude/.review-passed`), then ask the user with AskUserQuestion whether to proceed with creating the PR
-- If **blocking issues found**: remove `.claude/.review-passed` if it exists (via Bash: `rm -f .claude/.review-passed`), list the issues, fix what you can automatically, and re-run the failing checks
+- If **all clear**: write the lock file via Bash: `echo passed > .claude/.review-passed`, then use AskUserQuestion to ask the user whether to proceed with creating the PR. The `gh pr create` hook will consume the lock file automatically.
+- If **blocking issues found**: list the issues, fix what you can automatically, and re-run the failing checks. Do NOT write the lock file on failure.
 - Do NOT create a PR until all blocking issues are resolved
+- Do NOT attempt to remove `.review-passed` directly — only the `gh pr create` hook can consume it
