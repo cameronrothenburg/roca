@@ -2,7 +2,7 @@
 //! path, process, timing/async, and file I/O.
 
 use std::ffi::CStr;
-use super::{read_cstr, alloc_str, MEM};
+use super::{read_cstr, alloc_str, roca_free_array, MEM};
 
 // ─── I/O ─────────────────────────────────────────────
 
@@ -431,13 +431,71 @@ fn to_hex(bytes: &[u8]) -> String {
 #[allow(improper_ctypes_definitions)]
 pub extern "C" fn roca_url_parse(raw: i64) -> (i64, u8) {
     match url::Url::parse(read_cstr(raw)) {
-        Ok(parsed) => (Box::into_raw(Box::new(parsed)) as i64, 0),
+        Ok(parsed) => (box_value(parsed), 0),
         Err(_) => (0, 1),
     }
 }
 
-pub extern "C" fn roca_url_free(ptr: i64) {
-    if ptr != 0 { unsafe { drop(Box::from_raw(ptr as *mut url::Url)); } }
+// ─── Box allocator ─────────────────────────────────
+// Layout: [drop_fn: fn(*mut u8) | 0][alloc_size: u64][payload...]
+// roca_box_alloc returns pointer to payload (header is 16 bytes behind it).
+// roca_box_free calls drop_fn (if set) then deallocates.
+
+const BOX_HEADER: usize = 16;
+
+/// Alignment for all box allocations. 16 ensures the payload (at BOX_HEADER offset)
+/// is correctly aligned for any type up to 16-byte alignment (covers all stdlib types).
+const BOX_ALIGN: usize = 16;
+
+fn box_alloc_inner(size: usize) -> i64 {
+    if size == 0 { return 0; }
+    let total = BOX_HEADER + size;
+    let layout = std::alloc::Layout::from_size_align(total, BOX_ALIGN).unwrap();
+    unsafe {
+        let base = std::alloc::alloc(layout);
+        if base.is_null() { return 0; }
+        *(base as *mut u64) = 0;
+        *((base as *mut u64).add(1)) = total as u64;
+        MEM.track_alloc(total as i64);
+        base.add(BOX_HEADER) as i64
+    }
+}
+
+pub extern "C" fn roca_box_alloc(size: i64) -> i64 {
+    if size <= 0 { return 0; }
+    box_alloc_inner(size as usize)
+}
+
+pub extern "C" fn roca_box_free(ptr: i64) {
+    if ptr == 0 { return; }
+    unsafe {
+        let base = (ptr as *mut u8).sub(BOX_HEADER);
+        let drop_fn = *(base as *const u64);
+        let total = *((base as *const u64).add(1)) as usize;
+        if drop_fn != 0 {
+            let dropper: fn(*mut u8) = std::mem::transmute(drop_fn);
+            dropper(ptr as *mut u8);
+        }
+        let layout = std::alloc::Layout::from_size_align_unchecked(total, BOX_ALIGN);
+        MEM.track_free(total as i64);
+        std::alloc::dealloc(base, layout);
+    }
+}
+
+fn drop_trampoline<T>(ptr: *mut u8) {
+    unsafe { std::ptr::drop_in_place(ptr as *mut T); }
+}
+
+pub(crate) fn box_value<T>(value: T) -> i64 {
+    assert!(std::mem::align_of::<T>() <= BOX_ALIGN, "box_value: type alignment exceeds BOX_ALIGN");
+    let ptr = box_alloc_inner(std::mem::size_of::<T>());
+    if ptr == 0 { return 0; }
+    unsafe {
+        let base = (ptr as *mut u8).sub(BOX_HEADER);
+        *(base as *mut u64) = drop_trampoline::<T> as *const () as u64;
+        std::ptr::write(ptr as *mut T, value);
+    }
+    ptr
 }
 
 pub extern "C" fn roca_url_is_valid(raw: i64) -> u8 {
@@ -553,22 +611,19 @@ fn with_json<T, F: FnOnce(&serde_json::Value) -> T>(ptr: i64, default: T, f: F) 
 #[allow(improper_ctypes_definitions)]
 pub extern "C" fn roca_json_parse(text: i64) -> (i64, u8) {
     match serde_json::from_str::<serde_json::Value>(read_cstr(text)) {
-        Ok(value) => (Box::into_raw(Box::new(value)) as i64, 0),
+        Ok(value) => (box_value(value), 0),
         Err(_) => (0, 1),
     }
 }
 
-pub extern "C" fn roca_json_free(ptr: i64) {
-    if ptr != 0 { unsafe { drop(Box::from_raw(ptr as *mut serde_json::Value)); } }
-}
-
 pub extern "C" fn roca_json_stringify(json: i64) -> i64 {
-    with_json(json, alloc_str("null"), |v| alloc_str(&v.to_string()))
+    if json == 0 { return alloc_str("null"); }
+    with_json(json, 0, |v| alloc_str(&v.to_string()))
 }
 
 pub extern "C" fn roca_json_get(json: i64, key: i64) -> i64 {
     with_json(json, 0, |v| match v.get(read_cstr(key)) {
-        Some(inner) => Box::into_raw(Box::new(inner.clone())) as i64,
+        Some(inner) => box_value(inner.clone()),
         None => 0,
     })
 }
@@ -596,13 +651,23 @@ pub extern "C" fn roca_json_get_array(json: i64, key: i64) -> i64 {
         Some(arr) => {
             let result = roca_array_new();
             for item in arr {
-                let ptr = Box::into_raw(Box::new(item.clone())) as i64;
+                let ptr = box_value(item.clone());
                 roca_array_push_str(result, ptr);
             }
             result
         }
         None => 0,
     })
+}
+
+/// Free an array of boxed JSON values: roca_box_free each element, then drop the Vec.
+pub extern "C" fn roca_free_json_array(ptr: i64) {
+    if ptr == 0 { return; }
+    let v = unsafe { &*(ptr as *const Vec<i64>) };
+    for &elem in v.iter() {
+        roca_box_free(elem);
+    }
+    roca_free_array(ptr);
 }
 
 pub extern "C" fn roca_json_to_string(json: i64) -> i64 {
@@ -656,7 +721,7 @@ fn http_request(method: &str, url_str: &str, body: Option<&str>) -> Result<HttpR
 
 fn box_response(result: Result<HttpResponse, String>) -> (i64, u8) {
     match result {
-        Ok(resp) => (Box::into_raw(Box::new(resp)) as i64, 0),
+        Ok(resp) => (box_value(resp), 0),
         Err(_) => (0, 1),
     }
 }
@@ -692,10 +757,6 @@ pub extern "C" fn roca_http_delete(url: i64) -> (i64, u8) {
     box_response(http_request("DELETE", read_cstr(url), None))
 }
 
-pub extern "C" fn roca_http_free(ptr: i64) {
-    if ptr != 0 { unsafe { drop(Box::from_raw(ptr as *mut HttpResponse)); } }
-}
-
 pub extern "C" fn roca_http_status(resp: i64) -> f64 {
     with_resp(resp, 0.0, |r| r.status as f64)
 }
@@ -713,7 +774,7 @@ pub extern "C" fn roca_http_text(resp: i64) -> (i64, u8) {
 pub extern "C" fn roca_http_json(resp: i64) -> (i64, u8) {
     with_resp(resp, (0, 1), |r| {
         match serde_json::from_str::<serde_json::Value>(&r.body) {
-            Ok(value) => (Box::into_raw(Box::new(value)) as i64, 0),
+            Ok(value) => (box_value(value), 0),
             Err(_) => (0, 1),
         }
     })

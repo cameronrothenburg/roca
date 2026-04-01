@@ -31,6 +31,12 @@ pub enum ValKind {
     Struct,
     /// Algebraic enum variant — tagged struct with string tag at slot 0
     EnumVariant,
+    /// Box-allocated opaque types — freed by roca_box_free
+    Json,
+    Url,
+    HttpResp,
+    /// Array of boxed JSON values — each element freed by roca_box_free, then Vec dropped
+    JsonArray,
     Other, // unknown — not freed at scope exit (safety: only free what we can identify)
 }
 
