@@ -162,7 +162,7 @@ Create a new issue:
 ```bash
 gh issue create --repo cameronrothenburg/roca \
   --title "Bug report: 1 issue found building [project name]" \
-  --label "bug,bug report,automatic_review,triage" \
+  --label "triage,ai-generated" \
   --body "[report body]"
 ```
 
