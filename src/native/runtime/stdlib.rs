@@ -400,3 +400,302 @@ pub extern "C" fn roca_fs_read_dir(path: i64) -> (i64, u8) {
         }
     }
 }
+
+// ─── Crypto ─────────────────────────────────────────
+
+pub extern "C" fn roca_crypto_random_uuid() -> i64 {
+    alloc_str(&uuid::Uuid::new_v4().to_string())
+}
+
+pub extern "C" fn roca_crypto_sha256(data: i64) -> i64 {
+    use sha2::Digest;
+    let input = read_cstr(data);
+    let hash = sha2::Sha256::digest(input.as_bytes());
+    let hex: String = hash.iter().map(|b| format!("{:02x}", b)).collect(); alloc_str(&hex)
+}
+
+pub extern "C" fn roca_crypto_sha512(data: i64) -> i64 {
+    use sha2::Digest;
+    let input = read_cstr(data);
+    let hash = sha2::Sha512::digest(input.as_bytes());
+    let hex: String = hash.iter().map(|b| format!("{:02x}", b)).collect(); alloc_str(&hex)
+}
+
+// ─── Url ────────────────────────────────────────────
+
+#[allow(improper_ctypes_definitions)]
+pub extern "C" fn roca_url_parse(raw: i64) -> (i64, u8) {
+    match url::Url::parse(read_cstr(raw)) {
+        Ok(parsed) => (Box::into_raw(Box::new(parsed)) as i64, 0),
+        Err(_) => (0, 1),
+    }
+}
+
+pub extern "C" fn roca_url_is_valid(raw: i64) -> u8 {
+    if url::Url::parse(read_cstr(raw)).is_ok() { 1 } else { 0 }
+}
+
+fn with_url<F: FnOnce(&url::Url) -> i64>(ptr: i64, f: F) -> i64 {
+    if ptr == 0 { return alloc_str(""); }
+    let url = unsafe { &*(ptr as *const url::Url) };
+    f(url)
+}
+
+pub extern "C" fn roca_url_hostname(ptr: i64) -> i64 {
+    with_url(ptr, |u| alloc_str(u.host_str().unwrap_or("")))
+}
+
+pub extern "C" fn roca_url_protocol(ptr: i64) -> i64 {
+    with_url(ptr, |u| alloc_str(&format!("{}:", u.scheme())))
+}
+
+pub extern "C" fn roca_url_pathname(ptr: i64) -> i64 {
+    with_url(ptr, |u| alloc_str(u.path()))
+}
+
+pub extern "C" fn roca_url_search(ptr: i64) -> i64 {
+    with_url(ptr, |u| alloc_str(&u.query().map_or(String::new(), |q| format!("?{}", q))))
+}
+
+pub extern "C" fn roca_url_hash(ptr: i64) -> i64 {
+    with_url(ptr, |u| alloc_str(&u.fragment().map_or(String::new(), |f| format!("#{}", f))))
+}
+
+pub extern "C" fn roca_url_host(ptr: i64) -> i64 {
+    with_url(ptr, |u| {
+        let host = u.host_str().unwrap_or("");
+        match u.port() {
+            Some(p) => alloc_str(&format!("{}:{}", host, p)),
+            None => alloc_str(host),
+        }
+    })
+}
+
+pub extern "C" fn roca_url_port(ptr: i64) -> i64 {
+    with_url(ptr, |u| alloc_str(&u.port().map_or(String::new(), |p| p.to_string())))
+}
+
+pub extern "C" fn roca_url_origin(ptr: i64) -> i64 {
+    with_url(ptr, |u| alloc_str(&u.origin().ascii_serialization()))
+}
+
+pub extern "C" fn roca_url_href(ptr: i64) -> i64 {
+    with_url(ptr, |u| alloc_str(u.as_str()))
+}
+
+pub extern "C" fn roca_url_to_string(ptr: i64) -> i64 {
+    roca_url_href(ptr)
+}
+
+pub extern "C" fn roca_url_get_param(ptr: i64, name: i64) -> i64 {
+    if ptr == 0 { return 0; }
+    let url = unsafe { &*(ptr as *const url::Url) };
+    match url.query_pairs().find(|(k, _)| k == read_cstr(name)) {
+        Some((_, v)) => alloc_str(&v),
+        None => 0,
+    }
+}
+
+pub extern "C" fn roca_url_has_param(ptr: i64, name: i64) -> u8 {
+    if ptr == 0 { return 0; }
+    let url = unsafe { &*(ptr as *const url::Url) };
+    if url.query_pairs().any(|(k, _)| k == read_cstr(name)) { 1 } else { 0 }
+}
+
+// ─── Encoding ───────────────────────────────────────
+
+use base64::Engine;
+
+#[allow(improper_ctypes_definitions)]
+pub extern "C" fn roca_encoding_btoa(input: i64) -> (i64, u8) {
+    let encoded = base64::engine::general_purpose::STANDARD.encode(read_cstr(input).as_bytes());
+    (alloc_str(&encoded), 0)
+}
+
+#[allow(improper_ctypes_definitions)]
+pub extern "C" fn roca_encoding_atob(input: i64) -> (i64, u8) {
+    match base64::engine::general_purpose::STANDARD.decode(read_cstr(input).as_bytes()) {
+        Ok(bytes) => match String::from_utf8(bytes) {
+            Ok(decoded) => (alloc_str(&decoded), 0),
+            Err(_) => (0, 1),
+        },
+        Err(_) => (0, 1),
+    }
+}
+
+pub extern "C" fn roca_encoding_encode(input: i64) -> i64 {
+    input // strings are already UTF-8 in native
+}
+
+#[allow(improper_ctypes_definitions)]
+pub extern "C" fn roca_encoding_decode(bytes: i64) -> (i64, u8) {
+    if bytes == 0 { return (0, 1); }
+    (bytes, 0)
+}
+
+// ─── JSON ───────────────────────────────────────────
+
+#[allow(improper_ctypes_definitions)]
+pub extern "C" fn roca_json_parse(text: i64) -> (i64, u8) {
+    match serde_json::from_str::<serde_json::Value>(read_cstr(text)) {
+        Ok(value) => (Box::into_raw(Box::new(value)) as i64, 0),
+        Err(_) => (0, 1),
+    }
+}
+
+pub extern "C" fn roca_json_stringify(json: i64) -> i64 {
+    if json == 0 { return alloc_str("null"); }
+    let value = unsafe { &*(json as *const serde_json::Value) };
+    alloc_str(&value.to_string())
+}
+
+pub extern "C" fn roca_json_get(json: i64, key: i64) -> i64 {
+    if json == 0 { return 0; }
+    let value = unsafe { &*(json as *const serde_json::Value) };
+    match value.get(read_cstr(key)) {
+        Some(v) => Box::into_raw(Box::new(v.clone())) as i64,
+        None => 0,
+    }
+}
+
+pub extern "C" fn roca_json_get_string(json: i64, key: i64) -> i64 {
+    if json == 0 { return 0; }
+    let value = unsafe { &*(json as *const serde_json::Value) };
+    match value.get(read_cstr(key)).and_then(|v| v.as_str()) {
+        Some(s) => alloc_str(s),
+        None => 0,
+    }
+}
+
+pub extern "C" fn roca_json_get_number(json: i64, key: i64) -> f64 {
+    if json == 0 { return f64::NAN; }
+    let value = unsafe { &*(json as *const serde_json::Value) };
+    value.get(read_cstr(key)).and_then(|v| v.as_f64()).unwrap_or(f64::NAN)
+}
+
+pub extern "C" fn roca_json_get_bool(json: i64, key: i64) -> u8 {
+    if json == 0 { return 0; }
+    let value = unsafe { &*(json as *const serde_json::Value) };
+    match value.get(read_cstr(key)).and_then(|v| v.as_bool()) {
+        Some(true) => 1,
+        _ => 0,
+    }
+}
+
+pub extern "C" fn roca_json_get_array(json: i64, key: i64) -> i64 {
+    if json == 0 { return 0; }
+    let value = unsafe { &*(json as *const serde_json::Value) };
+    match value.get(read_cstr(key)).and_then(|v| v.as_array()) {
+        Some(arr) => {
+            let result = roca_array_new();
+            for item in arr {
+                let ptr = Box::into_raw(Box::new(item.clone())) as i64;
+                roca_array_push_str(result, ptr);
+            }
+            result
+        }
+        None => 0,
+    }
+}
+
+pub extern "C" fn roca_json_to_string(json: i64) -> i64 {
+    roca_json_stringify(json)
+}
+
+// ─── Http ───────────────────────────────────────────
+
+struct HttpResponse {
+    status: u16,
+    headers: std::collections::HashMap<String, String>,
+    body: String,
+}
+
+fn http_request(method: &str, url_str: &str, body: Option<&str>) -> Result<HttpResponse, String> {
+    tokio_rt().block_on(async {
+        let client = reqwest::Client::new();
+        let mut req = match method {
+            "GET" => client.get(url_str),
+            "POST" => client.post(url_str),
+            "PUT" => client.put(url_str),
+            "PATCH" => client.patch(url_str),
+            "DELETE" => client.delete(url_str),
+            _ => return Err("unsupported method".into()),
+        };
+        if let Some(b) = body { req = req.body(b.to_string()); }
+        match req.send().await {
+            Ok(resp) => {
+                let status = resp.status().as_u16();
+                let headers = resp.headers().iter()
+                    .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
+                    .collect();
+                let body = resp.text().await.unwrap_or_default();
+                Ok(HttpResponse { status, headers, body })
+            }
+            Err(e) => Err(e.to_string()),
+        }
+    })
+}
+
+fn box_response(result: Result<HttpResponse, String>) -> (i64, u8) {
+    match result {
+        Ok(resp) => (Box::into_raw(Box::new(resp)) as i64, 0),
+        Err(_) => (0, 1),
+    }
+}
+
+#[allow(improper_ctypes_definitions)]
+pub extern "C" fn roca_http_get(url: i64) -> (i64, u8) {
+    box_response(http_request("GET", read_cstr(url), None))
+}
+
+#[allow(improper_ctypes_definitions)]
+pub extern "C" fn roca_http_post(url: i64, body: i64) -> (i64, u8) {
+    box_response(http_request("POST", read_cstr(url), Some(read_cstr(body))))
+}
+
+#[allow(improper_ctypes_definitions)]
+pub extern "C" fn roca_http_put(url: i64, body: i64) -> (i64, u8) {
+    box_response(http_request("PUT", read_cstr(url), Some(read_cstr(body))))
+}
+
+#[allow(improper_ctypes_definitions)]
+pub extern "C" fn roca_http_patch(url: i64, body: i64) -> (i64, u8) {
+    box_response(http_request("PATCH", read_cstr(url), Some(read_cstr(body))))
+}
+
+#[allow(improper_ctypes_definitions)]
+pub extern "C" fn roca_http_delete(url: i64) -> (i64, u8) {
+    box_response(http_request("DELETE", read_cstr(url), None))
+}
+
+pub extern "C" fn roca_http_status(resp: i64) -> f64 {
+    if resp == 0 { return 0.0; }
+    unsafe { &*(resp as *const HttpResponse) }.status as f64
+}
+
+pub extern "C" fn roca_http_ok(resp: i64) -> u8 {
+    if resp == 0 { return 0; }
+    let s = unsafe { &*(resp as *const HttpResponse) }.status;
+    if (200..300).contains(&s) { 1 } else { 0 }
+}
+
+#[allow(improper_ctypes_definitions)]
+pub extern "C" fn roca_http_text(resp: i64) -> (i64, u8) {
+    if resp == 0 { return (0, 1); }
+    (alloc_str(&unsafe { &*(resp as *const HttpResponse) }.body), 0)
+}
+
+#[allow(improper_ctypes_definitions)]
+pub extern "C" fn roca_http_json(resp: i64) -> (i64, u8) {
+    if resp == 0 { return (0, 1); }
+    roca_json_parse(alloc_str(&unsafe { &*(resp as *const HttpResponse) }.body))
+}
+
+pub extern "C" fn roca_http_header(resp: i64, name: i64) -> i64 {
+    if resp == 0 { return 0; }
+    let r = unsafe { &*(resp as *const HttpResponse) };
+    match r.headers.get(&read_cstr(name).to_lowercase()) {
+        Some(v) => alloc_str(v),
+        None => 0,
+    }
+}
