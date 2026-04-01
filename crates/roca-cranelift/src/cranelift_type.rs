@@ -1,21 +1,55 @@
 //! CraneliftType — extension trait that adds Cranelift IR behavior to RocaType.
 //! This is the bridge between the shared type system and the JIT backend.
+//!
+//! Cleanup is strategy-based: each type has a CleanupStrategy, and named types
+//! (Struct) can override via a registered lookup. This keeps the system open
+//! for extern contracts — a user's `Redis` type gets the same treatment as `Json`.
 
+use std::collections::HashMap;
 use cranelift_codegen::ir::{self, types, Value, InstBuilder};
 use cranelift_frontend::FunctionBuilder;
-use roca_types::RocaType;
+use roca_types::{RocaType, CleanupStrategy};
 
 use crate::helpers::{call_void, load_slot};
 use crate::emit_helpers::FreeRefs;
+
+/// Cleanup overrides for named types (Json → BoxFree, Url → BoxFree, etc.).
+/// Backends register these at startup. User extern contracts can register too.
+pub struct CleanupRegistry {
+    overrides: HashMap<String, CleanupStrategy>,
+}
+
+impl CleanupRegistry {
+    pub fn new() -> Self {
+        let mut overrides = HashMap::new();
+        // Built-in runtime types that need box-free instead of struct-free
+        overrides.insert("Json".into(), CleanupStrategy::BoxFree);
+        overrides.insert("Url".into(), CleanupStrategy::BoxFree);
+        overrides.insert("HttpResponse".into(), CleanupStrategy::BoxFree);
+        overrides.insert("JsonArray".into(), CleanupStrategy::FreeArray); // array of boxed JSON
+        Self { overrides }
+    }
+
+    /// Register a cleanup strategy for a named type (e.g., extern contract).
+    pub fn register(&mut self, name: impl Into<String>, strategy: CleanupStrategy) {
+        self.overrides.insert(name.into(), strategy);
+    }
+
+    /// Look up the cleanup strategy for a type, checking overrides first.
+    pub fn strategy_for(&self, ty: &RocaType) -> CleanupStrategy {
+        if let RocaType::Struct(name) | RocaType::Enum(name) = ty {
+            if let Some(&strategy) = self.overrides.get(name.as_str()) {
+                return strategy;
+            }
+        }
+        ty.default_cleanup()
+    }
+}
 
 /// Extension trait: Cranelift-specific behavior for Roca types.
 pub trait CraneliftType {
     /// Map to a Cranelift IR type (F64, I8, or I64).
     fn to_cranelift(&self) -> ir::Type;
-
-    /// Emit cleanup code for a heap-managed value at the given stack slot.
-    /// No-op for stack types.
-    fn emit_free(&self, b: &mut FunctionBuilder, slot: ir::StackSlot, refs: &FreeRefs);
 
     /// Produce a default/zero value for this type.
     fn default_value(&self, b: &mut FunctionBuilder) -> Value;
@@ -26,53 +60,7 @@ impl CraneliftType for RocaType {
         match self {
             RocaType::Number => types::F64,
             RocaType::Bool | RocaType::Void => types::I8,
-            // Everything else is a pointer (I64)
-            RocaType::String
-            | RocaType::Array(_)
-            | RocaType::Map(_, _)
-            | RocaType::Struct(_)
-            | RocaType::Enum(_)
-            | RocaType::Optional(_)
-            | RocaType::Fn(_, _)
-            | RocaType::Json
-            | RocaType::Url
-            | RocaType::HttpResponse
-            | RocaType::JsonArray
-            | RocaType::Unknown => types::I64,
-        }
-    }
-
-    fn emit_free(&self, b: &mut FunctionBuilder, slot: ir::StackSlot, refs: &FreeRefs) {
-        if !self.is_heap() {
-            return;
-        }
-        let ptr = load_slot(b, slot, self.to_cranelift());
-        match self {
-            RocaType::String => {
-                if let Some(f) = refs.rc_release { call_void(b, f, &[ptr]); }
-            }
-            RocaType::Array(_) => {
-                if let Some(f) = refs.free_array { call_void(b, f, &[ptr]); }
-            }
-            RocaType::JsonArray => {
-                if let Some(f) = refs.free_json_array { call_void(b, f, &[ptr]); }
-            }
-            RocaType::Struct(_) | RocaType::Map(_, _) => {
-                if let Some(f) = refs.free_struct {
-                    let zero = b.ins().iconst(types::I64, 0);
-                    call_void(b, f, &[ptr, zero]);
-                }
-            }
-            RocaType::Enum(_) => {
-                if let Some(f) = refs.free_struct {
-                    let one = b.ins().iconst(types::I64, 1);
-                    call_void(b, f, &[ptr, one]);
-                }
-            }
-            RocaType::Json | RocaType::Url | RocaType::HttpResponse => {
-                if let Some(f) = refs.box_free { call_void(b, f, &[ptr]); }
-            }
-            _ => {}
+            _ => types::I64,
         }
     }
 
@@ -80,6 +68,51 @@ impl CraneliftType for RocaType {
         match self {
             RocaType::Number => b.ins().f64const(0.0),
             _ => b.ins().iconst(self.to_cranelift(), 0),
+        }
+    }
+}
+
+/// Emit cleanup for a value based on its cleanup strategy.
+/// This is the single dispatch point — no more 8-arm ValKind match.
+pub fn emit_cleanup(
+    b: &mut FunctionBuilder,
+    slot: ir::StackSlot,
+    strategy: CleanupStrategy,
+    refs: &FreeRefs,
+) {
+    match strategy {
+        CleanupStrategy::None => {}
+        CleanupStrategy::RcRelease => {
+            if let Some(f) = refs.rc_release {
+                let ptr = load_slot(b, slot, types::I64);
+                call_void(b, f, &[ptr]);
+            }
+        }
+        CleanupStrategy::FreeArray => {
+            if let Some(f) = refs.free_array {
+                let ptr = load_slot(b, slot, types::I64);
+                call_void(b, f, &[ptr]);
+            }
+        }
+        CleanupStrategy::FreeStruct { heap_fields } => {
+            if let Some(f) = refs.free_struct {
+                let ptr = load_slot(b, slot, types::I64);
+                let n = b.ins().iconst(types::I64, heap_fields as i64);
+                call_void(b, f, &[ptr, n]);
+            }
+        }
+        CleanupStrategy::FreeEnum => {
+            if let Some(f) = refs.free_struct {
+                let ptr = load_slot(b, slot, types::I64);
+                let one = b.ins().iconst(types::I64, 1);
+                call_void(b, f, &[ptr, one]);
+            }
+        }
+        CleanupStrategy::BoxFree => {
+            if let Some(f) = refs.box_free {
+                let ptr = load_slot(b, slot, types::I64);
+                call_void(b, f, &[ptr]);
+            }
         }
     }
 }

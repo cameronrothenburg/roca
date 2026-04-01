@@ -1,8 +1,16 @@
 //! Shared type system for the Roca compiler.
 //! Used by all stages: parser, checker, JS emitter, and native backend.
 //! Each stage adds its own extension traits for stage-specific behavior.
+//!
+//! The type system is open — extern contracts and user-defined types
+//! are first-class. There are no hardcoded runtime types; stdlib types
+//! like Json or Url are just `Struct("Json")` with cleanup behavior
+//! registered at the backend level.
 
 /// The Roca type system — single source of truth across all compiler stages.
+///
+/// Open by design: `Struct(name)` handles both built-in types (Json, Url, etc.)
+/// and user-defined extern contracts (Redis, Stripe, etc.) uniformly.
 #[derive(Debug, Clone, PartialEq)]
 pub enum RocaType {
     // Primitives (stack-allocated, no cleanup)
@@ -14,21 +22,39 @@ pub enum RocaType {
     String,
     Array(Box<RocaType>),
     Map(Box<RocaType>, Box<RocaType>),
+
+    /// Named type — structs, extern contracts, and runtime types (Json, Url, etc.).
+    /// Cleanup behavior is determined by the backend via registered strategies,
+    /// not by the type system. This keeps the enum open to user-defined types.
     Struct(std::string::String),
+
+    /// Algebraic enum — tagged union with variant names.
     Enum(std::string::String),
 
     // Composite
     Optional(Box<RocaType>),
     Fn(Vec<RocaType>, Box<RocaType>),
 
-    // Runtime-inferred (not in source — produced by stdlib calls)
-    Json,
-    Url,
-    HttpResponse,
-    JsonArray,
-
     // Escape hatch for unresolvable types
     Unknown,
+}
+
+/// Cleanup strategy for heap-managed types.
+/// Registered per-type at the backend level, not hardcoded in the enum.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum CleanupStrategy {
+    /// RC-managed string — decrement refcount, free at zero.
+    RcRelease,
+    /// Array — free the Vec<i64>.
+    FreeArray,
+    /// Struct — release heap fields then free the Vec<i64>.
+    FreeStruct { heap_fields: u32 },
+    /// Enum variant — tagged struct with 1 heap field (the tag string).
+    FreeEnum,
+    /// Box-allocated opaque type — call drop trampoline + dealloc.
+    BoxFree,
+    /// No cleanup needed (stack value, or managed elsewhere).
+    None,
 }
 
 impl RocaType {
@@ -41,10 +67,6 @@ impl RocaType {
                 | RocaType::Map(_, _)
                 | RocaType::Struct(_)
                 | RocaType::Enum(_)
-                | RocaType::Json
-                | RocaType::Url
-                | RocaType::HttpResponse
-                | RocaType::JsonArray
         )
     }
 
@@ -58,19 +80,10 @@ impl RocaType {
         matches!(self, RocaType::Optional(_))
     }
 
-    /// Is this a boxed opaque type (Json, Url, HttpResponse)?
-    pub fn is_boxed(&self) -> bool {
-        matches!(
-            self,
-            RocaType::Json | RocaType::Url | RocaType::HttpResponse
-        )
-    }
-
     /// Get the element type for containers (Array<T> → T).
     pub fn element_type(&self) -> Option<&RocaType> {
         match self {
-            RocaType::Array(inner) => Some(inner),
-            RocaType::Optional(inner) => Some(inner),
+            RocaType::Array(inner) | RocaType::Optional(inner) => Some(inner),
             _ => None,
         }
     }
@@ -84,14 +97,9 @@ impl RocaType {
             RocaType::String => "String",
             RocaType::Array(_) => "Array",
             RocaType::Map(_, _) => "Map",
-            RocaType::Struct(name) => name,
-            RocaType::Enum(name) => name,
+            RocaType::Struct(name) | RocaType::Enum(name) => name,
             RocaType::Optional(_) => "Optional",
             RocaType::Fn(_, _) => "Fn",
-            RocaType::Json => "Json",
-            RocaType::Url => "Url",
-            RocaType::HttpResponse => "HttpResponse",
-            RocaType::JsonArray => "JsonArray",
             RocaType::Unknown => "Unknown",
         }
     }
@@ -101,6 +109,18 @@ impl RocaType {
         match self {
             RocaType::Optional(inner) => inner,
             other => other,
+        }
+    }
+
+    /// Default cleanup strategy for this type.
+    /// Backends can override this per struct name for special types (Json, Url, etc.).
+    pub fn default_cleanup(&self) -> CleanupStrategy {
+        match self {
+            RocaType::String => CleanupStrategy::RcRelease,
+            RocaType::Array(_) => CleanupStrategy::FreeArray,
+            RocaType::Map(_, _) | RocaType::Struct(_) => CleanupStrategy::FreeStruct { heap_fields: 0 },
+            RocaType::Enum(_) => CleanupStrategy::FreeEnum,
+            _ => CleanupStrategy::None,
         }
     }
 }
@@ -121,8 +141,23 @@ mod tests {
         assert!(RocaType::String.is_heap());
         assert!(RocaType::Array(Box::new(RocaType::Number)).is_heap());
         assert!(RocaType::Struct("Email".into()).is_heap());
-        assert!(RocaType::Json.is_heap());
-        assert!(RocaType::HttpResponse.is_heap());
+    }
+
+    #[test]
+    fn extern_types_are_heap() {
+        // User-defined extern contracts are heap-managed
+        assert!(RocaType::Struct("Redis".into()).is_heap());
+        assert!(RocaType::Struct("Stripe".into()).is_heap());
+    }
+
+    #[test]
+    fn runtime_types_are_just_structs() {
+        // Json, Url, HttpResponse are just Struct("Json"), etc.
+        let json = RocaType::Struct("Json".into());
+        let url = RocaType::Struct("Url".into());
+        assert!(json.is_heap());
+        assert!(url.is_heap());
+        assert_eq!(json.base_name(), "Json");
     }
 
     #[test]
@@ -135,6 +170,15 @@ mod tests {
     #[test]
     fn unknown_is_not_heap() {
         assert!(!RocaType::Unknown.is_heap());
+    }
+
+    #[test]
+    fn default_cleanup_strategies() {
+        assert_eq!(RocaType::String.default_cleanup(), CleanupStrategy::RcRelease);
+        assert_eq!(RocaType::Array(Box::new(RocaType::Number)).default_cleanup(), CleanupStrategy::FreeArray);
+        assert_eq!(RocaType::Struct("Email".into()).default_cleanup(), CleanupStrategy::FreeStruct { heap_fields: 0 });
+        assert_eq!(RocaType::Enum("Token".into()).default_cleanup(), CleanupStrategy::FreeEnum);
+        assert_eq!(RocaType::Number.default_cleanup(), CleanupStrategy::None);
     }
 
     #[test]
