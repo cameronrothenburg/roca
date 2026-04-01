@@ -47,12 +47,12 @@ macro_rules! runtime_funcs {
                     concat!("__", stringify!($key)).to_string(),
                     module.declare_func_in_func(self.$key, func),
                 ); )*
-                // Also register stdlib functions under Contract.method names
-                // so the emitter can resolve Math.floor → __math_floor etc.
-                for (key, func_ref) in &refs.clone() {
-                    if let Some(contract_method) = stdlib_key_to_contract(key) {
-                        refs.insert(contract_method, *func_ref);
-                    }
+                // Register stdlib functions under Contract.method names
+                let aliases: Vec<_> = refs.iter()
+                    .filter_map(|(k, v)| stdlib_key_to_contract(k).map(|name| (name, *v)))
+                    .collect();
+                for (name, func_ref) in aliases {
+                    refs.insert(name, func_ref);
                 }
                 for (name, fid) in &compiled.funcs {
                     refs.insert(name.clone(), module.declare_func_in_func(*fid, func));
@@ -170,6 +170,7 @@ runtime_funcs! {
 
     // Url
     (url_parse,         "roca_url_parse",         roca_url_parse,         [types::I64],                                [types::I64, types::I8]),
+    (url_free,          "roca_url_free",          roca_url_free,          [types::I64],                                []),
     (url_is_valid,      "roca_url_is_valid",      roca_url_is_valid,      [types::I64],                                [types::I8]),
     (url_hostname,      "roca_url_hostname",      roca_url_hostname,      [types::I64],                                [types::I64]),
     (url_protocol,      "roca_url_protocol",      roca_url_protocol,      [types::I64],                                [types::I64]),
@@ -192,6 +193,7 @@ runtime_funcs! {
 
     // JSON
     (json_parse,        "roca_json_parse",        roca_json_parse,        [types::I64],                                [types::I64, types::I8]),
+    (json_free,         "roca_json_free",         roca_json_free,         [types::I64],                                []),
     (json_stringify,    "roca_json_stringify",     roca_json_stringify,    [types::I64],                                [types::I64]),
     (json_get,          "roca_json_get",          roca_json_get,          [types::I64, types::I64],                    [types::I64]),
     (json_get_string,   "roca_json_get_string",   roca_json_get_string,   [types::I64, types::I64],                    [types::I64]),
@@ -206,6 +208,7 @@ runtime_funcs! {
     (http_put,          "roca_http_put",          roca_http_put,          [types::I64, types::I64],                    [types::I64, types::I8]),
     (http_patch,        "roca_http_patch",        roca_http_patch,        [types::I64, types::I64],                    [types::I64, types::I8]),
     (http_delete,       "roca_http_delete",       roca_http_delete,       [types::I64],                                [types::I64, types::I8]),
+    (http_free,         "roca_http_free",         roca_http_free,         [types::I64],                                []),
     (http_status,       "roca_http_status",       roca_http_status,       [types::I64],                                [types::F64]),
     (http_ok,           "roca_http_ok",           roca_http_ok,           [types::I64],                                [types::I8]),
     (http_text,         "roca_http_text",         roca_http_text,         [types::I64],                                [types::I64, types::I8]),

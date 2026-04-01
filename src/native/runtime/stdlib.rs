@@ -431,6 +431,10 @@ pub extern "C" fn roca_url_parse(raw: i64) -> (i64, u8) {
     }
 }
 
+pub extern "C" fn roca_url_free(ptr: i64) {
+    if ptr != 0 { unsafe { drop(Box::from_raw(ptr as *mut url::Url)); } }
+}
+
 pub extern "C" fn roca_url_is_valid(raw: i64) -> u8 {
     if url::Url::parse(read_cstr(raw)).is_ok() { 1 } else { 0 }
 }
@@ -523,10 +527,12 @@ pub extern "C" fn roca_encoding_atob(input: i64) -> (i64, u8) {
     }
 }
 
+/// Native strings are already UTF-8 — encode is identity.
 pub extern "C" fn roca_encoding_encode(input: i64) -> i64 {
-    input // strings are already UTF-8 in native
+    input
 }
 
+/// Native strings are already UTF-8 — decode is identity with null check.
 #[allow(improper_ctypes_definitions)]
 pub extern "C" fn roca_encoding_decode(bytes: i64) -> (i64, u8) {
     if bytes == 0 { return (0, 1); }
@@ -534,6 +540,12 @@ pub extern "C" fn roca_encoding_decode(bytes: i64) -> (i64, u8) {
 }
 
 // ─── JSON ───────────────────────────────────────────
+
+fn with_json<T, F: FnOnce(&serde_json::Value) -> T>(ptr: i64, default: T, f: F) -> T {
+    if ptr == 0 { return default; }
+    let value = unsafe { &*(ptr as *const serde_json::Value) };
+    f(value)
+}
 
 #[allow(improper_ctypes_definitions)]
 pub extern "C" fn roca_json_parse(text: i64) -> (i64, u8) {
@@ -543,49 +555,41 @@ pub extern "C" fn roca_json_parse(text: i64) -> (i64, u8) {
     }
 }
 
+pub extern "C" fn roca_json_free(ptr: i64) {
+    if ptr != 0 { unsafe { drop(Box::from_raw(ptr as *mut serde_json::Value)); } }
+}
+
 pub extern "C" fn roca_json_stringify(json: i64) -> i64 {
-    if json == 0 { return alloc_str("null"); }
-    let value = unsafe { &*(json as *const serde_json::Value) };
-    alloc_str(&value.to_string())
+    with_json(json, alloc_str("null"), |v| alloc_str(&v.to_string()))
 }
 
 pub extern "C" fn roca_json_get(json: i64, key: i64) -> i64 {
-    if json == 0 { return 0; }
-    let value = unsafe { &*(json as *const serde_json::Value) };
-    match value.get(read_cstr(key)) {
-        Some(v) => Box::into_raw(Box::new(v.clone())) as i64,
+    with_json(json, 0, |v| match v.get(read_cstr(key)) {
+        Some(inner) => Box::into_raw(Box::new(inner.clone())) as i64,
         None => 0,
-    }
+    })
 }
 
 pub extern "C" fn roca_json_get_string(json: i64, key: i64) -> i64 {
-    if json == 0 { return 0; }
-    let value = unsafe { &*(json as *const serde_json::Value) };
-    match value.get(read_cstr(key)).and_then(|v| v.as_str()) {
+    with_json(json, 0, |v| match v.get(read_cstr(key)).and_then(|v| v.as_str()) {
         Some(s) => alloc_str(s),
         None => 0,
-    }
+    })
 }
 
 pub extern "C" fn roca_json_get_number(json: i64, key: i64) -> f64 {
-    if json == 0 { return f64::NAN; }
-    let value = unsafe { &*(json as *const serde_json::Value) };
-    value.get(read_cstr(key)).and_then(|v| v.as_f64()).unwrap_or(f64::NAN)
+    with_json(json, f64::NAN, |v| v.get(read_cstr(key)).and_then(|v| v.as_f64()).unwrap_or(f64::NAN))
 }
 
 pub extern "C" fn roca_json_get_bool(json: i64, key: i64) -> u8 {
-    if json == 0 { return 0; }
-    let value = unsafe { &*(json as *const serde_json::Value) };
-    match value.get(read_cstr(key)).and_then(|v| v.as_bool()) {
+    with_json(json, 0, |v| match v.get(read_cstr(key)).and_then(|v| v.as_bool()) {
         Some(true) => 1,
         _ => 0,
-    }
+    })
 }
 
 pub extern "C" fn roca_json_get_array(json: i64, key: i64) -> i64 {
-    if json == 0 { return 0; }
-    let value = unsafe { &*(json as *const serde_json::Value) };
-    match value.get(read_cstr(key)).and_then(|v| v.as_array()) {
+    with_json(json, 0, |v| match v.get(read_cstr(key)).and_then(|v| v.as_array()) {
         Some(arr) => {
             let result = roca_array_new();
             for item in arr {
@@ -595,7 +599,7 @@ pub extern "C" fn roca_json_get_array(json: i64, key: i64) -> i64 {
             result
         }
         None => 0,
-    }
+    })
 }
 
 pub extern "C" fn roca_json_to_string(json: i64) -> i64 {
@@ -610,9 +614,19 @@ struct HttpResponse {
     body: String,
 }
 
+fn http_client() -> &'static reqwest::Client {
+    static CLIENT: std::sync::LazyLock<reqwest::Client> = std::sync::LazyLock::new(|| {
+        reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .unwrap_or_default()
+    });
+    &CLIENT
+}
+
 fn http_request(method: &str, url_str: &str, body: Option<&str>) -> Result<HttpResponse, String> {
     tokio_rt().block_on(async {
-        let client = reqwest::Client::new();
+        let client = http_client();
         let mut req = match method {
             "GET" => client.get(url_str),
             "POST" => client.post(url_str),
@@ -625,6 +639,7 @@ fn http_request(method: &str, url_str: &str, body: Option<&str>) -> Result<HttpR
         match req.send().await {
             Ok(resp) => {
                 let status = resp.status().as_u16();
+                // reqwest normalises header names to lowercase
                 let headers = resp.headers().iter()
                     .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
                     .collect();
@@ -641,6 +656,12 @@ fn box_response(result: Result<HttpResponse, String>) -> (i64, u8) {
         Ok(resp) => (Box::into_raw(Box::new(resp)) as i64, 0),
         Err(_) => (0, 1),
     }
+}
+
+fn with_resp<T, F: FnOnce(&HttpResponse) -> T>(ptr: i64, default: T, f: F) -> T {
+    if ptr == 0 { return default; }
+    let r = unsafe { &*(ptr as *const HttpResponse) };
+    f(r)
 }
 
 #[allow(improper_ctypes_definitions)]
@@ -668,34 +689,38 @@ pub extern "C" fn roca_http_delete(url: i64) -> (i64, u8) {
     box_response(http_request("DELETE", read_cstr(url), None))
 }
 
+pub extern "C" fn roca_http_free(ptr: i64) {
+    if ptr != 0 { unsafe { drop(Box::from_raw(ptr as *mut HttpResponse)); } }
+}
+
 pub extern "C" fn roca_http_status(resp: i64) -> f64 {
-    if resp == 0 { return 0.0; }
-    unsafe { &*(resp as *const HttpResponse) }.status as f64
+    with_resp(resp, 0.0, |r| r.status as f64)
 }
 
 pub extern "C" fn roca_http_ok(resp: i64) -> u8 {
-    if resp == 0 { return 0; }
-    let s = unsafe { &*(resp as *const HttpResponse) }.status;
-    if (200..300).contains(&s) { 1 } else { 0 }
+    with_resp(resp, 0, |r| if (200..300).contains(&r.status) { 1 } else { 0 })
 }
 
 #[allow(improper_ctypes_definitions)]
 pub extern "C" fn roca_http_text(resp: i64) -> (i64, u8) {
     if resp == 0 { return (0, 1); }
-    (alloc_str(&unsafe { &*(resp as *const HttpResponse) }.body), 0)
+    with_resp(resp, (0, 1), |r| (alloc_str(&r.body), 0))
 }
 
 #[allow(improper_ctypes_definitions)]
 pub extern "C" fn roca_http_json(resp: i64) -> (i64, u8) {
     if resp == 0 { return (0, 1); }
-    roca_json_parse(alloc_str(&unsafe { &*(resp as *const HttpResponse) }.body))
+    // Parse body directly without intermediate alloc_str
+    let body = &unsafe { &*(resp as *const HttpResponse) }.body;
+    match serde_json::from_str::<serde_json::Value>(body) {
+        Ok(value) => (Box::into_raw(Box::new(value)) as i64, 0),
+        Err(_) => (0, 1),
+    }
 }
 
 pub extern "C" fn roca_http_header(resp: i64, name: i64) -> i64 {
-    if resp == 0 { return 0; }
-    let r = unsafe { &*(resp as *const HttpResponse) };
-    match r.headers.get(&read_cstr(name).to_lowercase()) {
+    with_resp(resp, 0, |r| match r.headers.get(&read_cstr(name).to_lowercase()) {
         Some(v) => alloc_str(v),
         None => 0,
-    }
+    })
 }
