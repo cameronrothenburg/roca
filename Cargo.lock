@@ -1766,6 +1766,7 @@ dependencies = [
  "roca-cranelift",
  "roca-parse",
  "roca-runtime",
+ "roca-types",
 ]
 
 [[package]]

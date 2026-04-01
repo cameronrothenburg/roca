@@ -1,37 +1,41 @@
 //! Method calls, struct/enum construction, crash handlers, and inline map/filter.
 
-use cranelift_codegen::ir::{self, types, Value, BlockArg, InstBuilder};
-use cranelift_frontend::FunctionBuilder;
+use cranelift_codegen::ir::{self, types, InstBuilder};
 
 use roca_ast::{self as roca, Expr, crash::{CrashHandlerKind, CrashStep}};
-use crate::helpers::{
-    call_rt, call_void, alloc_slot, load_slot, ensure_i64, leak_cstr, default_for_ir_type,
-};
-use super::context::{EmitCtx, StructLayout, ValKind};
+use roca_cranelift::builder::{IrBuilder, Value, FuncRef, VarSlot};
+use roca_cranelift::context::{EmitCtx, StructLayout, ValKind as RocaType};
 use super::helpers::{
     infer_kind, emit_scope_cleanup, target_kind, first_arg_or_null,
     emit_array_push, emit_struct_set, emit_length,
 };
 use super::expr::emit_expr;
 
+/// Map a raw Cranelift IR type back to its closest RocaType.
+fn roca_type_for_ir(ty: ir::Type) -> RocaType {
+    if ty == types::F64 { RocaType::Number }
+    else if ty == types::I8 { RocaType::Bool }
+    else { RocaType::Unknown }
+}
+
 /// Emit constraint validation guards for function parameters at entry.
-pub fn emit_param_constraints(b: &mut FunctionBuilder, params: &[roca::Param], ctx: &mut EmitCtx) {
+pub fn emit_param_constraints(ir: &mut IrBuilder, params: &[roca::Param], ctx: &mut EmitCtx) {
     for param in params {
         if param.constraints.is_empty() { continue; }
         let var = match ctx.get_var(&param.name) {
             Some(v) => v.clone(),
             None => continue,
         };
-        let val = load_slot(b, var.slot, var.cranelift_type);
+        let val = ir.raw().ins().stack_load(var.cranelift_type, var.slot, 0);
         let is_string = matches!(param.type_ref, roca::TypeRef::String);
-        emit_value_constraints(b, val, is_string, &param.name, &param.constraints, ctx);
+        emit_value_constraints(ir, val, is_string, &param.name, &param.constraints, ctx);
     }
 }
 
 /// Shared constraint guard emission for a pre-loaded value.
 /// Used by both param constraints and struct field constraints.
 pub fn emit_value_constraints(
-    b: &mut FunctionBuilder,
+    ir: &mut IrBuilder,
     val: Value,
     is_string: bool,
     name: &str,
@@ -41,45 +45,45 @@ pub fn emit_value_constraints(
     for constraint in constraints {
         match constraint {
             roca::Constraint::Min(n) if !is_string => {
-                let min_val = b.ins().f64const(*n);
-                let cmp = b.ins().fcmp(ir::condcodes::FloatCC::LessThan, val, min_val);
-                let cmp_ext = b.ins().uextend(types::I64, cmp);
-                emit_constraint_trap(b, cmp_ext, name, &format!("must be >= {}", n), ctx);
+                let min_val = ir.const_number(*n);
+                let cmp = ir.raw().ins().fcmp(ir::condcodes::FloatCC::LessThan, val, min_val);
+                let cmp_ext = ir.extend_bool(cmp);
+                emit_constraint_trap(ir, cmp_ext, name, &format!("must be >= {}", n), ctx);
             }
             roca::Constraint::Max(n) if !is_string => {
-                let max_val = b.ins().f64const(*n);
-                let cmp = b.ins().fcmp(ir::condcodes::FloatCC::GreaterThan, val, max_val);
-                let cmp_ext = b.ins().uextend(types::I64, cmp);
-                emit_constraint_trap(b, cmp_ext, name, &format!("must be <= {}", n), ctx);
+                let max_val = ir.const_number(*n);
+                let cmp = ir.raw().ins().fcmp(ir::condcodes::FloatCC::GreaterThan, val, max_val);
+                let cmp_ext = ir.extend_bool(cmp);
+                emit_constraint_trap(ir, cmp_ext, name, &format!("must be <= {}", n), ctx);
             }
             roca::Constraint::Min(n) | roca::Constraint::MinLen(n) if is_string => {
                 if let Some(&len_fn) = ctx.get_func("__string_len") {
-                    let len = call_rt(b, len_fn, &[val]);
-                    let min_val = b.ins().iconst(types::I64, *n as i64);
-                    let cmp = b.ins().icmp(ir::condcodes::IntCC::SignedLessThan, len, min_val);
-                    let cmp_ext = b.ins().uextend(types::I64, cmp);
-                    emit_constraint_trap(b, cmp_ext, name, &format!("min length {}", n), ctx);
+                    let len = ir.call(len_fn, &[val]);
+                    let min_val = ir.const_i64(*n as i64);
+                    let cmp = ir.raw().ins().icmp(ir::condcodes::IntCC::SignedLessThan, len, min_val);
+                    let cmp_ext = ir.extend_bool(cmp);
+                    emit_constraint_trap(ir, cmp_ext, name, &format!("min length {}", n), ctx);
                 }
             }
             roca::Constraint::Max(n) | roca::Constraint::MaxLen(n) if is_string => {
                 if let Some(&len_fn) = ctx.get_func("__string_len") {
-                    let len = call_rt(b, len_fn, &[val]);
-                    let max_val = b.ins().iconst(types::I64, *n as i64);
-                    let cmp = b.ins().icmp(ir::condcodes::IntCC::SignedGreaterThan, len, max_val);
-                    let cmp_ext = b.ins().uextend(types::I64, cmp);
-                    emit_constraint_trap(b, cmp_ext, name, &format!("max length {}", n), ctx);
+                    let len = ir.call(len_fn, &[val]);
+                    let max_val = ir.const_i64(*n as i64);
+                    let cmp = ir.raw().ins().icmp(ir::condcodes::IntCC::SignedGreaterThan, len, max_val);
+                    let cmp_ext = ir.extend_bool(cmp);
+                    emit_constraint_trap(ir, cmp_ext, name, &format!("max length {}", n), ctx);
                 }
             }
             roca::Constraint::Contains(s) => {
-                let needle = leak_cstr(b, s);
+                let needle = ir.leak_cstr(s);
                 if let Some(&includes) = ctx.get_func("__string_includes") {
-                    let result = call_rt(b, includes, &[val, needle]);
+                    let result = ir.call(includes, &[val, needle]);
                     let not_result = {
-                        let ext = b.ins().uextend(types::I64, result);
-                        let one = b.ins().iconst(types::I64, 1);
-                        b.ins().isub(one, ext)
+                        let ext = ir.extend_bool(result);
+                        let one = ir.const_i64(1);
+                        ir.isub(one, ext)
                     };
-                    emit_constraint_trap(b, not_result, name, &format!("must contain \"{}\"", s), ctx);
+                    emit_constraint_trap(ir, not_result, name, &format!("must contain \"{}\"", s), ctx);
                 }
             }
             _ => {}
@@ -87,11 +91,11 @@ pub fn emit_value_constraints(
     }
 }
 
-pub fn emit_method_call(b: &mut FunctionBuilder, target: &Expr, method: &str, args: &[Expr], ctx: &mut EmitCtx) -> Value {
+pub fn emit_method_call(ir: &mut IrBuilder, target: &Expr, method: &str, args: &[Expr], ctx: &mut EmitCtx) -> Value {
     // Enum data variant constructor: Token.Number(42)
     if let Expr::Ident(name) = target {
         if ctx.enum_variants.get(name).map_or(false, |vs| vs.contains(&method.to_string())) {
-            return emit_enum_variant(b, method, args, ctx);
+            return emit_enum_variant(ir, method, args, ctx);
         }
     }
 
@@ -99,17 +103,16 @@ pub fn emit_method_call(b: &mut FunctionBuilder, target: &Expr, method: &str, ar
     if let Expr::Ident(type_name) = target {
         let qualified = format!("{}.{}", type_name, method);
         if let Some(&func_ref) = ctx.get_func(&qualified) {
-            let arg_vals: Vec<Value> = args.iter().map(|a| emit_expr(b, a, ctx)).collect();
+            let arg_vals: Vec<Value> = args.iter().map(|a| emit_expr(ir, a, ctx)).collect();
 
             if let Some(handler) = ctx.crash_handlers.get(&qualified).cloned() {
                 // Store args in slots for potential retry
-                let arg_slots: Vec<_> = arg_vals.iter().map(|v| alloc_slot(b, *v)).collect();
-                let arg_types: Vec<_> = arg_vals.iter().map(|v| b.func.dfg.value_type(*v)).collect();
-                return emit_crash_call(b, func_ref, &arg_slots, &arg_types, &handler, ctx);
+                let arg_slots: Vec<_> = arg_vals.iter().map(|v| ir.alloc_var(*v)).collect();
+                let arg_types: Vec<_> = arg_vals.iter().map(|v| ir.value_ir_type(*v)).collect();
+                return emit_crash_call(ir, func_ref, &arg_slots, &arg_types, &handler, ctx);
             }
 
-            let call = b.ins().call(func_ref, &arg_vals);
-            let results = b.inst_results(call).to_vec();
+            let results = ir.call_multi(func_ref, &arg_vals);
             if results.len() >= 2 { return results[0]; }
             if !results.is_empty() { return results[0]; }
         }
@@ -120,131 +123,131 @@ pub fn emit_method_call(b: &mut FunctionBuilder, target: &Expr, method: &str, ar
     // Inline map/filter before evaluating target — they need the closure
     if (method == "map" || method == "filter") && !args.is_empty() {
         if let Expr::Closure { params, body } = &args[0] {
-            return emit_inline_map_filter(b, target, method, params, body, ctx);
+            return emit_inline_map_filter(ir, target, method, params, body, ctx);
         }
     }
 
     // Detect chained method calls that produce intermediate strings
     let target_is_temp_string = !matches!(target, Expr::Ident(_) | Expr::String(_))
-        && infer_kind(target, ctx) == ValKind::String;
+        && infer_kind(target, ctx) == RocaType::String;
 
-    let obj = emit_expr(b, target, ctx);
+    let obj = emit_expr(ir, target, ctx);
 
     let result = match method {
         "push" => {
             if let Some(arg) = args.first() {
-                let val = emit_expr(b, arg, ctx);
-                emit_array_push(b, obj, val, ctx);
+                let val = emit_expr(ir, arg, ctx);
+                emit_array_push(ir, obj, val, ctx);
             }
-            b.ins().iconst(types::I8, 0)
+            ir.raw().ins().iconst(types::I8, 0)
         }
         "pop" => {
             if let Some(&get) = ctx.get_func("__array_get_f64") {
                 if let Some(&len_fn) = ctx.get_func("__array_len") {
-                    let len = call_rt(b, len_fn, &[obj]);
-                    let one = b.ins().iconst(types::I64, 1);
-                    let last_idx = b.ins().isub(len, one);
-                    return call_rt(b, get, &[obj, last_idx]);
+                    let len = ir.call(len_fn, &[obj]);
+                    let one = ir.const_i64(1);
+                    let last_idx = ir.isub(len, one);
+                    return ir.call(get, &[obj, last_idx]);
                 }
             }
-            b.ins().f64const(0.0)
+            ir.const_number(0.0)
         }
         "join" => {
             let sep = if let Some(arg) = args.first() {
-                emit_expr(b, arg, ctx)
+                emit_expr(ir, arg, ctx)
             } else {
-                leak_cstr(b, ",")
+                ir.leak_cstr(",")
             };
             if let Some(&f) = ctx.get_func("__array_join") {
-                call_rt(b, f, &[obj, sep])
-            } else { b.ins().iconst(types::I64, 0) }
+                ir.call(f, &[obj, sep])
+            } else { ir.null() }
         }
 
         "includes" | "contains" => {
-            let needle = first_arg_or_null(b, args, ctx);
+            let needle = first_arg_or_null(ir, args, ctx);
             if let Some(&f) = ctx.get_func("__string_includes") {
-                let result = call_rt(b, f, &[obj, needle]);
-                b.ins().uextend(types::I64, result)
-            } else { b.ins().iconst(types::I64, 0) }
+                let result = ir.call(f, &[obj, needle]);
+                ir.extend_bool(result)
+            } else { ir.null() }
         }
         "startsWith" => {
-            let prefix = first_arg_or_null(b, args, ctx);
+            let prefix = first_arg_or_null(ir, args, ctx);
             if let Some(&f) = ctx.get_func("__string_starts_with") {
-                let result = call_rt(b, f, &[obj, prefix]);
-                b.ins().uextend(types::I64, result)
-            } else { b.ins().iconst(types::I64, 0) }
+                let result = ir.call(f, &[obj, prefix]);
+                ir.extend_bool(result)
+            } else { ir.null() }
         }
         "endsWith" => {
-            let suffix = first_arg_or_null(b, args, ctx);
+            let suffix = first_arg_or_null(ir, args, ctx);
             if let Some(&f) = ctx.get_func("__string_ends_with") {
-                let result = call_rt(b, f, &[obj, suffix]);
-                b.ins().uextend(types::I64, result)
-            } else { b.ins().iconst(types::I64, 0) }
+                let result = ir.call(f, &[obj, suffix]);
+                ir.extend_bool(result)
+            } else { ir.null() }
         }
         "trim" => {
             if let Some(&f) = ctx.get_func("__string_trim") {
-                call_rt(b, f, &[obj])
+                ir.call(f, &[obj])
             } else { obj }
         }
         "toUpperCase" => {
             if let Some(&f) = ctx.get_func("__string_to_upper") {
-                call_rt(b, f, &[obj])
+                ir.call(f, &[obj])
             } else { obj }
         }
         "toLowerCase" => {
             if let Some(&f) = ctx.get_func("__string_to_lower") {
-                call_rt(b, f, &[obj])
+                ir.call(f, &[obj])
             } else { obj }
         }
         "slice" => {
-            let start = args.first().map(|a| emit_expr(b, a, ctx))
-                .unwrap_or_else(|| b.ins().iconst(types::I64, 0));
-            let end = args.get(1).map(|a| emit_expr(b, a, ctx))
+            let start = args.first().map(|a| emit_expr(ir, a, ctx))
+                .unwrap_or_else(|| ir.null());
+            let end = args.get(1).map(|a| emit_expr(ir, a, ctx))
                 .unwrap_or_else(|| {
                     if let Some(&f) = ctx.get_func("__string_len") {
-                        call_rt(b, f, &[obj])
-                    } else { b.ins().iconst(types::I64, 0) }
+                        ir.call(f, &[obj])
+                    } else { ir.null() }
                 });
-            let start_i = ensure_i64(b, start);
-            let end_i = ensure_i64(b, end);
+            let start_i = ir.to_i64(start);
+            let end_i = ir.to_i64(end);
             if let Some(&f) = ctx.get_func("__string_slice") {
-                call_rt(b, f, &[obj, start_i, end_i])
+                ir.call(f, &[obj, start_i, end_i])
             } else { obj }
         }
         "split" => {
-            let delim = first_arg_or_null(b, args, ctx);
+            let delim = first_arg_or_null(ir, args, ctx);
             if let Some(&f) = ctx.get_func("__string_split") {
-                call_rt(b, f, &[obj, delim])
-            } else { b.ins().iconst(types::I64, 0) }
+                ir.call(f, &[obj, delim])
+            } else { ir.null() }
         }
         "charAt" => {
-            let idx = first_arg_or_null(b, args, ctx);
-            let idx_i = ensure_i64(b, idx);
+            let idx = first_arg_or_null(ir, args, ctx);
+            let idx_i = ir.to_i64(idx);
             if let Some(&f) = ctx.get_func("__string_char_at") {
-                call_rt(b, f, &[obj, idx_i])
-            } else { b.ins().iconst(types::I64, 0) }
+                ir.call(f, &[obj, idx_i])
+            } else { ir.null() }
         }
         "charCodeAt" => {
-            let idx = first_arg_or_null(b, args, ctx);
-            let idx_i = ensure_i64(b, idx);
+            let idx = first_arg_or_null(ir, args, ctx);
+            let idx_i = ir.to_i64(idx);
             if let Some(&f) = ctx.get_func("__string_char_code_at") {
-                call_rt(b, f, &[obj, idx_i])
-            } else { b.ins().f64const(0.0) }
+                ir.call(f, &[obj, idx_i])
+            } else { ir.const_number(0.0) }
         }
         "indexOf" => {
-            let needle = first_arg_or_null(b, args, ctx);
+            let needle = first_arg_or_null(ir, args, ctx);
             if let Some(&f) = ctx.get_func("__string_index_of") {
-                call_rt(b, f, &[obj, needle])
-            } else { b.ins().f64const(-1.0) }
+                ir.call(f, &[obj, needle])
+            } else { ir.const_number(-1.0) }
         }
 
-        "len" | "length" => emit_length(b, obj, kind, ctx),
+        "len" | "length" => emit_length(ir, obj, kind, ctx),
         "toString" => {
-            let ty = b.func.dfg.value_type(obj);
+            let ty = ir.value_ir_type(obj);
             if ty == types::F64 {
                 if let Some(&f) = ctx.get_func("__string_from_f64") {
-                    call_rt(b, f, &[obj])
-                } else { b.ins().iconst(types::I64, 0) }
+                    ir.call(f, &[obj])
+                } else { ir.null() }
             } else {
                 obj
             }
@@ -255,25 +258,25 @@ pub fn emit_method_call(b: &mut FunctionBuilder, target: &Expr, method: &str, ar
     // Free intermediate string from chained method calls
     if target_is_temp_string {
         if let Some(&f) = ctx.get_func("__rc_release") {
-            call_void(b, f, &[obj]);
+            ir.call_void(f, &[obj]);
         }
     }
 
     result
 }
 
-pub fn emit_struct_lit(b: &mut FunctionBuilder, name: &str, fields: &[(String, Expr)], ctx: &mut EmitCtx) -> Value {
+pub fn emit_struct_lit(ir: &mut IrBuilder, name: &str, fields: &[(String, Expr)], ctx: &mut EmitCtx) -> Value {
     if !ctx.struct_layouts.contains_key(name) {
         ctx.struct_layouts.insert(name.to_string(), StructLayout {
             fields: fields.iter().map(|(n, v)| (n.clone(), infer_kind(v, ctx))).collect(),
         });
     }
 
-    let num_fields = b.ins().iconst(types::I64, fields.len() as i64);
+    let num_fields = ir.const_i64(fields.len() as i64);
     let ptr = if let Some(f) = ctx.get_func("__struct_alloc") {
-        call_rt(b, *f, &[num_fields])
+        ir.call(*f, &[num_fields])
     } else {
-        return b.ins().iconst(types::I64, 0);
+        return ir.null();
     };
 
     let indices: Vec<usize> = {
@@ -282,9 +285,9 @@ pub fn emit_struct_lit(b: &mut FunctionBuilder, name: &str, fields: &[(String, E
     };
 
     for (i, (_, field_expr)) in fields.iter().enumerate() {
-        let val = emit_expr(b, field_expr, ctx);
-        let idx_val = b.ins().iconst(types::I64, indices[i] as i64);
-        emit_struct_set(b, ptr, idx_val, val, ctx);
+        let val = emit_expr(ir, field_expr, ctx);
+        let idx_val = ir.const_i64(indices[i] as i64);
+        emit_struct_set(ir, ptr, idx_val, val, ctx);
     }
 
     // Constraint validation guards
@@ -295,11 +298,11 @@ pub fn emit_struct_lit(b: &mut FunctionBuilder, name: &str, fields: &[(String, E
             let layout_idx = layout.as_ref().and_then(|l| l.field_index(&field_def.name));
             if fields.iter().any(|(n, _)| n == &field_def.name) && layout_idx.is_some() {
                 let is_string = matches!(field_def.type_ref, roca::TypeRef::String);
-                let field_idx = b.ins().iconst(types::I64, layout_idx.unwrap() as i64);
+                let field_idx = ir.const_i64(layout_idx.unwrap() as i64);
                 let get_fn = if is_string { "__struct_get_ptr" } else { "__struct_get_f64" };
                 if let Some(&get) = ctx.get_func(get_fn) {
-                    let val = call_rt(b, get, &[ptr, field_idx]);
-                    emit_value_constraints(b, val, is_string, &field_def.name, &field_def.constraints, ctx);
+                    let val = ir.call(get, &[ptr, field_idx]);
+                    emit_value_constraints(ir, val, is_string, &field_def.name, &field_def.constraints, ctx);
                 }
             }
         }
@@ -309,51 +312,51 @@ pub fn emit_struct_lit(b: &mut FunctionBuilder, name: &str, fields: &[(String, E
 }
 
 /// Emit a constraint violation trap: if cond is non-zero, print error and return default.
-fn emit_constraint_trap(b: &mut FunctionBuilder, cond: Value, field: &str, msg: &str, ctx: &EmitCtx) {
-    let trap_block = b.create_block();
-    let ok_block = b.create_block();
-    b.ins().brif(cond, trap_block, &[], ok_block, &[]);
+fn emit_constraint_trap(ir: &mut IrBuilder, cond: Value, field: &str, msg: &str, ctx: &EmitCtx) {
+    let trap_block = ir.create_block();
+    let ok_block = ir.create_block();
+    ir.brif(cond, trap_block, ok_block);
 
-    b.switch_to_block(trap_block);
-    b.seal_block(trap_block);
-    let err_msg = leak_cstr(b, &format!("{}: {}", field, msg));
+    ir.switch_to(trap_block);
+    ir.seal(trap_block);
+    let err_msg = ir.leak_cstr(&format!("{}: {}", field, msg));
     if let Some(&panic_fn) = ctx.get_func("__constraint_panic") {
-        call_void(b, panic_fn, &[err_msg]);
+        ir.call_void(panic_fn, &[err_msg]);
     }
-    let default = default_for_ir_type(b, ctx.return_type);
+    let default = roca_cranelift::helpers::default_for_ir_type(ir.raw(), ctx.return_type);
     if ctx.returns_err {
-        let err_tag = b.ins().iconst(types::I8, 1);
-        b.ins().return_(&[default, err_tag]);
+        let err_tag = ir.raw().ins().iconst(types::I8, 1);
+        ir.ret_with_err(default, err_tag);
     } else {
-        b.ins().return_(&[default]);
+        ir.ret(default);
     }
 
-    b.switch_to_block(ok_block);
-    b.seal_block(ok_block);
+    ir.switch_to(ok_block);
+    ir.seal(ok_block);
 }
 
 /// Construct an enum variant as a tagged struct.
-pub fn emit_enum_variant(b: &mut FunctionBuilder, variant: &str, args: &[Expr], ctx: &mut EmitCtx) -> Value {
+pub fn emit_enum_variant(ir: &mut IrBuilder, variant: &str, args: &[Expr], ctx: &mut EmitCtx) -> Value {
     let num_slots = 1 + args.len();
-    let num_slots_val = b.ins().iconst(types::I64, num_slots as i64);
+    let num_slots_val = ir.const_i64(num_slots as i64);
 
     let ptr = if let Some(&f) = ctx.get_func("__struct_alloc") {
-        call_rt(b, f, &[num_slots_val])
+        ir.call(f, &[num_slots_val])
     } else {
-        return b.ins().iconst(types::I64, 0);
+        return ir.null();
     };
 
-    let tag = leak_cstr(b, variant);
+    let tag = ir.leak_cstr(variant);
     let tag_str = if let Some(&f) = ctx.get_func("__string_new") {
-        call_rt(b, f, &[tag])
+        ir.call(f, &[tag])
     } else { tag };
-    let zero = b.ins().iconst(types::I64, 0);
-    emit_struct_set(b, ptr, zero, tag_str, ctx);
+    let zero = ir.null();
+    emit_struct_set(ir, ptr, zero, tag_str, ctx);
 
     for (i, arg) in args.iter().enumerate() {
-        let val = emit_expr(b, arg, ctx);
-        let idx = b.ins().iconst(types::I64, (i + 1) as i64);
-        emit_struct_set(b, ptr, idx, val, ctx);
+        let val = emit_expr(ir, arg, ctx);
+        let idx = ir.const_i64((i + 1) as i64);
+        emit_struct_set(ir, ptr, idx, val, ctx);
     }
     ptr
 }
@@ -362,9 +365,9 @@ pub fn emit_enum_variant(b: &mut FunctionBuilder, variant: &str, args: &[Expr], 
 /// If the crash chain includes Retry, wraps the call in a loop.
 /// `func_ref` and `arg_slots` allow re-calling the function on retry.
 pub fn emit_crash_call(
-    b: &mut FunctionBuilder,
-    func_ref: ir::FuncRef,
-    arg_slots: &[ir::StackSlot],
+    ir: &mut IrBuilder,
+    func_ref: FuncRef,
+    arg_slots: &[VarSlot],
     arg_types: &[ir::Type],
     handler: &CrashHandlerKind,
     ctx: &mut EmitCtx,
@@ -382,96 +385,98 @@ pub fn emit_crash_call(
     });
 
     // Make the initial call
-    let args: Vec<Value> = arg_slots.iter().zip(arg_types).map(|(s, t)| load_slot(b, *s, *t)).collect();
-    let call = b.ins().call(func_ref, &args);
-    let results = b.inst_results(call).to_vec();
+    let args: Vec<Value> = arg_slots.iter().zip(arg_types).map(|(s, t)| {
+        ir.raw().ins().stack_load(*t, s.0, 0)
+    }).collect();
+    let results = ir.call_multi(func_ref, &args);
     if results.len() < 2 {
-        return if results.is_empty() { b.ins().iconst(types::I64, 0) } else { results[0] };
+        return if results.is_empty() { ir.null() } else { results[0] };
     }
 
-    let result_type = b.func.dfg.value_type(results[0]);
-    let value_slot = alloc_slot(b, results[0]);
-    let err_slot = alloc_slot(b, results[1]);
+    let result_type = ir.value_ir_type(results[0]);
+    let value_slot = ir.alloc_var(results[0]);
+    let err_slot = ir.alloc_var(results[1]);
 
     if let Some((attempts, delay_ms)) = retry {
         // Retry loop: header checks counter, body re-calls and checks result
-        let header = b.create_block();
-        let body = b.create_block();
-        let done = b.create_block();
+        let header = ir.create_block();
+        let body = ir.create_block();
+        let done = ir.create_block();
 
         // Init counter, check first result
-        let counter_init = b.ins().iconst(types::I64, 1); // attempt 0 already done
-        let counter_slot = alloc_slot(b, counter_init);
-        let first_err = load_slot(b, err_slot, types::I8);
-        b.ins().brif(first_err, header, &[], done, &[]);
+        let counter_init = ir.const_i64(1); // attempt 0 already done
+        let counter_slot = ir.alloc_var(counter_init);
+        let first_err = ir.raw().ins().stack_load(types::I8, err_slot.0, 0);
+        ir.brif(first_err, header, done);
 
         // Header: check if more attempts remain
-        b.switch_to_block(header);
-        let counter = load_slot(b, counter_slot, types::I64);
-        let max = b.ins().iconst(types::I64, attempts as i64);
-        let has_more = b.ins().icmp(ir::condcodes::IntCC::SignedLessThan, counter, max);
-        b.ins().brif(has_more, body, &[], done, &[]);
+        ir.switch_to(header);
+        let counter = ir.raw().ins().stack_load(types::I64, counter_slot.0, 0);
+        let max = ir.const_i64(attempts as i64);
+        let has_more = ir.raw().ins().icmp(ir::condcodes::IntCC::SignedLessThan, counter, max);
+        ir.brif(has_more, body, done);
 
         // Body: sleep, re-call, increment counter
-        b.switch_to_block(body);
-        b.seal_block(body);
+        ir.switch_to(body);
+        ir.seal(body);
 
         if delay_ms > 0 {
             if let Some(&sleep_fn) = ctx.get_func("__sleep") {
-                let ms = b.ins().f64const(delay_ms as f64);
-                call_void(b, sleep_fn, &[ms]);
+                let ms = ir.const_number(delay_ms as f64);
+                ir.call_void(sleep_fn, &[ms]);
             }
         }
 
-        let retry_args: Vec<Value> = arg_slots.iter().zip(arg_types).map(|(s, t)| load_slot(b, *s, *t)).collect();
-        let retry_call = b.ins().call(func_ref, &retry_args);
-        let retry_results = b.inst_results(retry_call).to_vec();
-        b.ins().stack_store(retry_results[0], value_slot, 0);
-        b.ins().stack_store(retry_results[1], err_slot, 0);
+        let retry_args: Vec<Value> = arg_slots.iter().zip(arg_types).map(|(s, t)| {
+            ir.raw().ins().stack_load(*t, s.0, 0)
+        }).collect();
+        let retry_results = ir.call_multi(func_ref, &retry_args);
+        ir.raw().ins().stack_store(retry_results[0], value_slot.0, 0);
+        ir.raw().ins().stack_store(retry_results[1], err_slot.0, 0);
 
         // Increment counter
-        let cur = load_slot(b, counter_slot, types::I64);
-        let one = b.ins().iconst(types::I64, 1);
-        let next = b.ins().iadd(cur, one);
-        b.ins().stack_store(next, counter_slot, 0);
+        let cur = ir.raw().ins().stack_load(types::I64, counter_slot.0, 0);
+        let one = ir.const_i64(1);
+        let next = ir.iadd(cur, one);
+        ir.raw().ins().stack_store(next, counter_slot.0, 0);
 
         // Check result — success breaks, failure loops back to header
-        let retry_err = load_slot(b, err_slot, types::I8);
-        b.ins().brif(retry_err, header, &[], done, &[]);
+        let retry_err = ir.raw().ins().stack_load(types::I8, err_slot.0, 0);
+        ir.brif(retry_err, header, done);
 
-        b.seal_block(header); // sealed after back-edge from body
+        ir.seal(header); // sealed after back-edge from body
 
-        b.switch_to_block(done);
-        b.seal_block(done);
+        ir.switch_to(done);
+        ir.seal(done);
     }
 
     // After retry (or no retry): check final error state
-    let final_value = load_slot(b, value_slot, result_type);
-    let final_err = load_slot(b, err_slot, types::I8);
-    emit_crash_handler(b, final_value, final_err, handler, ctx)
+    let final_value = ir.raw().ins().stack_load(result_type, value_slot.0, 0);
+    let final_err = ir.raw().ins().stack_load(types::I8, err_slot.0, 0);
+    emit_crash_handler(ir, final_value, final_err, handler, ctx)
 }
 
 pub fn emit_crash_handler(
-    b: &mut FunctionBuilder,
+    ir: &mut IrBuilder,
     value: Value,
     err_tag: Value,
     handler: &CrashHandlerKind,
     ctx: &mut EmitCtx,
 ) -> Value {
-    let ok_block = b.create_block();
-    let err_block = b.create_block();
-    let merge = b.create_block();
-    let result_type = b.func.dfg.value_type(value);
-    b.append_block_param(merge, result_type);
+    let ok_block = ir.create_block();
+    let err_block = ir.create_block();
+    let merge = ir.create_block();
+    let result_type = ir.value_ir_type(value);
+    ir.append_block_param(merge, &roca_type_for_ir(result_type));
 
-    b.ins().brif(err_tag, err_block, &[], ok_block, &[]);
+    ir.brif(err_tag, err_block, ok_block);
 
-    b.switch_to_block(ok_block);
-    b.seal_block(ok_block);
-    b.ins().jump(merge, &[BlockArg::Value(value)]);
+    ir.switch_to(ok_block);
+    ir.seal(ok_block);
+    ir.jump_with(merge, value);
 
-    b.switch_to_block(err_block);
-    b.seal_block(err_block);
+    ir.switch_to(err_block);
+    ir.seal(err_block);
 
     let chain = match handler {
         CrashHandlerKind::Simple(chain) => chain.clone(),
@@ -484,50 +489,50 @@ pub fn emit_crash_handler(
     let chain: Vec<_> = chain.into_iter().filter(|s| !matches!(s, CrashStep::Retry { .. })).collect();
 
     let terminates = chain.iter().any(|s| matches!(s, CrashStep::Halt | CrashStep::Panic));
-    let err_result = emit_crash_chain(b, &chain, result_type, ctx);
+    let err_result = emit_crash_chain(ir, &chain, result_type, ctx);
 
     if !terminates {
-        b.ins().jump(merge, &[BlockArg::Value(err_result)]);
+        ir.jump_with(merge, err_result);
     }
 
-    b.switch_to_block(merge);
-    b.seal_block(merge);
-    b.block_params(merge)[0]
+    ir.switch_to(merge);
+    ir.seal(merge);
+    ir.block_param(merge, 0)
 }
 
 fn emit_crash_chain(
-    b: &mut FunctionBuilder,
+    ir: &mut IrBuilder,
     chain: &[CrashStep],
     result_type: ir::Type,
     ctx: &mut EmitCtx,
 ) -> Value {
-    let mut last_value = default_for_ir_type(b, result_type);
+    let mut last_value = roca_cranelift::helpers::default_for_ir_type(ir.raw(), result_type);
 
     for step in chain {
         match step {
             CrashStep::Log => {
-                let msg_val = leak_cstr(b, "error");
+                let msg_val = ir.leak_cstr("error");
                 if let Some(&f) = ctx.get_func("__print") {
-                    call_void(b, f, &[msg_val]);
+                    ir.call_void(f, &[msg_val]);
                 }
             }
             CrashStep::Halt => {
-                emit_scope_cleanup(b, ctx, None);
+                emit_scope_cleanup(ir, ctx, None);
                 if ctx.returns_err {
-                    let err = b.ins().iconst(types::I8, 1);
-                    b.ins().return_(&[last_value, err]);
+                    let err = ir.raw().ins().iconst(types::I8, 1);
+                    ir.ret_with_err(last_value, err);
                 } else {
-                    b.ins().return_(&[last_value]);
+                    ir.ret(last_value);
                 }
                 return last_value;
             }
             CrashStep::Panic => {
-                b.ins().trap(ir::TrapCode::unwrap_user(1));
+                ir.trap(1);
                 return last_value;
             }
             CrashStep::Skip => {}
             CrashStep::Fallback(expr) => {
-                last_value = emit_expr(b, expr, ctx);
+                last_value = emit_expr(ir, expr, ctx);
             }
             CrashStep::Retry { attempts, delay_ms: _ } => {
                 let _ = attempts;
@@ -539,85 +544,85 @@ fn emit_crash_chain(
 
 /// Inline map/filter: emit a loop that applies the closure body to each element.
 fn emit_inline_map_filter(
-    b: &mut FunctionBuilder,
+    ir: &mut IrBuilder,
     target: &Expr,
     method: &str,
     params: &[String],
     body: &Expr,
     ctx: &mut EmitCtx,
 ) -> Value {
-    let arr = emit_expr(b, target, ctx);
+    let arr = emit_expr(ir, target, ctx);
     let is_filter = method == "filter";
 
     let result_arr = if let Some(&f) = ctx.get_func("__array_new") {
-        call_rt(b, f, &[])
-    } else { return b.ins().iconst(types::I64, 0); };
+        ir.call(f, &[])
+    } else { return ir.null(); };
 
     let len = if let Some(&f) = ctx.get_func("__array_len") {
-        call_rt(b, f, &[arr])
+        ir.call(f, &[arr])
     } else { return result_arr; };
-    let len_slot = alloc_slot(b, len);
-    let arr_slot = alloc_slot(b, arr);
-    let result_slot = alloc_slot(b, result_arr);
+    let len_slot = ir.alloc_var(len);
+    let arr_slot = ir.alloc_var(arr);
+    let result_slot = ir.alloc_var(result_arr);
 
-    let zero = b.ins().iconst(types::I64, 0);
-    let idx_slot = alloc_slot(b, zero);
-    let header = b.create_block();
-    let body_block = b.create_block();
-    let exit = b.create_block();
+    let zero = ir.null();
+    let idx_slot = ir.alloc_var(zero);
+    let header = ir.create_block();
+    let body_block = ir.create_block();
+    let exit = ir.create_block();
 
-    b.ins().jump(header, &[]);
-    b.switch_to_block(header);
-    let idx = load_slot(b, idx_slot, types::I64);
-    let len_val = load_slot(b, len_slot, types::I64);
-    let cond = b.ins().icmp(ir::condcodes::IntCC::SignedLessThan, idx, len_val);
-    b.ins().brif(cond, body_block, &[], exit, &[]);
+    ir.jump(header);
+    ir.switch_to(header);
+    let idx = ir.raw().ins().stack_load(types::I64, idx_slot.0, 0);
+    let len_val = ir.raw().ins().stack_load(types::I64, len_slot.0, 0);
+    let cond = ir.raw().ins().icmp(ir::condcodes::IntCC::SignedLessThan, idx, len_val);
+    ir.brif(cond, body_block, exit);
 
-    b.switch_to_block(body_block);
-    b.seal_block(body_block);
+    ir.switch_to(body_block);
+    ir.seal(body_block);
 
-    let cur_idx = load_slot(b, idx_slot, types::I64);
-    let cur_arr = load_slot(b, arr_slot, types::I64);
+    let cur_idx = ir.raw().ins().stack_load(types::I64, idx_slot.0, 0);
+    let cur_arr = ir.raw().ins().stack_load(types::I64, arr_slot.0, 0);
     let elem = if let Some(&f) = ctx.get_func("__array_get_f64") {
-        call_rt(b, f, &[cur_arr, cur_idx])
-    } else { b.ins().f64const(0.0) };
+        ir.call(f, &[cur_arr, cur_idx])
+    } else { ir.const_number(0.0) };
 
     let param_name = params.first().cloned().unwrap_or_default();
-    let elem_slot = alloc_slot(b, elem);
-    ctx.set_var_kind(param_name, elem_slot, types::F64, ValKind::Number);
+    let elem_slot = ir.alloc_var(elem);
+    ctx.set_var_kind(param_name, elem_slot.0, types::F64, RocaType::Number);
 
-    let result = emit_expr(b, body, ctx);
+    let result = emit_expr(ir, body, ctx);
 
     if is_filter {
-        let then_push = b.create_block();
-        let after_push = b.create_block();
-        b.ins().brif(result, then_push, &[], after_push, &[]);
+        let then_push = ir.create_block();
+        let after_push = ir.create_block();
+        ir.brif(result, then_push, after_push);
 
-        b.switch_to_block(then_push);
-        b.seal_block(then_push);
-        let push_elem = load_slot(b, elem_slot, types::F64);
-        let res_arr = load_slot(b, result_slot, types::I64);
+        ir.switch_to(then_push);
+        ir.seal(then_push);
+        let push_elem = ir.raw().ins().stack_load(types::F64, elem_slot.0, 0);
+        let res_arr = ir.raw().ins().stack_load(types::I64, result_slot.0, 0);
         if let Some(&f) = ctx.get_func("__array_push_f64") {
-            call_void(b, f, &[res_arr, push_elem]);
+            ir.call_void(f, &[res_arr, push_elem]);
         }
-        b.ins().jump(after_push, &[]);
+        ir.jump(after_push);
 
-        b.switch_to_block(after_push);
-        b.seal_block(after_push);
+        ir.switch_to(after_push);
+        ir.seal(after_push);
     } else {
-        let res_arr = load_slot(b, result_slot, types::I64);
-        emit_array_push(b, res_arr, result, ctx);
+        let res_arr = ir.raw().ins().stack_load(types::I64, result_slot.0, 0);
+        emit_array_push(ir, res_arr, result, ctx);
     }
 
-    let next_idx = load_slot(b, idx_slot, types::I64);
-    let one = b.ins().iconst(types::I64, 1);
-    let incremented = b.ins().iadd(next_idx, one);
-    b.ins().stack_store(incremented, idx_slot, 0);
-    b.ins().jump(header, &[]);
-    b.seal_block(header);
+    let next_idx = ir.raw().ins().stack_load(types::I64, idx_slot.0, 0);
+    let one = ir.const_i64(1);
+    let incremented = ir.iadd(next_idx, one);
+    ir.raw().ins().stack_store(incremented, idx_slot.0, 0);
+    ir.jump(header);
+    ir.seal(header);
 
-    b.switch_to_block(exit);
-    b.seal_block(exit);
+    ir.switch_to(exit);
+    ir.seal(exit);
 
-    load_slot(b, result_slot, types::I64)
+    ir.raw().ins().stack_load(types::I64, result_slot.0, 0)
 }

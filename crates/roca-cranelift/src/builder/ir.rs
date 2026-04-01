@@ -6,13 +6,13 @@ use cranelift_frontend::FunctionBuilder;
 use roca_types::RocaType;
 use crate::cranelift_type::CraneliftType;
 
-/// Opaque block handle — hides cranelift_codegen::ir::Block.
+/// Block handle — wraps cranelift_codegen::ir::Block.
 #[derive(Clone, Copy, Debug)]
-pub struct BlockId(pub(crate) Block);
+pub struct BlockId(pub Block);
 
-/// Opaque stack variable handle — hides cranelift_codegen::ir::StackSlot.
+/// Stack variable handle — wraps cranelift_codegen::ir::StackSlot.
 #[derive(Clone, Copy, Debug)]
-pub struct VarSlot(pub(crate) StackSlot);
+pub struct VarSlot(pub StackSlot);
 
 /// Roca-level IR builder. Wraps Cranelift FunctionBuilder with domain methods.
 ///

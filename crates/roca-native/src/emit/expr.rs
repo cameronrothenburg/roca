@@ -1,120 +1,116 @@
 //! Expression emission — Roca expressions to Cranelift IR values.
 
-use cranelift_codegen::ir::{self, types, AbiParam, Value, BlockArg, InstBuilder};
-use cranelift_frontend::FunctionBuilder;
-
+use cranelift_codegen::ir::InstBuilder;
 use roca_ast::{self as roca, Expr, BinOp, StringPart};
-use crate::helpers::{
-    fcmp_to_i64, icmp_to_i64, call_rt, call_void, alloc_slot, load_slot,
-    bool_and, bool_or, ensure_i64, leak_cstr,
-};
-use super::context::{EmitCtx, ValKind};
+use roca_types::RocaType;
+use roca_cranelift::builder::{IrBuilder, Value, FuncRef};
+use roca_cranelift::context::{EmitCtx, ValKind};
+use roca_cranelift::cranelift_type::CraneliftType;
 use super::helpers::{infer_kind, emit_length, target_kind, emit_array_push};
 
-pub fn emit_expr(b: &mut FunctionBuilder, expr: &Expr, ctx: &mut EmitCtx) -> Value {
+pub fn emit_expr(ir: &mut IrBuilder, expr: &Expr, ctx: &mut EmitCtx) -> Value {
     match expr {
-        Expr::Number(n) => b.ins().f64const(*n),
-        Expr::Bool(v) => b.ins().iconst(types::I8, if *v { 1 } else { 0 }),
+        Expr::Number(n) => ir.const_number(*n),
+        Expr::Bool(v) => ir.const_bool(*v),
         Expr::String(s) => {
-            let static_ptr = leak_cstr(b, s);
+            let static_ptr = ir.leak_cstr(s);
             if let Some(&f) = ctx.get_func("__string_new") {
-                call_rt(b, f, &[static_ptr])
+                ir.call(f, &[static_ptr])
             } else {
                 static_ptr
             }
         }
         Expr::Ident(name) => {
             if let Some(var) = ctx.get_var(name) {
-                load_slot(b, var.slot, var.cranelift_type)
+                ir.raw().ins().stack_load(var.cranelift_type, var.slot, 0)
             } else {
-                b.ins().iconst(types::I64, 0)
+                ir.null()
             }
         }
         Expr::BinOp { left, op, right } => {
             let l_is_temp_string = matches!(op, BinOp::Add)
                 && !matches!(left.as_ref(), Expr::Ident(_) | Expr::Number(_) | Expr::Bool(_) | Expr::Null)
-                && infer_kind(left, ctx) == ValKind::String;
-            let l = emit_expr(b, left, ctx);
-            let r = emit_expr(b, right, ctx);
-            let result = emit_binop(b, op, l, r, ctx);
+                && infer_kind(left, ctx) == RocaType::String;
+            let l = emit_expr(ir, left, ctx);
+            let r = emit_expr(ir, right, ctx);
+            let result = emit_binop(ir, op, l, r, ctx);
             if l_is_temp_string {
                 if let Some(&f) = ctx.get_func("__rc_release") {
-                    call_void(b, f, &[l]);
+                    ir.call_void(f, &[l]);
                 }
             }
             result
         }
-        Expr::StructLit { name, fields } => super::methods::emit_struct_lit(b, name, fields, ctx),
-        Expr::Call { target, args } => emit_call(b, target, args, ctx),
-        Expr::Array(elements) => emit_array_literal(b, elements, ctx),
-        Expr::Index { target, index } => emit_index(b, target, index, ctx),
+        Expr::StructLit { name, fields } => super::methods::emit_struct_lit(ir, name, fields, ctx),
+        Expr::Call { target, args } => emit_call(ir, target, args, ctx),
+        Expr::Array(elements) => emit_array_literal(ir, elements, ctx),
+        Expr::Index { target, index } => emit_index(ir, target, index, ctx),
         Expr::Not(inner) => {
-            let val = emit_expr(b, inner, ctx);
-            let zero = b.ins().iconst(types::I64, 0);
-            icmp_to_i64(b, ir::condcodes::IntCC::Equal, val, zero)
+            let val = emit_expr(ir, inner, ctx);
+            let zero = ir.null();
+            ir.i_eq(val, zero)
         }
-        Expr::Closure { params, body } => emit_closure(b, params, body, ctx),
+        Expr::Closure { params, body } => emit_closure(ir, params, body, ctx),
         Expr::SelfRef => {
             if let Some(var) = ctx.get_var("self") {
-                load_slot(b, var.slot, var.cranelift_type)
+                ir.raw().ins().stack_load(var.cranelift_type, var.slot, 0)
             } else {
-                b.ins().iconst(types::I64, 0)
+                ir.null()
             }
         }
-        Expr::Null => b.ins().iconst(types::I64, 0),
-        Expr::StringInterp(parts) => emit_string_interp(b, parts, ctx),
-        Expr::Match { value, arms } => emit_match(b, value, arms, ctx),
-        Expr::FieldAccess { target, field } => emit_field_access(b, target, field, ctx),
+        Expr::Null => ir.null(),
+        Expr::StringInterp(parts) => emit_string_interp(ir, parts, ctx),
+        Expr::Match { value, arms } => emit_match(ir, value, arms, ctx),
+        Expr::FieldAccess { target, field } => emit_field_access(ir, target, field, ctx),
         Expr::EnumVariant { enum_name: _, variant, args } => {
-            super::methods::emit_enum_variant(b, variant, args, ctx)
+            super::methods::emit_enum_variant(ir, variant, args, ctx)
         }
-        Expr::Await(inner) => emit_expr(b, inner, ctx),
+        Expr::Await(inner) => emit_expr(ir, inner, ctx),
     }
 }
 
-fn emit_binop(b: &mut FunctionBuilder, op: &BinOp, l: Value, r: Value, ctx: &mut EmitCtx) -> Value {
-    let is_float = b.func.dfg.value_type(l) == types::F64;
-    use ir::condcodes::FloatCC;
+fn emit_binop(ir: &mut IrBuilder, op: &BinOp, l: Value, r: Value, ctx: &mut EmitCtx) -> Value {
+    let is_float = ir.is_number(l);
 
     match op {
-        BinOp::Add if is_float => b.ins().fadd(l, r),
+        BinOp::Add if is_float => ir.add(l, r),
         BinOp::Add => {
-            if let Some(f) = ctx.get_func("__string_concat") { call_rt(b, *f, &[l, r]) }
-            else { b.ins().iadd(l, r) }
+            if let Some(f) = ctx.get_func("__string_concat") { ir.call(*f, &[l, r]) }
+            else { ir.iadd(l, r) }
         }
-        BinOp::Sub => b.ins().fsub(l, r),
-        BinOp::Mul => b.ins().fmul(l, r),
-        BinOp::Div => b.ins().fdiv(l, r),
-        BinOp::Eq if is_float => fcmp_to_i64(b, FloatCC::Equal, l, r),
+        BinOp::Sub => ir.sub(l, r),
+        BinOp::Mul => ir.mul(l, r),
+        BinOp::Div => ir.div(l, r),
+        BinOp::Eq if is_float => ir.f_eq(l, r),
         BinOp::Eq => {
             if let Some(f) = ctx.get_func("__string_eq") {
-                let result = call_rt(b, *f, &[l, r]);
-                b.ins().uextend(types::I64, result)
+                let result = ir.call(*f, &[l, r]);
+                ir.extend_bool(result)
             } else {
-                icmp_to_i64(b, ir::condcodes::IntCC::Equal, l, r)
+                ir.i_eq(l, r)
             }
         }
-        BinOp::Neq if is_float => fcmp_to_i64(b, FloatCC::NotEqual, l, r),
+        BinOp::Neq if is_float => ir.f_ne(l, r),
         BinOp::Neq => {
             if let Some(f) = ctx.get_func("__string_eq") {
-                let eq = call_rt(b, *f, &[l, r]);
-                let ext = b.ins().uextend(types::I64, eq);
-                let one = b.ins().iconst(types::I64, 1);
-                b.ins().isub(one, ext)
+                let eq = ir.call(*f, &[l, r]);
+                let ext = ir.extend_bool(eq);
+                let one = ir.const_i64(1);
+                ir.isub(one, ext)
             } else {
-                icmp_to_i64(b, ir::condcodes::IntCC::NotEqual, l, r)
+                ir.i_ne(l, r)
             }
         }
-        BinOp::Lt => fcmp_to_i64(b, FloatCC::LessThan, l, r),
-        BinOp::Gt => fcmp_to_i64(b, FloatCC::GreaterThan, l, r),
-        BinOp::Lte => fcmp_to_i64(b, FloatCC::LessThanOrEqual, l, r),
-        BinOp::Gte => fcmp_to_i64(b, FloatCC::GreaterThanOrEqual, l, r),
-        BinOp::And => bool_and(b, l, r),
-        BinOp::Or => bool_or(b, l, r),
+        BinOp::Lt => ir.f_lt(l, r),
+        BinOp::Gt => ir.f_gt(l, r),
+        BinOp::Lte => ir.f_le(l, r),
+        BinOp::Gte => ir.f_ge(l, r),
+        BinOp::And => ir.bool_and(l, r),
+        BinOp::Or => ir.bool_or(l, r),
     }
 }
 
-fn emit_string_interp(b: &mut FunctionBuilder, parts: &[StringPart], ctx: &mut EmitCtx) -> Value {
+fn emit_string_interp(ir: &mut IrBuilder, parts: &[StringPart], ctx: &mut EmitCtx) -> Value {
     let concat = ctx.get_func("__string_concat").copied();
     let to_str = ctx.get_func("__string_from_f64").copied();
     let string_new = ctx.get_func("__string_new").copied();
@@ -123,13 +119,13 @@ fn emit_string_interp(b: &mut FunctionBuilder, parts: &[StringPart], ctx: &mut E
     for part in parts {
         let val = match part {
             StringPart::Literal(s) => {
-                let static_ptr = leak_cstr(b, s);
-                if let Some(f) = string_new { call_rt(b, f, &[static_ptr]) } else { static_ptr }
+                let static_ptr = ir.leak_cstr(s);
+                if let Some(f) = string_new { ir.call(f, &[static_ptr]) } else { static_ptr }
             }
             StringPart::Expr(expr) => {
-                let v = emit_expr(b, expr, ctx);
-                if b.func.dfg.value_type(v) == types::F64 {
-                    if let Some(f) = to_str { call_rt(b, f, &[v]) } else { v }
+                let v = emit_expr(ir, expr, ctx);
+                if ir.is_number(v) {
+                    if let Some(f) = to_str { ir.call(f, &[v]) } else { v }
                 } else {
                     v
                 }
@@ -138,127 +134,125 @@ fn emit_string_interp(b: &mut FunctionBuilder, parts: &[StringPart], ctx: &mut E
         result = Some(match result {
             None => val,
             Some(acc) => {
-                if let Some(f) = concat { call_rt(b, f, &[acc, val]) } else { val }
+                if let Some(f) = concat { ir.call(f, &[acc, val]) } else { val }
             }
         });
     }
-    result.unwrap_or_else(|| b.ins().iconst(types::I64, 0))
+    result.unwrap_or_else(|| ir.null())
 }
 
-fn emit_match(b: &mut FunctionBuilder, value: &Expr, arms: &[roca::MatchArm], ctx: &mut EmitCtx) -> Value {
-    let scrutinee = emit_expr(b, value, ctx);
-    let is_float = b.func.dfg.value_type(scrutinee) == types::F64;
+fn emit_match(ir: &mut IrBuilder, value: &Expr, arms: &[roca::MatchArm], ctx: &mut EmitCtx) -> Value {
+    let scrutinee = emit_expr(ir, value, ctx);
+    let is_float = ir.is_number(scrutinee);
 
     let default_arm = arms.iter().find(|a| a.pattern.is_none());
-    let result_type = if let Some(arm) = default_arm {
+    let result_roca_type = if let Some(arm) = default_arm {
         let kind = infer_kind(&arm.value, ctx);
-        if kind == ValKind::Number { types::F64 } else { types::I64 }
+        if kind == RocaType::Number { RocaType::Number } else { RocaType::Unknown }
     } else if let Some(first) = arms.first() {
         let kind = infer_kind(&first.value, ctx);
-        if kind == ValKind::Number { types::F64 } else { types::I64 }
+        if kind == RocaType::Number { RocaType::Number } else { RocaType::Unknown }
     } else if is_float {
-        types::F64
+        RocaType::Number
     } else {
-        types::I64
+        RocaType::Unknown
     };
 
-    let merge = b.create_block();
-    b.append_block_param(merge, result_type);
+    let merge = ir.create_block();
+    ir.append_block_param(merge, &result_roca_type);
 
     let mut remaining_arms: Vec<_> = arms.iter().collect();
-    let default_arm = remaining_arms.iter().position(|a| a.pattern.is_none());
-    let default = default_arm.map(|i| remaining_arms.remove(i));
+    let default_pos = remaining_arms.iter().position(|a| a.pattern.is_none());
+    let default = default_pos.map(|i| remaining_arms.remove(i));
 
-    let scrutinee_slot = alloc_slot(b, scrutinee);
+    let scrutinee_slot = ir.alloc_var(scrutinee);
+    let scr_type = if is_float { RocaType::Number } else { RocaType::Unknown };
 
     for arm in &remaining_arms {
         match &arm.pattern {
             Some(roca::MatchPattern::Value(pattern)) => {
-                let scr = load_slot(b, scrutinee_slot, if is_float { types::F64 } else { types::I64 });
-                let pat_val = emit_expr(b, pattern, ctx);
+                let scr = ir.load_var(scrutinee_slot, &scr_type);
+                let pat_val = emit_expr(ir, pattern, ctx);
                 let cond = if is_float {
-                    let cmp = b.ins().fcmp(ir::condcodes::FloatCC::Equal, scr, pat_val);
-                    b.ins().uextend(types::I64, cmp)
+                    ir.f_eq(scr, pat_val)
                 } else if let Some(f) = ctx.get_func("__string_eq") {
-                    let eq = call_rt(b, *f, &[scr, pat_val]);
-                    b.ins().uextend(types::I64, eq)
+                    let eq = ir.call(*f, &[scr, pat_val]);
+                    ir.extend_bool(eq)
                 } else {
-                    icmp_to_i64(b, ir::condcodes::IntCC::Equal, scr, pat_val)
+                    ir.i_eq(scr, pat_val)
                 };
 
-                let then_block = b.create_block();
-                let next_block = b.create_block();
-                b.ins().brif(cond, then_block, &[], next_block, &[]);
+                let then_block = ir.create_block();
+                let next_block = ir.create_block();
+                ir.brif(cond, then_block, next_block);
 
-                b.switch_to_block(then_block);
-                b.seal_block(then_block);
-                let result = emit_expr(b, &arm.value, ctx);
-                b.ins().jump(merge, &[BlockArg::Value(result)]);
+                ir.switch_to(then_block);
+                ir.seal(then_block);
+                let result = emit_expr(ir, &arm.value, ctx);
+                ir.jump_with(merge, result);
 
-                b.switch_to_block(next_block);
-                b.seal_block(next_block);
+                ir.switch_to(next_block);
+                ir.seal(next_block);
             }
             Some(roca::MatchPattern::Variant { variant, bindings, .. }) => {
-                let scr = load_slot(b, scrutinee_slot, types::I64);
+                let scr = ir.load_var(scrutinee_slot, &RocaType::Unknown);
 
-                let zero_idx = b.ins().iconst(types::I64, 0);
+                let zero_idx = ir.const_i64(0);
                 let tag_ptr = if let Some(&f) = ctx.get_func("__struct_get_ptr") {
-                    call_rt(b, f, &[scr, zero_idx])
-                } else { b.ins().iconst(types::I64, 0) };
+                    ir.call(f, &[scr, zero_idx])
+                } else { ir.null() };
 
-                let variant_cstr = leak_cstr(b, variant);
+                let variant_cstr = ir.leak_cstr(variant);
                 let cond = if let Some(&f) = ctx.get_func("__string_eq") {
-                    let eq = call_rt(b, f, &[tag_ptr, variant_cstr]);
-                    b.ins().uextend(types::I64, eq)
-                } else { b.ins().iconst(types::I64, 0) };
+                    let eq = ir.call(f, &[tag_ptr, variant_cstr]);
+                    ir.extend_bool(eq)
+                } else { ir.null() };
 
-                let then_block = b.create_block();
-                let next_block = b.create_block();
-                b.ins().brif(cond, then_block, &[], next_block, &[]);
+                let then_block = ir.create_block();
+                let next_block = ir.create_block();
+                ir.brif(cond, then_block, next_block);
 
-                b.switch_to_block(then_block);
-                b.seal_block(then_block);
+                ir.switch_to(then_block);
+                ir.seal(then_block);
 
-                let scr2 = load_slot(b, scrutinee_slot, types::I64);
+                let scr2 = ir.load_var(scrutinee_slot, &RocaType::Unknown);
                 for (i, binding) in bindings.iter().enumerate() {
-                    let field_idx = b.ins().iconst(types::I64, (i + 1) as i64);
+                    let field_idx = ir.const_i64((i + 1) as i64);
                     let val = if let Some(&f) = ctx.get_func("__struct_get_f64") {
-                        call_rt(b, f, &[scr2, field_idx])
-                    } else { b.ins().f64const(0.0) };
-                    let slot = alloc_slot(b, val);
-                    ctx.set_var_kind(binding.clone(), slot, types::F64, ValKind::Number);
+                        ir.call(f, &[scr2, field_idx])
+                    } else { ir.const_number(0.0) };
+                    let slot = ir.alloc_var(val);
+                    ctx.set_var_kind(binding.clone(), slot.0, roca_cranelift::cranelift_type::CraneliftType::to_cranelift(&RocaType::Number), RocaType::Number);
                 }
 
-                let result = emit_expr(b, &arm.value, ctx);
-                b.ins().jump(merge, &[BlockArg::Value(result)]);
+                let result = emit_expr(ir, &arm.value, ctx);
+                ir.jump_with(merge, result);
 
-                b.switch_to_block(next_block);
-                b.seal_block(next_block);
+                ir.switch_to(next_block);
+                ir.seal(next_block);
             }
             None => {}
         }
     }
 
     let default_val = if let Some(arm) = default {
-        emit_expr(b, &arm.value, ctx)
-    } else if is_float {
-        b.ins().f64const(0.0)
+        emit_expr(ir, &arm.value, ctx)
     } else {
-        b.ins().iconst(types::I64, 0)
+        ir.default_for(&result_roca_type)
     };
-    b.ins().jump(merge, &[BlockArg::Value(default_val)]);
+    ir.jump_with(merge, default_val);
 
-    b.switch_to_block(merge);
-    b.seal_block(merge);
-    b.block_params(merge)[0]
+    ir.switch_to(merge);
+    ir.seal(merge);
+    ir.block_param(merge, 0)
 }
 
-fn emit_field_access(b: &mut FunctionBuilder, target: &Expr, field: &str, ctx: &mut EmitCtx) -> Value {
+fn emit_field_access(ir: &mut IrBuilder, target: &Expr, field: &str, ctx: &mut EmitCtx) -> Value {
     let kind = target_kind(target, ctx);
 
     if let Expr::Ident(name) = target {
         if ctx.enum_variants.get(name).map_or(false, |vs| vs.contains(&field.to_string())) {
-            return super::methods::emit_enum_variant(b, field, &[], ctx);
+            return super::methods::emit_enum_variant(ir, field, &[], ctx);
         }
     }
 
@@ -272,117 +266,103 @@ fn emit_field_access(b: &mut FunctionBuilder, target: &Expr, field: &str, ctx: &
             if let Some(layout) = ctx.struct_layouts.get(&struct_name) {
                 if let Some(idx) = layout.field_index(field) {
                     let field_kind = layout.field_kind(field);
-                    let obj = emit_expr(b, target, ctx);
-                    let idx_val = b.ins().iconst(types::I64, idx as i64);
-                    return match field_kind {
-                        ValKind::Number => {
-                            if let Some(f) = ctx.get_func("__struct_get_f64") { call_rt(b, *f, &[obj, idx_val]) }
-                            else { b.ins().f64const(0.0) }
-                        }
-                        _ => {
-                            if let Some(f) = ctx.get_func("__struct_get_ptr") { call_rt(b, *f, &[obj, idx_val]) }
-                            else { b.ins().iconst(types::I64, 0) }
-                        }
+                    let obj = emit_expr(ir, target, ctx);
+                    let idx_val = ir.const_i64(idx as i64);
+                    return if field_kind == RocaType::Number {
+                        if let Some(f) = ctx.get_func("__struct_get_f64") { ir.call(*f, &[obj, idx_val]) }
+                        else { ir.const_number(0.0) }
+                    } else {
+                        if let Some(f) = ctx.get_func("__struct_get_ptr") { ir.call(*f, &[obj, idx_val]) }
+                        else { ir.null() }
                     };
                 }
             }
         }
     }
 
-    let obj = emit_expr(b, target, ctx);
+    let obj = emit_expr(ir, target, ctx);
     match field {
-        "length" | "len" => emit_length(b, obj, kind, ctx),
+        "length" | "len" => emit_length(ir, obj, kind, ctx),
         _ => obj,
     }
 }
 
-fn emit_array_literal(b: &mut FunctionBuilder, elements: &[Expr], ctx: &mut EmitCtx) -> Value {
+fn emit_array_literal(ir: &mut IrBuilder, elements: &[Expr], ctx: &mut EmitCtx) -> Value {
     let arr = if let Some(f) = ctx.get_func("__array_new") {
-        call_rt(b, *f, &[])
+        ir.call(*f, &[])
     } else {
-        return b.ins().iconst(types::I64, 0);
+        return ir.null();
     };
 
     for elem in elements {
-        let val = emit_expr(b, elem, ctx);
-        emit_array_push(b, arr, val, ctx);
+        let val = emit_expr(ir, elem, ctx);
+        emit_array_push(ir, arr, val, ctx);
     }
     arr
 }
 
-fn emit_index(b: &mut FunctionBuilder, target: &Expr, index: &Expr, ctx: &mut EmitCtx) -> Value {
-    let arr = emit_expr(b, target, ctx);
-    let idx = emit_expr(b, index, ctx);
-    let idx_i64 = ensure_i64(b, idx);
+fn emit_index(ir: &mut IrBuilder, target: &Expr, index: &Expr, ctx: &mut EmitCtx) -> Value {
+    let arr = emit_expr(ir, target, ctx);
+    let idx = emit_expr(ir, index, ctx);
+    let idx_i64 = ir.to_i64(idx);
     if let Some(f) = ctx.get_func("__array_get_f64") {
-        call_rt(b, *f, &[arr, idx_i64])
+        ir.call(*f, &[arr, idx_i64])
     } else {
-        b.ins().f64const(0.0)
+        ir.const_number(0.0)
     }
 }
 
-fn emit_call(b: &mut FunctionBuilder, target: &Expr, args: &[Expr], ctx: &mut EmitCtx) -> Value {
+fn emit_call(ir: &mut IrBuilder, target: &Expr, args: &[Expr], ctx: &mut EmitCtx) -> Value {
     if let Expr::FieldAccess { target: obj, field } = target {
-        return super::methods::emit_method_call(b, obj, field, args, ctx);
+        return super::methods::emit_method_call(ir, obj, field, args, ctx);
     }
 
     if let Expr::Ident(name) = target {
         if name == "log" {
             if let Some(arg) = args.first() {
-                let val = emit_expr(b, arg, ctx);
-                let ty = b.func.dfg.value_type(val);
-                if ty == types::F64 {
-                    if let Some(&f) = ctx.get_func("__print_f64") { call_void(b, f, &[val]); }
-                } else if ty == types::I8 {
-                    if let Some(&f) = ctx.get_func("__print_bool") { call_void(b, f, &[val]); }
+                let val = emit_expr(ir, arg, ctx);
+                if ir.is_number(val) {
+                    if let Some(&f) = ctx.get_func("__print_f64") { ir.call_void(f, &[val]); }
+                } else if ir.value_ir_type(val) == cranelift_codegen::ir::types::I8 {
+                    if let Some(&f) = ctx.get_func("__print_bool") { ir.call_void(f, &[val]); }
                 } else {
-                    if let Some(&f) = ctx.get_func("__print") { call_void(b, f, &[val]); }
+                    if let Some(&f) = ctx.get_func("__print") { ir.call_void(f, &[val]); }
                 }
             }
-            return b.ins().iconst(types::I8, 0);
+            return ir.const_bool(false);
         }
         if let Some(&func_ref) = ctx.get_func(name) {
-            let arg_vals: Vec<Value> = args.iter().map(|a| emit_expr(b, a, ctx)).collect();
+            let arg_vals: Vec<Value> = args.iter().map(|a| emit_expr(ir, a, ctx)).collect();
 
             if let Some(handler) = ctx.crash_handlers.get(name).cloned() {
-                let arg_slots: Vec<_> = arg_vals.iter().map(|v| alloc_slot(b, *v)).collect();
-                let arg_types: Vec<_> = arg_vals.iter().map(|v| b.func.dfg.value_type(*v)).collect();
-                return super::methods::emit_crash_call(b, func_ref, &arg_slots, &arg_types, &handler, ctx);
+                let arg_slots: Vec<_> = arg_vals.iter().map(|v| ir.alloc_var(*v)).collect();
+                let arg_types: Vec<_> = arg_vals.iter().map(|v| ir.value_ir_type(*v)).collect();
+                return super::methods::emit_crash_call(ir, func_ref, &arg_slots, &arg_types, &handler, ctx);
             }
 
-            let call = b.ins().call(func_ref, &arg_vals);
-            let results = b.inst_results(call).to_vec();
-            if results.len() >= 2 { return results[0]; }
+            let results = ir.call_multi(func_ref, &arg_vals);
             if !results.is_empty() { return results[0]; }
         }
 
         if let Some(var) = ctx.get_var(name) {
-            if var.cranelift_type == types::I64 {
-                let func_ptr = load_slot(b, var.slot, types::I64);
-                let mut sig = b.func.signature.clone();
-                sig.params.clear();
-                sig.returns.clear();
-                for _ in args {
-                    sig.params.push(AbiParam::new(types::F64));
-                }
-                sig.returns.push(AbiParam::new(types::F64));
-                let sig_ref = b.import_signature(sig);
-                let arg_vals: Vec<Value> = args.iter().map(|a| emit_expr(b, a, ctx)).collect();
-                let call = b.ins().call_indirect(sig_ref, func_ptr, &arg_vals);
-                let results = b.inst_results(call);
+            if var.cranelift_type == cranelift_codegen::ir::types::I64 {
+                let func_ptr = ir.raw().ins().stack_load(cranelift_codegen::ir::types::I64, var.slot, 0);
+                let sig_ref = ir.closure_signature(args.len());
+                let arg_vals: Vec<Value> = args.iter().map(|a| emit_expr(ir, a, ctx)).collect();
+                let results = ir.call_indirect(sig_ref, func_ptr, &arg_vals);
                 if !results.is_empty() { return results[0]; }
             }
         }
     }
-    b.ins().iconst(types::I64, 0)
+    ir.null()
 }
 
-fn emit_closure(b: &mut FunctionBuilder, params: &[String], body: &Expr, ctx: &mut EmitCtx) -> Value {
+fn emit_closure(ir: &mut IrBuilder, params: &[String], body: &Expr, ctx: &mut EmitCtx) -> Value {
     let closure_name = format!("__closure_{}_{}", params.len(), closure_hash(params, body));
     if let Some(&func_ref) = ctx.get_func(&closure_name) {
-        return b.ins().func_addr(types::I64, func_ref);
+        return ir.func_addr(func_ref);
     }
-    b.ins().iconst(types::I64, 0)
+    ir.null()
 }
 
 /// Simple hash for identifying closures by their AST structure
