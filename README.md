@@ -1,5 +1,7 @@
 # Roca
 
+[![CodeRabbit Pull Request Reviews](https://img.shields.io/coderabbit/prs/github/cameronrothenburg/roca?utm_source=oss&utm_medium=github&utm_campaign=cameronrothenburg%2Froca&labelColor=171717&color=FF570A&link=https%3A%2F%2Fcoderabbit.ai&label=CodeRabbit+Reviews)](https://coderabbit.ai)
+
 *Roca -- Spanish for rock, stone, cliff. Firme como una roca -- as solid as a rock.*
 
 A contractual language that compiles to JavaScript and native machine code. A language for the AI era.
