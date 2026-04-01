@@ -10,7 +10,7 @@ use roca_cranelift::api::Function;
 use roca_cranelift::CraneliftType;
 use roca_types::RocaType;
 use crate::runtime::RuntimeFuncs;
-use roca_cranelift::context::CompiledFuncs;
+use roca_cranelift::CompiledFuncs;
 use super::emit::{emit_body, emit_expr, closure_hash};
 
 // ─── Metadata extraction ─────────────────────────────
@@ -299,7 +299,7 @@ pub fn compile_struct_method<M: Module>(
     f = f.returns(RocaType::from(&func.return_type))
         .returns_err_if(func.returns_err)
         .crash_opt(func.crash.as_ref())
-        .with_struct_layout(struct_name, roca_cranelift::context::StructLayout { fields: field_info })
+        .with_struct_layout(struct_name, roca_cranelift::StructLayout { fields: field_info })
         .with_self_struct_type(struct_name)
         .with_return_kinds(func_return_kinds.clone())
         .with_enum_variants(enum_variants.clone())

@@ -1,11 +1,9 @@
 //! Roca AST → native code emission via roca-cranelift builders.
 
-pub mod context;
 pub mod compile;
 pub mod emit;
 
-// Re-export public API used by lib.rs
-pub use context::CompiledFuncs;
+pub use roca_cranelift::CompiledFuncs;
 pub use compile::{
     build_return_kind_map, build_enum_variant_map, build_struct_def_map,
     declare_all_functions, compile_closures, compile_function,

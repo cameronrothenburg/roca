@@ -4,17 +4,17 @@
 
 pub(crate) mod types;
 pub(crate) mod helpers;
-pub mod context;
+pub(crate) mod context;
 pub(crate) mod emit_helpers;
-pub mod registry;
-pub mod cranelift_type;
+pub(crate) mod registry;
+pub(crate) mod cranelift_type;
 pub(crate) mod builder;
 pub mod api;
 
 // Public API
 pub use api::{Body, Function, Method, Struct, Satisfies, RocaEnum, ExternFn, ExternContract};
 pub use api::{ConstRef, MutRef, VarRef, StringPart, MatchArm, MatchArmLazy, LazyArmKind, Value};
-pub use context::{CompiledFuncs, EmitCtx};
+pub use context::{CompiledFuncs, EmitCtx, StructLayout};
 pub use registry::{RuntimeFuncs, register_symbols, declare_runtime};
 pub use cranelift_type::CraneliftType;
 
