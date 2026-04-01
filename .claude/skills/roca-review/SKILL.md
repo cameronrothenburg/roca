@@ -57,6 +57,6 @@ Compile a unified report:
 
 ### Step 5: Fix or proceed
 
-- If **all clear**: tell the user the review passed and they can proceed with the PR
-- If **blocking issues found**: list them, fix what you can automatically, and re-run the failing checks
+- If **all clear**: write the lock file `.claude/.review-passed` with content "passed" using Bash (`echo passed > .claude/.review-passed`), then ask the user with AskUserQuestion whether to proceed with creating the PR
+- If **blocking issues found**: remove `.claude/.review-passed` if it exists (via Bash: `rm -f .claude/.review-passed`), list the issues, fix what you can automatically, and re-run the failing checks
 - Do NOT create a PR until all blocking issues are resolved
