@@ -47,6 +47,13 @@ macro_rules! runtime_funcs {
                     concat!("__", stringify!($key)).to_string(),
                     module.declare_func_in_func(self.$key, func),
                 ); )*
+                // Register stdlib functions under Contract.method names
+                let aliases: Vec<_> = refs.iter()
+                    .filter_map(|(k, v)| stdlib_key_to_contract(k).map(|name| (name, *v)))
+                    .collect();
+                for (name, func_ref) in aliases {
+                    refs.insert(name, func_ref);
+                }
                 for (name, fid) in &compiled.funcs {
                     refs.insert(name.clone(), module.declare_func_in_func(*fid, func));
                 }
@@ -156,6 +163,58 @@ runtime_funcs! {
     (fs_exists,         "roca_fs_exists",         roca_fs_exists,         [types::I64],                                [types::I8]),
     (fs_read_dir,       "roca_fs_read_dir",       roca_fs_read_dir,       [types::I64],                                [types::I64, types::I8]),
 
+    // Crypto
+    (crypto_random_uuid, "roca_crypto_random_uuid", roca_crypto_random_uuid, [],                                        [types::I64]),
+    (crypto_sha256,     "roca_crypto_sha256",     roca_crypto_sha256,     [types::I64],                                [types::I64]),
+    (crypto_sha512,     "roca_crypto_sha512",     roca_crypto_sha512,     [types::I64],                                [types::I64]),
+
+    // Url
+    (url_parse,         "roca_url_parse",         roca_url_parse,         [types::I64],                                [types::I64, types::I8]),
+    (url_free,          "roca_url_free",          roca_url_free,          [types::I64],                                []),
+    (url_is_valid,      "roca_url_is_valid",      roca_url_is_valid,      [types::I64],                                [types::I8]),
+    (url_hostname,      "roca_url_hostname",      roca_url_hostname,      [types::I64],                                [types::I64]),
+    (url_protocol,      "roca_url_protocol",      roca_url_protocol,      [types::I64],                                [types::I64]),
+    (url_pathname,      "roca_url_pathname",      roca_url_pathname,      [types::I64],                                [types::I64]),
+    (url_search,        "roca_url_search",        roca_url_search,        [types::I64],                                [types::I64]),
+    (url_hash,          "roca_url_hash",          roca_url_hash,          [types::I64],                                [types::I64]),
+    (url_host,          "roca_url_host",          roca_url_host,          [types::I64],                                [types::I64]),
+    (url_port,          "roca_url_port",          roca_url_port,          [types::I64],                                [types::I64]),
+    (url_origin,        "roca_url_origin",        roca_url_origin,        [types::I64],                                [types::I64]),
+    (url_href,          "roca_url_href",          roca_url_href,          [types::I64],                                [types::I64]),
+    (url_to_string,     "roca_url_to_string",     roca_url_to_string,     [types::I64],                                [types::I64]),
+    (url_get_param,     "roca_url_get_param",     roca_url_get_param,     [types::I64, types::I64],                    [types::I64]),
+    (url_has_param,     "roca_url_has_param",     roca_url_has_param,     [types::I64, types::I64],                    [types::I8]),
+
+    // Encoding
+    (encoding_btoa,     "roca_encoding_btoa",     roca_encoding_btoa,     [types::I64],                                [types::I64, types::I8]),
+    (encoding_atob,     "roca_encoding_atob",     roca_encoding_atob,     [types::I64],                                [types::I64, types::I8]),
+    (encoding_encode,   "roca_encoding_encode",   roca_encoding_encode,   [types::I64],                                [types::I64]),
+    (encoding_decode,   "roca_encoding_decode",   roca_encoding_decode,   [types::I64],                                [types::I64, types::I8]),
+
+    // JSON
+    (json_parse,        "roca_json_parse",        roca_json_parse,        [types::I64],                                [types::I64, types::I8]),
+    (json_free,         "roca_json_free",         roca_json_free,         [types::I64],                                []),
+    (json_stringify,    "roca_json_stringify",     roca_json_stringify,    [types::I64],                                [types::I64]),
+    (json_get,          "roca_json_get",          roca_json_get,          [types::I64, types::I64],                    [types::I64]),
+    (json_get_string,   "roca_json_get_string",   roca_json_get_string,   [types::I64, types::I64],                    [types::I64]),
+    (json_get_number,   "roca_json_get_number",   roca_json_get_number,   [types::I64, types::I64],                    [types::F64]),
+    (json_get_bool,     "roca_json_get_bool",     roca_json_get_bool,     [types::I64, types::I64],                    [types::I8]),
+    (json_get_array,    "roca_json_get_array",    roca_json_get_array,    [types::I64, types::I64],                    [types::I64]),
+    (json_to_string,    "roca_json_to_string",    roca_json_to_string,    [types::I64],                                [types::I64]),
+
+    // Http
+    (http_get,          "roca_http_get",          roca_http_get,          [types::I64],                                [types::I64, types::I8]),
+    (http_post,         "roca_http_post",         roca_http_post,         [types::I64, types::I64],                    [types::I64, types::I8]),
+    (http_put,          "roca_http_put",          roca_http_put,          [types::I64, types::I64],                    [types::I64, types::I8]),
+    (http_patch,        "roca_http_patch",        roca_http_patch,        [types::I64, types::I64],                    [types::I64, types::I8]),
+    (http_delete,       "roca_http_delete",       roca_http_delete,       [types::I64],                                [types::I64, types::I8]),
+    (http_free,         "roca_http_free",         roca_http_free,         [types::I64],                                []),
+    (http_status,       "roca_http_status",       roca_http_status,       [types::I64],                                [types::F64]),
+    (http_ok,           "roca_http_ok",           roca_http_ok,           [types::I64],                                [types::I8]),
+    (http_text,         "roca_http_text",         roca_http_text,         [types::I64],                                [types::I64, types::I8]),
+    (http_json,         "roca_http_json",         roca_http_json,         [types::I64],                                [types::I64, types::I8]),
+    (http_header,       "roca_http_header",       roca_http_header,       [types::I64, types::I64],                    [types::I64]),
+
     // Memory management
     (string_new,        "roca_string_new",        roca_string_new,        [types::I64],                                [types::I64]),
     (rc_alloc,          "roca_rc_alloc",          roca_rc_alloc,          [types::I64],                                [types::I64]),
@@ -163,6 +222,59 @@ runtime_funcs! {
     (rc_release,        "roca_rc_release",        roca_rc_release,        [types::I64],                                []),
     (free_array,        "roca_free_array",        roca_free_array,        [types::I64],                                []),
     (free_struct,       "roca_free_struct",       roca_free_struct,       [types::I64, types::I64],                    []),
+}
+
+/// Map internal runtime key (e.g. `__math_floor`) to Contract.method name (e.g. `Math.floor`).
+fn stdlib_key_to_contract(key: &str) -> Option<String> {
+    let key = key.strip_prefix("__")?;
+    let mappings: &[(&str, &str)] = &[
+        // Math
+        ("math_floor", "Math.floor"), ("math_ceil", "Math.ceil"), ("math_round", "Math.round"),
+        ("math_abs", "Math.abs"), ("math_sqrt", "Math.sqrt"), ("math_pow", "Math.pow"),
+        ("math_min", "Math.min"), ("math_max", "Math.max"),
+        // Path
+        ("path_join", "Path.join"), ("path_dirname", "Path.dirname"),
+        ("path_basename", "Path.basename"), ("path_extension", "Path.extension"),
+        // Char
+        ("char_from_code", "Char.fromCode"), ("char_is_digit", "Char.isDigit"),
+        ("char_is_letter", "Char.isLetter"), ("char_is_whitespace", "Char.isWhitespace"),
+        ("char_is_alphanumeric", "Char.isAlphanumeric"),
+        // NumberParse
+        ("number_parse", "NumberParse.parse"),
+        // Process
+        ("process_cwd", "Process.cwd"), ("process_exit", "Process.exit"),
+        // Time
+        ("time_now", "Time.now"),
+        // Fs
+        ("fs_read_file", "Fs.readFile"), ("fs_write_file", "Fs.writeFile"),
+        ("fs_exists", "Fs.exists"), ("fs_read_dir", "Fs.readDir"),
+        // Crypto
+        ("crypto_random_uuid", "Crypto.randomUUID"),
+        ("crypto_sha256", "Crypto.sha256"), ("crypto_sha512", "Crypto.sha512"),
+        // Url
+        ("url_parse", "Url.parse"), ("url_is_valid", "Url.isValid"),
+        ("url_hostname", "Url.hostname"), ("url_protocol", "Url.protocol"),
+        ("url_pathname", "Url.pathname"), ("url_search", "Url.search"),
+        ("url_hash", "Url.hash"), ("url_host", "Url.host"), ("url_port", "Url.port"),
+        ("url_origin", "Url.origin"), ("url_href", "Url.href"),
+        ("url_to_string", "Url.toString"),
+        ("url_get_param", "Url.getParam"), ("url_has_param", "Url.hasParam"),
+        // Encoding
+        ("encoding_btoa", "Encoding.btoa"), ("encoding_atob", "Encoding.atob"),
+        ("encoding_encode", "Encoding.encode"), ("encoding_decode", "Encoding.decode"),
+        // JSON
+        ("json_parse", "JSON.parse"), ("json_stringify", "JSON.stringify"),
+        ("json_get", "JSON.get"), ("json_get_string", "JSON.getString"),
+        ("json_get_number", "JSON.getNumber"), ("json_get_bool", "JSON.getBool"),
+        ("json_get_array", "JSON.getArray"), ("json_to_string", "JSON.toString"),
+        // Http
+        ("http_get", "Http.get"), ("http_post", "Http.post"),
+        ("http_put", "Http.put"), ("http_patch", "Http.patch"),
+        ("http_delete", "Http.delete"), ("http_status", "Http.status"),
+        ("http_ok", "Http.ok"), ("http_text", "Http.text"),
+        ("http_json", "Http.json"), ("http_header", "Http.header"),
+    ];
+    mappings.iter().find(|(k, _)| *k == key).map(|(_, v)| v.to_string())
 }
 
 fn declare_fn<M: Module>(module: &mut M, name: &str, params: &[cranelift_codegen::ir::Type], returns: &[cranelift_codegen::ir::Type]) -> FuncId {
