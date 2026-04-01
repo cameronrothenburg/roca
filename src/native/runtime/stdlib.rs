@@ -2,7 +2,7 @@
 //! path, process, timing/async, and file I/O.
 
 use std::ffi::CStr;
-use super::{read_cstr, alloc_str, MEM};
+use super::{read_cstr, alloc_str, roca_free_array, MEM};
 
 // ─── I/O ─────────────────────────────────────────────
 
@@ -443,9 +443,9 @@ pub extern "C" fn roca_url_parse(raw: i64) -> (i64, u8) {
 
 const BOX_HEADER: usize = 16;
 
-pub extern "C" fn roca_box_alloc(size: i64) -> i64 {
-    if size <= 0 { return 0; }
-    let total = BOX_HEADER + size as usize;
+fn box_alloc_inner(size: usize) -> i64 {
+    if size == 0 { return 0; }
+    let total = BOX_HEADER + size;
     let layout = std::alloc::Layout::from_size_align(total, 8).unwrap();
     unsafe {
         let base = std::alloc::alloc(layout);
@@ -455,6 +455,11 @@ pub extern "C" fn roca_box_alloc(size: i64) -> i64 {
         MEM.track_alloc(total as i64);
         base.add(BOX_HEADER) as i64
     }
+}
+
+pub extern "C" fn roca_box_alloc(size: i64) -> i64 {
+    if size <= 0 { return 0; }
+    box_alloc_inner(size as usize)
 }
 
 pub extern "C" fn roca_box_free(ptr: i64) {
@@ -477,9 +482,8 @@ fn drop_trampoline<T>(ptr: *mut u8) {
     unsafe { std::ptr::drop_in_place(ptr as *mut T); }
 }
 
-/// Allocate via `roca_box_alloc`, write `value`, and register its destructor.
 fn box_value<T>(value: T) -> i64 {
-    let ptr = roca_box_alloc(std::mem::size_of::<T>() as i64);
+    let ptr = box_alloc_inner(std::mem::size_of::<T>());
     if ptr == 0 { return 0; }
     unsafe {
         let base = (ptr as *mut u8).sub(BOX_HEADER);
@@ -658,9 +662,7 @@ pub extern "C" fn roca_free_json_array(ptr: i64) {
     for &elem in v.iter() {
         roca_box_free(elem);
     }
-    // Drop the Vec itself (same as roca_free_array)
-    unsafe { drop(Box::from_raw(ptr as *mut Vec<i64>)); }
-    MEM.track_free(32);
+    roca_free_array(ptr);
 }
 
 pub extern "C" fn roca_json_to_string(json: i64) -> i64 {
