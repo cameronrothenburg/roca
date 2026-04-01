@@ -8,6 +8,8 @@ pub mod test_runner;
 pub mod property_tests;
 #[cfg(test)]
 mod test_helpers;
+#[cfg(test)]
+mod tests_stdlib_integration;
 
 use crate::ast;
 use cranelift_jit::{JITBuilder, JITModule};

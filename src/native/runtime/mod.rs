@@ -47,6 +47,13 @@ macro_rules! runtime_funcs {
                     concat!("__", stringify!($key)).to_string(),
                     module.declare_func_in_func(self.$key, func),
                 ); )*
+                // Also register stdlib functions under Contract.method names
+                // so the emitter can resolve Math.floor → __math_floor etc.
+                for (key, func_ref) in &refs.clone() {
+                    if let Some(contract_method) = stdlib_key_to_contract(key) {
+                        refs.insert(contract_method, *func_ref);
+                    }
+                }
                 for (name, fid) in &compiled.funcs {
                     refs.insert(name.clone(), module.declare_func_in_func(*fid, func));
                 }
@@ -212,6 +219,59 @@ runtime_funcs! {
     (rc_release,        "roca_rc_release",        roca_rc_release,        [types::I64],                                []),
     (free_array,        "roca_free_array",        roca_free_array,        [types::I64],                                []),
     (free_struct,       "roca_free_struct",       roca_free_struct,       [types::I64, types::I64],                    []),
+}
+
+/// Map internal runtime key (e.g. `__math_floor`) to Contract.method name (e.g. `Math.floor`).
+fn stdlib_key_to_contract(key: &str) -> Option<String> {
+    let key = key.strip_prefix("__")?;
+    let mappings: &[(&str, &str)] = &[
+        // Math
+        ("math_floor", "Math.floor"), ("math_ceil", "Math.ceil"), ("math_round", "Math.round"),
+        ("math_abs", "Math.abs"), ("math_sqrt", "Math.sqrt"), ("math_pow", "Math.pow"),
+        ("math_min", "Math.min"), ("math_max", "Math.max"),
+        // Path
+        ("path_join", "Path.join"), ("path_dirname", "Path.dirname"),
+        ("path_basename", "Path.basename"), ("path_extension", "Path.extension"),
+        // Char
+        ("char_from_code", "Char.fromCode"), ("char_is_digit", "Char.isDigit"),
+        ("char_is_letter", "Char.isLetter"), ("char_is_whitespace", "Char.isWhitespace"),
+        ("char_is_alphanumeric", "Char.isAlphanumeric"),
+        // NumberParse
+        ("number_parse", "NumberParse.parse"),
+        // Process
+        ("process_cwd", "Process.cwd"), ("process_exit", "Process.exit"),
+        // Time
+        ("time_now", "Time.now"),
+        // Fs
+        ("fs_read_file", "Fs.readFile"), ("fs_write_file", "Fs.writeFile"),
+        ("fs_exists", "Fs.exists"), ("fs_read_dir", "Fs.readDir"),
+        // Crypto
+        ("crypto_random_uuid", "Crypto.randomUUID"),
+        ("crypto_sha256", "Crypto.sha256"), ("crypto_sha512", "Crypto.sha512"),
+        // Url
+        ("url_parse", "Url.parse"), ("url_is_valid", "Url.isValid"),
+        ("url_hostname", "Url.hostname"), ("url_protocol", "Url.protocol"),
+        ("url_pathname", "Url.pathname"), ("url_search", "Url.search"),
+        ("url_hash", "Url.hash"), ("url_host", "Url.host"), ("url_port", "Url.port"),
+        ("url_origin", "Url.origin"), ("url_href", "Url.href"),
+        ("url_to_string", "Url.toString"),
+        ("url_get_param", "Url.getParam"), ("url_has_param", "Url.hasParam"),
+        // Encoding
+        ("encoding_btoa", "Encoding.btoa"), ("encoding_atob", "Encoding.atob"),
+        ("encoding_encode", "Encoding.encode"), ("encoding_decode", "Encoding.decode"),
+        // JSON
+        ("json_parse", "JSON.parse"), ("json_stringify", "JSON.stringify"),
+        ("json_get", "JSON.get"), ("json_get_string", "JSON.getString"),
+        ("json_get_number", "JSON.getNumber"), ("json_get_bool", "JSON.getBool"),
+        ("json_get_array", "JSON.getArray"), ("json_to_string", "JSON.toString"),
+        // Http
+        ("http_get", "Http.get"), ("http_post", "Http.post"),
+        ("http_put", "Http.put"), ("http_patch", "Http.patch"),
+        ("http_delete", "Http.delete"), ("http_status", "Http.status"),
+        ("http_ok", "Http.ok"), ("http_text", "Http.text"),
+        ("http_json", "Http.json"), ("http_header", "Http.header"),
+    ];
+    mappings.iter().find(|(k, _)| *k == key).map(|(_, v)| v.to_string())
 }
 
 fn declare_fn<M: Module>(module: &mut M, name: &str, params: &[cranelift_codegen::ir::Type], returns: &[cranelift_codegen::ir::Type]) -> FuncId {

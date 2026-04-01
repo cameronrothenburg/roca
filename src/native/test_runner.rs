@@ -279,10 +279,19 @@ pub(super) fn call_str_fn(ptr: *const u8, param_count: usize, args: &[Expr]) -> 
                     Arg::Str(p) => std::mem::transmute::<_, fn(*const u8) -> *const u8>(ptr)(p),
                 }
             }
+            2 => {
+                let a = expr_to_arg(&args[0], &mut pool);
+                let b = expr_to_arg(&args[1], &mut pool);
+                match (a, b) {
+                    (Arg::Str(a), Arg::Str(b)) => std::mem::transmute::<_, fn(*const u8, *const u8) -> *const u8>(ptr)(a, b),
+                    (Arg::Str(a), Arg::F64(b)) => std::mem::transmute::<_, fn(*const u8, f64) -> *const u8>(ptr)(a, b),
+                    (Arg::F64(a), Arg::Str(b)) => std::mem::transmute::<_, fn(f64, *const u8) -> *const u8>(ptr)(a, b),
+                    (Arg::F64(a), Arg::F64(b)) => std::mem::transmute::<_, fn(f64, f64) -> *const u8>(ptr)(a, b),
+                }
+            }
             _ => std::ptr::null(),
         }
     }
-    // pool drops here, freeing CStrings after the call completes
 }
 
 pub(super) fn call_bool_fn(ptr: *const u8, param_count: usize, args: &[Expr]) -> bool {
