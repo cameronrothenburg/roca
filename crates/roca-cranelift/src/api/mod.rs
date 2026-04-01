@@ -5,8 +5,8 @@
 mod body;
 mod function;
 
-pub use body::{Body, ConstRef, MutRef, VarRef, StringPart};
+pub use body::{Body, ConstRef, MutRef, VarRef, StringPart, MatchArm};
 pub use function::Function;
 
-// Re-export Value so callers can thread expression results
+// Re-export Value — the opaque handle callers thread through
 pub use cranelift_codegen::ir::Value;

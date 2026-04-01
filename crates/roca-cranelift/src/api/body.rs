@@ -1,12 +1,9 @@
 //! Body — the Roca scope manager.
-//! Every Roca statement and expression is a method on Body.
-//! Owns IrBuilder + EmitCtx. Cleanup is automatic.
+//! Every Roca construct is a method. Zero IR concepts exposed.
+//! All block management, memory, cleanup is internal.
 
-use std::collections::HashMap;
 use cranelift_codegen::ir::{self, types, InstBuilder, Value};
-use cranelift_frontend::FunctionBuilder;
-
-use roca_ast::{self as roca, BinOp, crash::CrashHandlerKind};
+use roca_ast::{self as roca, BinOp};
 use roca_types::RocaType;
 use crate::builder::{IrBuilder, BlockId, VarSlot};
 use crate::context::{EmitCtx, StructLayout, VarInfo};
@@ -62,28 +59,25 @@ pub enum StringPart {
 
 // ─── Body ─────────────────────────────────────────────
 
-/// Roca scope — wraps IR builder + context. Every Roca construct is a method.
-/// Fields are private — all access goes through typed methods.
+/// Roca scope — every Roca construct is a method.
+/// Fields are `pub(crate)` — only roca-cranelift internals can access them.
 pub struct Body<'a, 'b: 'a, 'c> {
     pub(crate) ir: &'c mut IrBuilder<'a, 'b>,
     pub(crate) ctx: EmitCtx,
     pub(crate) returned: bool,
 }
 
-// ─── Expressions ──────────────────────────────────────
+// ─── Literals ─────────────────────────────────────────
 
 impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
-    /// Number literal.
     pub fn number(&mut self, n: f64) -> Value {
         self.ir.const_number(n)
     }
 
-    /// Bool literal.
     pub fn bool_val(&mut self, v: bool) -> Value {
         self.ir.const_bool(v)
     }
 
-    /// String literal (RC-allocated).
     pub fn string(&mut self, s: &str) -> Value {
         let static_ptr = self.ir.leak_cstr(s);
         if let Some(&f) = self.ctx.get_func("__string_new") {
@@ -93,12 +87,10 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
         }
     }
 
-    /// Null pointer.
     pub fn null(&mut self) -> Value {
         self.ir.null()
     }
 
-    /// Load self reference (in struct methods).
     pub fn self_ref(&mut self) -> Value {
         if let Some(var) = self.ctx.get_var("self") {
             self.ir.raw().ins().stack_load(var.cranelift_type, var.slot, 0)
@@ -106,7 +98,11 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
             self.ir.null()
         }
     }
+}
 
+// ─── Variables ────────────────────────────────────────
+
+impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
     /// Load a variable by name.
     pub fn var(&mut self, name: &str) -> Value {
         if let Some(var) = self.ctx.get_var(name) {
@@ -116,22 +112,60 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
         }
     }
 
-    /// Read a typed variable reference (ConstRef or MutRef).
+    /// Bind an immutable variable.
+    pub fn const_var(&mut self, name: &str, val: Value) -> ConstRef {
+        let roca_type = self.infer_value_type(val);
+        let cl_type = roca_type.to_cranelift();
+        let slot = self.ir.alloc_var(val);
+        self.ctx.set_var_kind(name.to_string(), slot.0, cl_type, roca_type.clone());
+        ConstRef { name: name.to_string(), slot, roca_type }
+    }
+
+    /// Bind a mutable variable.
+    pub fn let_var(&mut self, name: &str, val: Value) -> MutRef {
+        let roca_type = self.infer_value_type(val);
+        let cl_type = roca_type.to_cranelift();
+        let slot = self.ir.alloc_var(val);
+        self.ctx.set_var_kind(name.to_string(), slot.0, cl_type, roca_type.clone());
+        MutRef { name: name.to_string(), slot, roca_type }
+    }
+
+    /// Reassign a mutable variable. Frees the old heap value automatically.
+    pub fn assign(&mut self, var: &MutRef, val: Value) {
+        if let Some(old) = self.ctx.get_var(&var.name) {
+            if old.is_heap {
+                let slot = old.slot;
+                let cl_type = old.cranelift_type;
+                let kind = old.kind.clone();
+                let refs = FreeRefs::from_ctx(&self.ctx);
+                emit_free_by_kind(self.ir, slot, cl_type, kind, &refs);
+            }
+        }
+        self.ir.store_var(var.slot, val);
+    }
+
+    /// Read a typed variable reference.
     pub fn read(&mut self, var: &impl VarRef) -> Value {
         self.ir.load_var(var.slot(), var.roca_type())
     }
 
-    /// Boolean NOT.
-    pub fn not(&mut self, val: Value) -> Value {
-        let zero = self.ir.null();
-        self.ir.i_eq(val, zero)
+    /// Register a variable as having a specific struct type (for field access).
+    pub fn set_struct_type(&mut self, var_name: &str, struct_name: &str) {
+        self.ctx.var_struct_type.insert(var_name.to_string(), struct_name.to_string());
+    }
+
+    /// Infer RocaType from an IR value's type.
+    fn infer_value_type(&self, val: Value) -> RocaType {
+        if self.ir.is_number(val) { RocaType::Number }
+        else if self.ir.value_ir_type(val) == types::I8 { RocaType::Bool }
+        else { RocaType::Unknown }
     }
 }
 
-// ─── Binary Operations ────────────────────────────────
+// ─── Operators ────────────────────────────────────────
 
 impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
-    /// Generic binary operation — dispatches based on operator and value types.
+    /// Binary operation — dispatches based on operator and value types.
     pub fn binop(&mut self, op: &BinOp, l: Value, r: Value) -> Value {
         let is_float = self.ir.is_number(l);
         match op {
@@ -148,9 +182,7 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
                 if let Some(f) = self.ctx.get_func("__string_eq") {
                     let result = self.ir.call(*f, &[l, r]);
                     self.ir.extend_bool(result)
-                } else {
-                    self.ir.i_eq(l, r)
-                }
+                } else { self.ir.i_eq(l, r) }
             }
             BinOp::Neq if is_float => self.ir.f_ne(l, r),
             BinOp::Neq => {
@@ -159,9 +191,7 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
                     let ext = self.ir.extend_bool(eq);
                     let one = self.ir.const_i64(1);
                     self.ir.isub(one, ext)
-                } else {
-                    self.ir.i_ne(l, r)
-                }
+                } else { self.ir.i_ne(l, r) }
             }
             BinOp::Lt => self.ir.f_lt(l, r),
             BinOp::Gt => self.ir.f_gt(l, r),
@@ -172,79 +202,146 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
         }
     }
 
-    /// Number addition.
-    pub fn add(&mut self, a: Value, b: Value) -> Value { self.ir.add(a, b) }
-    pub fn sub(&mut self, a: Value, b: Value) -> Value { self.ir.sub(a, b) }
-    pub fn mul(&mut self, a: Value, b: Value) -> Value { self.ir.mul(a, b) }
-    pub fn div(&mut self, a: Value, b: Value) -> Value { self.ir.div(a, b) }
-
-    /// String concatenation.
-    pub fn string_concat(&mut self, a: Value, b: Value) -> Value {
-        if let Some(f) = self.ctx.get_func("__string_concat") {
-            self.ir.call(*f, &[a, b])
-        } else {
-            a
-        }
+    /// Boolean NOT.
+    pub fn not(&mut self, val: Value) -> Value {
+        let zero = self.ir.null();
+        self.ir.i_eq(val, zero)
     }
-
-    /// Equality (works for number, string, bool).
-    pub fn eq(&mut self, a: Value, b: Value) -> Value {
-        self.binop(&BinOp::Eq, a, b)
-    }
-
-    pub fn neq(&mut self, a: Value, b: Value) -> Value { self.binop(&BinOp::Neq, a, b) }
-    pub fn lt(&mut self, a: Value, b: Value) -> Value { self.binop(&BinOp::Lt, a, b) }
-    pub fn gt(&mut self, a: Value, b: Value) -> Value { self.binop(&BinOp::Gt, a, b) }
-    pub fn lte(&mut self, a: Value, b: Value) -> Value { self.binop(&BinOp::Lte, a, b) }
-    pub fn gte(&mut self, a: Value, b: Value) -> Value { self.binop(&BinOp::Gte, a, b) }
-    pub fn and(&mut self, a: Value, b: Value) -> Value { self.ir.bool_and(a, b) }
-    pub fn or(&mut self, a: Value, b: Value) -> Value { self.ir.bool_or(a, b) }
 }
 
-// ─── Variables ────────────────────────────────────────
+// ─── Calls ────────────────────────────────────────────
 
 impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
-    /// Bind an immutable variable. Returns a ConstRef that can only be read.
-    pub fn const_var(&mut self, name: &str, val: Value) -> ConstRef {
-        let roca_type = self.infer_roca_type(val);
-        let cl_type = roca_type.to_cranelift();
-        let slot = self.ir.alloc_var(val);
-        self.ctx.set_var_kind(name.to_string(), slot.0, cl_type, roca_type.clone());
-        ConstRef { name: name.to_string(), slot, roca_type }
-    }
+    /// Call a function by name, return first result.
+    pub fn call(&mut self, name: &str, args: &[Value]) -> Value {
+        // TODO: crash handler dispatch will be absorbed in Task 3
+        // For now, skip crash handling and call directly
 
-    /// Bind a mutable variable. Returns a MutRef that can be reassigned.
-    pub fn let_var(&mut self, name: &str, val: Value) -> MutRef {
-        let roca_type = self.infer_roca_type(val);
-        let cl_type = roca_type.to_cranelift();
-        let slot = self.ir.alloc_var(val);
-        self.ctx.set_var_kind(name.to_string(), slot.0, cl_type, roca_type.clone());
-        MutRef { name: name.to_string(), slot, roca_type }
-    }
-
-    /// Reassign a mutable variable. Frees the old heap value if needed.
-    pub fn assign(&mut self, var: &MutRef, val: Value) {
-        if let Some(old) = self.ctx.get_var(&var.name) {
-            if old.is_heap {
-                let slot = old.slot;
-                let cl_type = old.cranelift_type;
-                let kind = old.kind.clone();
-                let refs = FreeRefs::from_ctx(&self.ctx);
-                emit_free_by_kind(&mut self.ir, slot, cl_type, kind, &refs);
-            }
-        }
-        self.ir.store_var(var.slot, val);
-    }
-
-    /// Infer RocaType from a Cranelift Value's IR type.
-    fn infer_roca_type(&self, val: Value) -> RocaType {
-        if self.ir.is_number(val) {
-            RocaType::Number
-        } else if self.ir.value_ir_type(val) == types::I8 {
-            RocaType::Bool
+        if let Some(&func_ref) = self.ctx.get_func(name) {
+            let results = self.ir.call_multi(func_ref, args);
+            if !results.is_empty() { results[0] } else { self.ir.null() }
         } else {
-            RocaType::Unknown
+            self.ir.null()
         }
+    }
+
+    /// Call a function by name, discard result.
+    pub fn call_void(&mut self, name: &str, args: &[Value]) {
+        if let Some(&func_ref) = self.ctx.get_func(name) {
+            self.ir.call_void(func_ref, args);
+        }
+    }
+
+    /// Call a function by name, return all results.
+    pub fn call_multi(&mut self, name: &str, args: &[Value]) -> Vec<Value> {
+        if let Some(&func_ref) = self.ctx.get_func(name) {
+            self.ir.call_multi(func_ref, args)
+        } else {
+            vec![]
+        }
+    }
+
+    /// Call a method on a value: obj.method(args).
+    /// Handles all stdlib method dispatch internally.
+    pub fn method_call(&mut self, obj: Value, method: &str, args: &[Value]) -> Value {
+        // Try qualified name first (Type.method)
+        // String methods
+        match method {
+            "trim" => return self.call_runtime_1("__string_trim", obj),
+            "toUpperCase" => return self.call_runtime_1("__string_to_upper", obj),
+            "toLowerCase" => return self.call_runtime_1("__string_to_lower", obj),
+            "includes" | "contains" => {
+                let needle = args.first().copied().unwrap_or_else(|| self.ir.null());
+                let result = self.call_runtime_2("__string_includes", obj, needle);
+                return self.ir.extend_bool(result);
+            }
+            "startsWith" => {
+                let prefix = args.first().copied().unwrap_or_else(|| self.ir.null());
+                let result = self.call_runtime_2("__string_starts_with", obj, prefix);
+                return self.ir.extend_bool(result);
+            }
+            "endsWith" => {
+                let suffix = args.first().copied().unwrap_or_else(|| self.ir.null());
+                let result = self.call_runtime_2("__string_ends_with", obj, suffix);
+                return self.ir.extend_bool(result);
+            }
+            "indexOf" => {
+                let needle = args.first().copied().unwrap_or_else(|| self.ir.null());
+                return self.call_runtime_2("__string_index_of", obj, needle);
+            }
+            "charCodeAt" => {
+                let idx = args.first().copied().unwrap_or_else(|| self.ir.null());
+                return self.call_runtime_2("__string_char_code_at", obj, idx);
+            }
+            "charAt" => {
+                let idx = args.first().copied().unwrap_or_else(|| self.ir.null());
+                return self.call_runtime_2("__string_char_at", obj, idx);
+            }
+            "slice" => {
+                let start = args.first().copied().unwrap_or_else(|| self.ir.null());
+                let end = args.get(1).copied().unwrap_or_else(|| self.ir.null());
+                if let Some(&f) = self.ctx.get_func("__string_slice") {
+                    return self.ir.call(f, &[obj, start, end]);
+                }
+                return obj;
+            }
+            "split" => {
+                let delim = args.first().copied().unwrap_or_else(|| self.ir.null());
+                return self.call_runtime_2("__string_split", obj, delim);
+            }
+            "join" => {
+                let sep = args.first().copied().unwrap_or_else(|| self.ir.null());
+                return self.call_runtime_2("__array_join", obj, sep);
+            }
+            "toString" => {
+                if self.ir.is_number(obj) {
+                    return self.call_runtime_1("__string_from_f64", obj);
+                }
+                return obj;
+            }
+            "push" => {
+                let val = if let Some(&v) = args.first() { v } else { self.ir.null() };
+                crate::emit_helpers::emit_array_push(self.ir, obj, val, &mut self.ctx);
+                return obj;
+            }
+            "length" | "len" => {
+                let kind = if self.ir.is_number(obj) { RocaType::Number } else { RocaType::Unknown };
+                return crate::emit_helpers::emit_length(self.ir, obj, kind, &mut self.ctx);
+            }
+            _ => {}
+        }
+
+        // Fallback: try as qualified function call
+        obj
+    }
+
+    /// Call Type.method(args) — static method dispatch.
+    pub fn static_call(&mut self, type_name: &str, method: &str, args: &[Value]) -> Value {
+        let qualified = format!("{}.{}", type_name, method);
+        self.call(&qualified, args)
+    }
+
+    /// Log a value (dispatches by type).
+    pub fn log(&mut self, val: Value) {
+        if self.ir.is_number(val) {
+            if let Some(&f) = self.ctx.get_func("__print_f64") { self.ir.call_void(f, &[val]); }
+        } else if self.ir.value_ir_type(val) == types::I8 {
+            if let Some(&f) = self.ctx.get_func("__print_bool") { self.ir.call_void(f, &[val]); }
+        } else {
+            if let Some(&f) = self.ctx.get_func("__print") { self.ir.call_void(f, &[val]); }
+        }
+    }
+
+    /// Internal: call a 1-arg runtime function.
+    fn call_runtime_1(&mut self, name: &str, arg: Value) -> Value {
+        if let Some(&f) = self.ctx.get_func(name) { self.ir.call(f, &[arg]) }
+        else { arg }
+    }
+
+    /// Internal: call a 2-arg runtime function.
+    fn call_runtime_2(&mut self, name: &str, a: Value, b: Value) -> Value {
+        if let Some(&f) = self.ctx.get_func(name) { self.ir.call(f, &[a, b]) }
+        else { a }
     }
 }
 
@@ -255,11 +352,9 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
     pub fn array(&mut self, elements: &[Value]) -> Value {
         let arr = if let Some(f) = self.ctx.get_func("__array_new") {
             self.ir.call(*f, &[])
-        } else {
-            return self.ir.null();
-        };
+        } else { return self.ir.null(); };
         for &elem in elements {
-            crate::emit_helpers::emit_array_push(&mut self.ir, arr, elem, &mut self.ctx);
+            crate::emit_helpers::emit_array_push(self.ir, arr, elem, &mut self.ctx);
         }
         arr
     }
@@ -269,20 +364,12 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
         let idx_i64 = self.ir.to_i64(idx);
         if let Some(f) = self.ctx.get_func("__array_get_f64") {
             self.ir.call(*f, &[arr, idx_i64])
-        } else {
-            self.ir.const_number(0.0)
-        }
+        } else { self.ir.const_number(0.0) }
     }
 
-    /// Struct field access.
-    pub fn field_access(&mut self, obj: Value, field: &str) -> Value {
-        // For now, delegate to struct_get_ptr. Full field resolution comes with Struct builder.
-        let idx = self.ir.const_i64(0); // placeholder
-        if let Some(f) = self.ctx.get_func("__struct_get_ptr") {
-            self.ir.call(*f, &[obj, idx])
-        } else {
-            self.ir.null()
-        }
+    /// Push a value onto an array.
+    pub fn array_push(&mut self, arr: Value, val: Value) {
+        crate::emit_helpers::emit_array_push(self.ir, arr, val, &mut self.ctx);
     }
 
     /// Struct literal construction.
@@ -290,13 +377,12 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
         let num_fields = self.ir.const_i64(fields.len() as i64);
         let ptr = if let Some(f) = self.ctx.get_func("__struct_alloc") {
             self.ir.call(*f, &[num_fields])
-        } else {
-            return self.ir.null();
-        };
+        } else { return self.ir.null(); };
         for (i, &(_, val)) in fields.iter().enumerate() {
             let idx = self.ir.const_i64(i as i64);
-            crate::emit_helpers::emit_struct_set(&mut self.ir, ptr, idx, val, &mut self.ctx);
+            crate::emit_helpers::emit_struct_set(self.ir, ptr, idx, val, &mut self.ctx);
         }
+        // TODO: validate constraints on fields
         ptr
     }
 
@@ -305,21 +391,33 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
         let num_fields = self.ir.const_i64((1 + args.len()) as i64);
         let ptr = if let Some(f) = self.ctx.get_func("__struct_alloc") {
             self.ir.call(*f, &[num_fields])
-        } else {
-            return self.ir.null();
-        };
-        // Field 0: variant name tag
+        } else { return self.ir.null(); };
         let tag = self.string(variant);
         let zero = self.ir.const_i64(0);
         if let Some(&f) = self.ctx.get_func("__struct_set_ptr") {
             self.ir.call_void(f, &[ptr, zero, tag]);
         }
-        // Fields 1..n: args
         for (i, &arg) in args.iter().enumerate() {
             let idx = self.ir.const_i64((i + 1) as i64);
-            crate::emit_helpers::emit_struct_set(&mut self.ir, ptr, idx, arg, &mut self.ctx);
+            crate::emit_helpers::emit_struct_set(self.ir, ptr, idx, arg, &mut self.ctx);
         }
         ptr
+    }
+
+    /// Struct field access.
+    pub fn field_access(&mut self, obj: Value, field: &str) -> Value {
+        // Check struct layout for typed field access
+        // (simplified — full implementation needs var_struct_type resolution)
+        let idx = self.ir.const_i64(0);
+        if let Some(f) = self.ctx.get_func("__struct_get_ptr") {
+            self.ir.call(*f, &[obj, idx])
+        } else { self.ir.null() }
+    }
+
+    /// Get length of array or string.
+    pub fn length(&mut self, obj: Value) -> Value {
+        let kind = if self.ir.is_number(obj) { RocaType::Number } else { RocaType::Unknown };
+        crate::emit_helpers::emit_length(self.ir, obj, kind, &mut self.ctx)
     }
 
     /// String interpolation from parts.
@@ -338,71 +436,22 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
                 StringPart::Expr(v) => {
                     if self.ir.is_number(*v) {
                         if let Some(f) = to_str { self.ir.call(f, &[*v]) } else { *v }
-                    } else {
-                        *v
-                    }
+                    } else { *v }
                 }
             };
             result = Some(match result {
                 None => val,
-                Some(acc) => {
-                    if let Some(f) = concat { self.ir.call(f, &[acc, val]) } else { val }
-                }
+                Some(acc) => if let Some(f) = concat { self.ir.call(f, &[acc, val]) } else { val },
             });
         }
         result.unwrap_or_else(|| self.ir.null())
     }
 }
 
-// ─── Function Calls ───────────────────────────────────
-
-impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
-    /// Call a function by name.
-    pub fn call(&mut self, name: &str, args: &[Value]) -> Value {
-        if let Some(&func_ref) = self.ctx.get_func(name) {
-            let results = self.ir.call_multi(func_ref, args);
-            if !results.is_empty() { results[0] } else { self.ir.null() }
-        } else {
-            self.ir.null()
-        }
-    }
-
-    /// Call a static/contract method: Type.method(args).
-    pub fn static_call(&mut self, type_name: &str, method: &str, args: &[Value]) -> Value {
-        let qualified = format!("{}.{}", type_name, method);
-        self.call(&qualified, args)
-    }
-
-    /// Call a method on a variable: var.method(args).
-    pub fn method_call(&mut self, var_name: &str, method: &str, args: &[Value]) -> Value {
-        let obj = self.var(var_name);
-        // Dispatch to the appropriate runtime function
-        let func_key = format!("__{}", method);
-        if let Some(&f) = self.ctx.get_func(&func_key) {
-            let mut all_args = vec![obj];
-            all_args.extend_from_slice(args);
-            self.ir.call(f, &all_args)
-        } else {
-            obj
-        }
-    }
-
-    /// Log a value (dispatches based on type).
-    pub fn log(&mut self, val: Value) {
-        if self.ir.is_number(val) {
-            if let Some(&f) = self.ctx.get_func("__print_f64") { self.ir.call_void(f, &[val]); }
-        } else if self.ir.value_ir_type(val) == types::I8 {
-            if let Some(&f) = self.ctx.get_func("__print_bool") { self.ir.call_void(f, &[val]); }
-        } else {
-            if let Some(&f) = self.ctx.get_func("__print") { self.ir.call_void(f, &[val]); }
-        }
-    }
-}
-
 // ─── Control Flow ─────────────────────────────────────
 
 impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
-    /// If-else statement. Both branches get their own Body scope.
+    /// If-else. Both branches get the same Body (state saved/restored).
     pub fn if_else(
         &mut self,
         cond: Value,
@@ -418,12 +467,10 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
         let saved_vars = self.ctx.vars.clone();
         let saved_struct_types = self.ctx.var_struct_type.clone();
 
-        // Then branch
         self.ir.switch_to(then_block);
         self.ir.seal(then_block);
-        let mut then_returned = false;
         then_fn(self);
-        then_returned = self.returned;
+        let then_returned = self.returned;
         self.returned = false;
         if !then_returned { self.ir.jump(merge_block); }
 
@@ -431,12 +478,10 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
         self.ctx.vars = saved_vars.clone();
         self.ctx.var_struct_type = saved_struct_types.clone();
 
-        // Else branch
         self.ir.switch_to(else_block);
         self.ir.seal(else_block);
-        let mut else_returned = false;
         else_fn(self);
-        else_returned = self.returned;
+        let else_returned = self.returned;
         self.returned = false;
         if !else_returned { self.ir.jump(merge_block); }
 
@@ -453,7 +498,7 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
         self.if_else(cond, then_fn, |_| {});
     }
 
-    /// While loop. Condition and body both get closures.
+    /// While loop.
     pub fn while_loop(
         &mut self,
         cond_fn: impl FnOnce(&mut Body) -> Value,
@@ -477,7 +522,7 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
         self.ir.seal(body_block);
         body_fn(self);
         if !self.returned {
-            emit_loop_body_cleanup(&mut self.ir, &self.ctx);
+            emit_loop_body_cleanup(self.ir, &self.ctx);
             self.ir.jump(header);
         }
         self.returned = false;
@@ -541,7 +586,7 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
         body_fn(self);
 
         if !self.returned {
-            emit_loop_body_cleanup(&mut self.ir, &self.ctx);
+            emit_loop_body_cleanup(self.ir, &self.ctx);
             let cur = self.ir.load_var(idx_slot, &RocaType::Unknown);
             let one = self.ir.const_i64(1);
             let next = self.ir.iadd(cur, one);
@@ -560,19 +605,19 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
         self.ctx.loop_header = prev_header;
     }
 
-    /// Break out of the current loop.
+    /// Break out of current loop.
     pub fn break_loop(&mut self) {
         if let Some(exit) = self.ctx.loop_exit {
-            emit_loop_body_cleanup(&mut self.ir, &self.ctx);
+            emit_loop_body_cleanup(self.ir, &self.ctx);
             self.ir.raw().ins().jump(exit, &[]);
             self.returned = true;
         }
     }
 
-    /// Continue to next iteration of the current loop.
+    /// Continue to next iteration.
     pub fn continue_loop(&mut self) {
         if let Some(header) = self.ctx.loop_header {
-            emit_loop_body_cleanup(&mut self.ir, &self.ctx);
+            emit_loop_body_cleanup(self.ir, &self.ctx);
             self.ir.raw().ins().jump(header, &[]);
             self.returned = true;
         }
@@ -582,9 +627,9 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
 // ─── Returns ──────────────────────────────────────────
 
 impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
-    /// Return a value from the function.
+    /// Return a value.
     pub fn return_val(&mut self, val: Value) {
-        emit_scope_cleanup(&mut self.ir, &self.ctx, None);
+        emit_scope_cleanup(self.ir, &self.ctx, None);
         if self.ctx.returns_err {
             let no_err = self.ir.const_bool(false);
             self.ir.ret_with_err(val, no_err);
@@ -597,7 +642,7 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
     /// Return an error by name.
     pub fn return_err(&mut self, err_name: &str) {
         if self.ctx.returns_err {
-            emit_scope_cleanup(&mut self.ir, &self.ctx, None);
+            emit_scope_cleanup(self.ir, &self.ctx, None);
             let default_val = default_for_ir_type(self.ir.raw(), self.ctx.return_type);
             let tag = (err_name.bytes().fold(1u8, |a, c| a.wrapping_add(c))).max(1);
             let err_tag = self.ir.raw().ins().iconst(types::I8, tag as i64);
@@ -606,9 +651,9 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
         }
     }
 
-    /// Destructure a call that returns (value, err): let {name, err_name} = call(...)
-    pub fn let_result(&mut self, name: &str, err_name: &str, func_name: &str, args: &[Value]) -> (Value, Value) {
-        if let Some(func_ref) = self.ctx.get_func(func_name).copied() {
+    /// Destructure: let {name, err_name} = call(fn_name, args).
+    pub fn let_result(&mut self, name: &str, err_name: &str, fn_name: &str, args: &[Value]) -> (Value, Value) {
+        if let Some(func_ref) = self.ctx.get_func(fn_name).copied() {
             let results = self.ir.call_multi(func_ref, args);
             if results.len() >= 2 {
                 let val = results[0];
@@ -625,59 +670,111 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
         (self.ir.null(), self.ir.const_bool(false))
     }
 
-    /// Check if the body has returned (useful for knowing when to emit default return).
-    pub fn has_returned(&self) -> bool {
-        self.returned
-    }
+    pub fn has_returned(&self) -> bool { self.returned }
 }
 
-// ─── Helpers (absorbed from emit_helpers) ─────────────
+// ─── Type Inference ───────────────────────────────────
 
 impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
-    /// Infer the RocaType of an AST expression from its structure and context.
+    /// Infer the RocaType of an AST expression.
     pub fn infer_type(&self, expr: &roca::Expr) -> RocaType {
         ast_infer_kind(expr, &self.ctx)
     }
+}
 
-    /// Infer the RocaType of an expression used as a method call target.
-    pub fn target_type(&mut self, expr: &roca::Expr) -> RocaType {
-        crate::emit_helpers::target_kind(expr, &mut self.ctx)
+// ─── Async ────────────────────────────────────────────
+
+impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
+    /// Wait for a single async expression.
+    pub fn wait_single(&mut self, name: &str, val: Value) {
+        let cl_type = self.ir.value_ir_type(val);
+        let slot = self.ir.alloc_var(val);
+        self.ctx.set_var_kind(name.to_string(), slot.0, cl_type, RocaType::Unknown);
     }
 
-    /// Push a value onto an array (dispatches f64 vs ptr).
-    pub fn array_push(&mut self, arr: Value, val: Value) {
-        crate::emit_helpers::emit_array_push(self.ir, arr, val, &mut self.ctx);
-    }
+    // TODO: wait_all, wait_first — need function pointer array building
+}
 
-    /// Set a struct field by index (dispatches f64 vs ptr).
-    pub fn struct_set(&mut self, ptr: Value, idx: Value, val: Value) {
-        crate::emit_helpers::emit_struct_set(self.ir, ptr, idx, val, &mut self.ctx);
-    }
+// ─── Match ────────────────────────────────────────────
 
-    /// Get the length of an array or string.
-    pub fn length(&mut self, obj: Value, kind: RocaType) -> Value {
-        crate::emit_helpers::emit_length(self.ir, obj, kind, &mut self.ctx)
-    }
+/// Match arm for body.match_val().
+pub enum MatchArm {
+    /// Match against a constant value.
+    Value { pattern: Value, result: Value },
+    /// Match enum variant with bindings.
+    Variant { variant: String, bindings: Vec<String>, result: Value },
+}
 
-    /// Free a heap variable by its slot (used during reassignment).
-    pub fn free_var_slot(&mut self, slot: ir::StackSlot, cl_type: ir::Type, kind: RocaType) {
-        let refs = FreeRefs::from_ctx(&self.ctx);
-        emit_free_by_kind(self.ir, slot, cl_type, kind, &refs);
-    }
+impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
+    /// Match expression with arms and a default.
+    /// All block management is internal.
+    pub fn match_val(&mut self, scrutinee: Value, arms: &[MatchArm], default: Value) -> Value {
+        let is_float = self.ir.is_number(scrutinee);
+        let result_type = if is_float { RocaType::Number } else { RocaType::Unknown };
 
-    /// Default/zero value for the function's return type.
-    pub fn default_return_value(&mut self) -> Value {
-        default_for_ir_type(self.ir.raw(), self.ctx.return_type)
-    }
+        let merge = self.ir.create_block();
+        self.ir.append_block_param(merge, &result_type);
+        let scrutinee_slot = self.ir.alloc_var(scrutinee);
 
-    /// Scope cleanup — release all live heap variables except skip_name.
-    /// Called automatically by return_val/return_err. Available for manual use.
-    pub fn cleanup_scope(&mut self, skip_name: Option<&str>) {
-        emit_scope_cleanup(self.ir, &self.ctx, skip_name);
-    }
+        for arm in arms {
+            match arm {
+                MatchArm::Value { pattern, result } => {
+                    let scr = self.ir.load_var(scrutinee_slot, &result_type);
+                    let cond = if is_float {
+                        self.ir.f_eq(scr, *pattern)
+                    } else if let Some(f) = self.ctx.get_func("__string_eq") {
+                        let eq = self.ir.call(*f, &[scr, *pattern]);
+                        self.ir.extend_bool(eq)
+                    } else {
+                        self.ir.i_eq(scr, *pattern)
+                    };
+                    let then_block = self.ir.create_block();
+                    let next_block = self.ir.create_block();
+                    self.ir.brif(cond, then_block, next_block);
+                    self.ir.switch_to(then_block);
+                    self.ir.seal(then_block);
+                    self.ir.jump_with(merge, *result);
+                    self.ir.switch_to(next_block);
+                    self.ir.seal(next_block);
+                }
+                MatchArm::Variant { variant, bindings, result } => {
+                    let scr = self.ir.load_var(scrutinee_slot, &RocaType::Unknown);
+                    let zero_idx = self.ir.const_i64(0);
+                    let tag_ptr = if let Some(&f) = self.ctx.get_func("__struct_get_ptr") {
+                        self.ir.call(f, &[scr, zero_idx])
+                    } else { self.ir.null() };
+                    let variant_cstr = self.ir.leak_cstr(variant);
+                    let cond = if let Some(&f) = self.ctx.get_func("__string_eq") {
+                        let eq = self.ir.call(f, &[tag_ptr, variant_cstr]);
+                        self.ir.extend_bool(eq)
+                    } else { self.ir.null() };
 
-    /// Loop body cleanup — release only vars created inside the loop body.
-    pub fn cleanup_loop_body(&mut self) {
-        emit_loop_body_cleanup(self.ir, &self.ctx);
+                    let then_block = self.ir.create_block();
+                    let next_block = self.ir.create_block();
+                    self.ir.brif(cond, then_block, next_block);
+                    self.ir.switch_to(then_block);
+                    self.ir.seal(then_block);
+
+                    let scr2 = self.ir.load_var(scrutinee_slot, &RocaType::Unknown);
+                    for (i, binding) in bindings.iter().enumerate() {
+                        let field_idx = self.ir.const_i64((i + 1) as i64);
+                        let val = if let Some(&f) = self.ctx.get_func("__struct_get_f64") {
+                            self.ir.call(f, &[scr2, field_idx])
+                        } else { self.ir.const_number(0.0) };
+                        let slot = self.ir.alloc_var(val);
+                        self.ctx.set_var_kind(binding.clone(), slot.0, types::F64, RocaType::Number);
+                    }
+
+                    self.ir.jump_with(merge, *result);
+                    self.ir.switch_to(next_block);
+                    self.ir.seal(next_block);
+                }
+            }
+        }
+
+        self.ir.jump_with(merge, default);
+        self.ir.switch_to(merge);
+        self.ir.seal(merge);
+        self.ir.block_param(merge, 0)
     }
 }
