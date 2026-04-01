@@ -91,6 +91,11 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
         self.ir.null()
     }
 
+    /// Default/zero value for a given type.
+    pub fn default_for(&mut self, ty: &RocaType) -> Value {
+        self.ir.default_for(ty)
+    }
+
     pub fn self_ref(&mut self) -> Value {
         if let Some(var) = self.ctx.get_var("self") {
             self.ir.raw().ins().stack_load(var.cranelift_type, var.slot, 0)

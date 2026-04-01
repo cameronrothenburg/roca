@@ -12,7 +12,8 @@ pub(crate) mod builder;
 pub mod api;
 
 // Public API
-pub use api::{Body, Function, ConstRef, MutRef, VarRef};
+pub use api::{Body, Function, Method, Struct, Satisfies, RocaEnum, ExternFn, ExternContract};
+pub use api::{ConstRef, MutRef, VarRef, StringPart, MatchArm, Value};
 pub use context::{CompiledFuncs, EmitCtx};
 pub use registry::{RuntimeFuncs, register_symbols, declare_runtime};
 pub use cranelift_type::CraneliftType;
