@@ -436,8 +436,12 @@ pub extern "C" fn roca_url_parse(raw: i64) -> (i64, u8) {
     }
 }
 
-pub extern "C" fn roca_url_free(ptr: i64) {
-    if ptr != 0 { unsafe { drop(Box::from_raw(ptr as *mut url::Url)); } }
+/// Free any Box-allocated opaque pointer (JSON, URL, HTTP response).
+pub extern "C" fn roca_box_free(ptr: i64) {
+    if ptr == 0 { return; }
+    // All boxed types use the same deallocation: reconstruct Box and drop.
+    // Safe because all callers only pass pointers from Box::into_raw.
+    unsafe { drop(Box::from_raw(ptr as *mut u8)); }
 }
 
 pub extern "C" fn roca_url_is_valid(raw: i64) -> u8 {
@@ -558,9 +562,6 @@ pub extern "C" fn roca_json_parse(text: i64) -> (i64, u8) {
     }
 }
 
-pub extern "C" fn roca_json_free(ptr: i64) {
-    if ptr != 0 { unsafe { drop(Box::from_raw(ptr as *mut serde_json::Value)); } }
-}
 
 pub extern "C" fn roca_json_stringify(json: i64) -> i64 {
     with_json(json, alloc_str("null"), |v| alloc_str(&v.to_string()))
@@ -692,9 +693,6 @@ pub extern "C" fn roca_http_delete(url: i64) -> (i64, u8) {
     box_response(http_request("DELETE", read_cstr(url), None))
 }
 
-pub extern "C" fn roca_http_free(ptr: i64) {
-    if ptr != 0 { unsafe { drop(Box::from_raw(ptr as *mut HttpResponse)); } }
-}
 
 pub extern "C" fn roca_http_status(resp: i64) -> f64 {
     with_resp(resp, 0.0, |r| r.status as f64)

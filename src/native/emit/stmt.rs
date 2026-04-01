@@ -70,7 +70,8 @@ pub fn emit_stmt(b: &mut FunctionBuilder, stmt: &Stmt, ctx: &mut EmitCtx, return
                     let rc_release = ctx.func_refs.get("__rc_release").copied();
                     let free_array = ctx.func_refs.get("__free_array").copied();
                     let free_struct = ctx.func_refs.get("__free_struct").copied();
-                    emit_free_by_kind(b, slot, cl_type, kind, rc_release, free_array, free_struct);
+                    let box_free = ctx.func_refs.get("__box_free").copied();
+                    emit_free_by_kind(b, slot, cl_type, kind, rc_release, free_array, free_struct, box_free);
                 }
                 let val = emit_expr(b, value, ctx);
                 b.ins().stack_store(val, slot, 0);
