@@ -8,10 +8,32 @@
 use std::collections::HashMap;
 use cranelift_codegen::ir::{self, types, Value, InstBuilder};
 use cranelift_frontend::FunctionBuilder;
-use roca_types::{RocaType, CleanupStrategy};
+use roca_types::RocaType;
 
 use crate::helpers::{call_void, load_slot};
 use crate::emit_helpers::FreeRefs;
+
+/// Cleanup strategy for heap-managed types — Cranelift-specific.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum CleanupStrategy {
+    RcRelease,
+    FreeArray,
+    FreeStruct { heap_fields: u32 },
+    FreeEnum,
+    BoxFree,
+    None,
+}
+
+/// Default cleanup strategy for a RocaType.
+pub fn default_cleanup(ty: &RocaType) -> CleanupStrategy {
+    match ty {
+        RocaType::String => CleanupStrategy::RcRelease,
+        RocaType::Array(_) => CleanupStrategy::FreeArray,
+        RocaType::Map(_, _) | RocaType::Struct(_) => CleanupStrategy::FreeStruct { heap_fields: 0 },
+        RocaType::Enum(_) => CleanupStrategy::FreeEnum,
+        _ => CleanupStrategy::None,
+    }
+}
 
 /// Cleanup overrides for named types (Json → BoxFree, Url → BoxFree, etc.).
 /// Backends register these at startup. User extern contracts can register too.
@@ -42,7 +64,7 @@ impl CleanupRegistry {
                 return strategy;
             }
         }
-        ty.default_cleanup()
+        default_cleanup(ty)
     }
 }
 

@@ -63,10 +63,11 @@ pub enum StringPart {
 // ─── Body ─────────────────────────────────────────────
 
 /// Roca scope — wraps IR builder + context. Every Roca construct is a method.
+/// Fields are private — all access goes through typed methods.
 pub struct Body<'a, 'b: 'a, 'c> {
-    pub ir: &'c mut IrBuilder<'a, 'b>,
-    pub ctx: EmitCtx,
-    pub returned: bool,
+    pub(crate) ir: &'c mut IrBuilder<'a, 'b>,
+    pub(crate) ctx: EmitCtx,
+    pub(crate) returned: bool,
 }
 
 // ─── Expressions ──────────────────────────────────────
@@ -627,5 +628,56 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
     /// Check if the body has returned (useful for knowing when to emit default return).
     pub fn has_returned(&self) -> bool {
         self.returned
+    }
+}
+
+// ─── Helpers (absorbed from emit_helpers) ─────────────
+
+impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
+    /// Infer the RocaType of an AST expression from its structure and context.
+    pub fn infer_type(&self, expr: &roca::Expr) -> RocaType {
+        ast_infer_kind(expr, &self.ctx)
+    }
+
+    /// Infer the RocaType of an expression used as a method call target.
+    pub fn target_type(&mut self, expr: &roca::Expr) -> RocaType {
+        crate::emit_helpers::target_kind(expr, &mut self.ctx)
+    }
+
+    /// Push a value onto an array (dispatches f64 vs ptr).
+    pub fn array_push(&mut self, arr: Value, val: Value) {
+        crate::emit_helpers::emit_array_push(self.ir, arr, val, &mut self.ctx);
+    }
+
+    /// Set a struct field by index (dispatches f64 vs ptr).
+    pub fn struct_set(&mut self, ptr: Value, idx: Value, val: Value) {
+        crate::emit_helpers::emit_struct_set(self.ir, ptr, idx, val, &mut self.ctx);
+    }
+
+    /// Get the length of an array or string.
+    pub fn length(&mut self, obj: Value, kind: RocaType) -> Value {
+        crate::emit_helpers::emit_length(self.ir, obj, kind, &mut self.ctx)
+    }
+
+    /// Free a heap variable by its slot (used during reassignment).
+    pub fn free_var_slot(&mut self, slot: ir::StackSlot, cl_type: ir::Type, kind: RocaType) {
+        let refs = FreeRefs::from_ctx(&self.ctx);
+        emit_free_by_kind(self.ir, slot, cl_type, kind, &refs);
+    }
+
+    /// Default/zero value for the function's return type.
+    pub fn default_return_value(&mut self) -> Value {
+        default_for_ir_type(self.ir.raw(), self.ctx.return_type)
+    }
+
+    /// Scope cleanup — release all live heap variables except skip_name.
+    /// Called automatically by return_val/return_err. Available for manual use.
+    pub fn cleanup_scope(&mut self, skip_name: Option<&str>) {
+        emit_scope_cleanup(self.ir, &self.ctx, skip_name);
+    }
+
+    /// Loop body cleanup — release only vars created inside the loop body.
+    pub fn cleanup_loop_body(&mut self) {
+        emit_loop_body_cleanup(self.ir, &self.ctx);
     }
 }

@@ -5,3 +5,6 @@ edition.workspace = true
 license.workspace = true
 description = "Shared type system for the Roca compiler — used by all stages"
 repository.workspace = true
+
+[dependencies]
+roca-ast.workspace = true
