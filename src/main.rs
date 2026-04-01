@@ -23,6 +23,88 @@ use cli::check::{check_file, check_directory};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+struct CommandInfo {
+    name: &'static str,
+    short_desc: &'static str,
+    usage: &'static str,
+    long_desc: &'static str,
+}
+
+static COMMANDS: &[CommandInfo] = &[
+    CommandInfo {
+        name: "init",
+        short_desc: "Create a new Roca project",
+        usage: "roca init <project-name>",
+        long_desc: "Create a new Roca project with roca.toml, src/, and a starter file.",
+    },
+    CommandInfo {
+        name: "skills",
+        short_desc: "Generate AI assistant skills",
+        usage: "roca skills [--claude]",
+        long_desc: "Generate AI assistant skills.\n  --claude  Include Claude Code integration files.",
+    },
+    CommandInfo {
+        name: "check",
+        short_desc: "Parse and check rules without emitting JS",
+        usage: "roca check [path]",
+        long_desc: "Parse and type-check .roca files without emitting JS.\nDefaults to src/ from roca.toml if no path given.",
+    },
+    CommandInfo {
+        name: "build",
+        short_desc: "Compile .roca files to JS with proof tests",
+        usage: "roca build [path] [--emit-only]",
+        long_desc: "Compile .roca files to JS with proof tests.\n  --emit-only  Skip native tests, emit JS directly.",
+    },
+    CommandInfo {
+        name: "test",
+        short_desc: "Build + run proof tests, then clean output",
+        usage: "roca test [path]",
+        long_desc: "Build and run proof tests, then clean output.",
+    },
+    CommandInfo {
+        name: "run",
+        short_desc: "Build + execute via Node.js",
+        usage: "roca run [path]",
+        long_desc: "Build and execute via Node.js.",
+    },
+    CommandInfo {
+        name: "gen-extern",
+        short_desc: "Generate extern contracts from TypeScript declarations",
+        usage: "roca gen-extern <file.d.ts> [--out <path>]",
+        long_desc: "Generate extern contracts from TypeScript declarations.",
+    },
+    CommandInfo {
+        name: "repl",
+        short_desc: "Interactive REPL (Node default, --native for Cranelift)",
+        usage: "roca repl [--native]",
+        long_desc: "Interactive REPL.\n  --native  Use Cranelift JIT instead of Node.js.",
+    },
+    CommandInfo {
+        name: "search",
+        short_desc: "Search stdlib and project for types/functions",
+        usage: "roca search <query>",
+        long_desc: "Search stdlib and project for types, methods, and functions.",
+    },
+    CommandInfo {
+        name: "patterns",
+        short_desc: "Show coding patterns and JS integration examples",
+        usage: "roca patterns",
+        long_desc: "Show coding patterns and JS integration examples.",
+    },
+    CommandInfo {
+        name: "lsp",
+        short_desc: "Start language server (stdio)",
+        usage: "roca lsp",
+        long_desc: "Start the language server (stdio transport).",
+    },
+    CommandInfo {
+        name: "man",
+        short_desc: "Full language manual with examples",
+        usage: "roca man",
+        long_desc: "Print the full language manual.",
+    },
+];
+
 fn main() {
     let args: Vec<String> = env::args().collect();
 
@@ -217,23 +299,11 @@ fn resolve_path_arg(args: &[String]) -> PathBuf {
 }
 
 fn print_subcommand_help(cmd: &str) {
-    match cmd {
-        "init" => println!("roca init <project-name>\n\nCreate a new Roca project with roca.toml, src/, and a starter file."),
-        "check" => println!("roca check [path]\n\nParse and type-check .roca files without emitting JS.\nDefaults to src/ from roca.toml if no path given."),
-        "build" => println!("roca build [path] [--emit-only]\n\nCompile .roca files to JS with proof tests.\n  --emit-only  Skip native tests, emit JS directly."),
-        "test" => println!("roca test [path]\n\nBuild and run proof tests, then clean output."),
-        "run" => println!("roca run [path]\n\nBuild and execute via Node.js or Bun."),
-        "repl" => println!("roca repl [--native]\n\nInteractive REPL.\n  --native  Use Cranelift JIT instead of Node.js."),
-        "search" => println!("roca search <query>\n\nSearch stdlib and project for types, methods, and functions."),
-        "gen-extern" => println!("roca gen-extern <file.d.ts> [--out <path>]\n\nGenerate extern contracts from TypeScript declarations."),
-        "skills" => println!("roca skills [--claude]\n\nGenerate AI assistant skills.\n  --claude  Include Claude Code integration files."),
-        "lsp" => println!("roca lsp\n\nStart the language server (stdio transport)."),
-        "man" => println!("roca man\n\nPrint the full language manual."),
-        "patterns" => println!("roca patterns\n\nShow coding patterns and JS integration examples."),
-        _ => {
-            eprintln!("unknown command: {}", cmd);
-            std::process::exit(1);
-        }
+    if let Some(info) = COMMANDS.iter().find(|c| c.name == cmd) {
+        println!("{}\n\n{}", info.usage, info.long_desc);
+    } else {
+        eprintln!("unknown command: {}", cmd);
+        std::process::exit(1);
     }
 }
 
@@ -248,18 +318,9 @@ fn print_help() {
     println!("  roca <command> [args]");
     println!();
     println!("COMMANDS:");
-    println!("  init <name>          Create a new Roca project");
-    println!("  skills [--claude]    Generate AI assistant skills");
-    println!("  check [path]         Parse and check rules without emitting JS");
-    println!("  build [path]         Compile .roca files to JS with proof tests");
-    println!("  test [path]          Build + run proof tests, then clean output");
-    println!("  run [path]           Build + execute via Node.js");
-    println!("  gen-extern <.d.ts>   Generate extern contracts from TypeScript declarations");
-    println!("  repl [--native]      Interactive REPL (Node default, --native for Cranelift)");
-    println!("  search <query>       Search stdlib and project for types/functions");
-    println!("  patterns             Show coding patterns and JS integration examples");
-    println!("  lsp                  Start language server (stdio)");
-    println!("  man                  Full language manual with examples");
+    for cmd in COMMANDS {
+        println!("  {:20} {}", cmd.name, cmd.short_desc);
+    }
     println!();
     println!("OPTIONS:");
     println!("  --version, -v        Print version");
