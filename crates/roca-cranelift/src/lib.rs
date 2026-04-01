@@ -13,7 +13,7 @@ pub mod api;
 
 // Public API
 pub use api::{Body, Function, Method, Struct, Satisfies, RocaEnum, ExternFn, ExternContract};
-pub use api::{ConstRef, MutRef, VarRef, StringPart, MatchArm, Value};
+pub use api::{ConstRef, MutRef, VarRef, StringPart, MatchArm, MatchArmLazy, LazyArmKind, Value};
 pub use context::{CompiledFuncs, EmitCtx};
 pub use registry::{RuntimeFuncs, register_symbols, declare_runtime};
 pub use cranelift_type::CraneliftType;

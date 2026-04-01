@@ -126,10 +126,26 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
         ConstRef { name: name.to_string(), slot, roca_type }
     }
 
+    /// Bind an immutable variable with an explicit type hint.
+    pub fn const_var_typed(&mut self, name: &str, val: Value, roca_type: RocaType) -> ConstRef {
+        let cl_type = self.ir.value_ir_type(val);
+        let slot = self.ir.alloc_var(val);
+        self.ctx.set_var_kind(name.to_string(), slot.0, cl_type, roca_type.clone());
+        ConstRef { name: name.to_string(), slot, roca_type }
+    }
+
     /// Bind a mutable variable.
     pub fn let_var(&mut self, name: &str, val: Value) -> MutRef {
         let roca_type = self.infer_value_type(val);
         let cl_type = roca_type.to_cranelift();
+        let slot = self.ir.alloc_var(val);
+        self.ctx.set_var_kind(name.to_string(), slot.0, cl_type, roca_type.clone());
+        MutRef { name: name.to_string(), slot, roca_type }
+    }
+
+    /// Bind a mutable variable with an explicit type hint.
+    pub fn let_var_typed(&mut self, name: &str, val: Value, roca_type: RocaType) -> MutRef {
+        let cl_type = self.ir.value_ir_type(val);
         let slot = self.ir.alloc_var(val);
         self.ctx.set_var_kind(name.to_string(), slot.0, cl_type, roca_type.clone());
         MutRef { name: name.to_string(), slot, roca_type }
@@ -147,6 +163,21 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
             }
         }
         self.ir.store_var(var.slot, val);
+    }
+
+    /// Reassign a variable by name. Frees old heap value, stores new value.
+    pub fn assign_name(&mut self, name: &str, val: Value) {
+        if let Some(var) = self.ctx.get_var(name) {
+            let slot = var.slot;
+            let is_heap = var.is_heap;
+            let cl_type = var.cranelift_type;
+            let kind = var.kind.clone();
+            if is_heap {
+                let refs = FreeRefs::from_ctx(&self.ctx);
+                emit_free_by_kind(self.ir, slot, cl_type, kind, &refs);
+            }
+            self.ir.raw().ins().stack_store(val, slot, 0);
+        }
     }
 
     /// Read a typed variable reference.
@@ -281,17 +312,21 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
             }
             "charCodeAt" => {
                 let idx = args.first().copied().unwrap_or_else(|| self.ir.null());
-                return self.call_runtime_2("__string_char_code_at", obj, idx);
+                let idx_i = self.ir.to_i64(idx);
+                return self.call_runtime_2("__string_char_code_at", obj, idx_i);
             }
             "charAt" => {
                 let idx = args.first().copied().unwrap_or_else(|| self.ir.null());
-                return self.call_runtime_2("__string_char_at", obj, idx);
+                let idx_i = self.ir.to_i64(idx);
+                return self.call_runtime_2("__string_char_at", obj, idx_i);
             }
             "slice" => {
                 let start = args.first().copied().unwrap_or_else(|| self.ir.null());
                 let end = args.get(1).copied().unwrap_or_else(|| self.ir.null());
+                let start_i = self.ir.to_i64(start);
+                let end_i = self.ir.to_i64(end);
                 if let Some(&f) = self.ctx.get_func("__string_slice") {
-                    return self.ir.call(f, &[obj, start, end]);
+                    return self.ir.call(f, &[obj, start_i, end_i]);
                 }
                 return obj;
             }
@@ -329,6 +364,28 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
     pub fn static_call(&mut self, type_name: &str, method: &str, args: &[Value]) -> Value {
         let qualified = format!("{}.{}", type_name, method);
         self.call(&qualified, args)
+    }
+
+    /// Get the function address of a pre-compiled closure by name.
+    pub fn closure_ref(&mut self, name: &str) -> Value {
+        if let Some(&func_ref) = self.ctx.get_func(name) {
+            self.ir.func_addr(func_ref)
+        } else {
+            self.ir.null()
+        }
+    }
+
+    /// Call a closure stored in a variable (indirect call through function pointer).
+    pub fn call_closure(&mut self, var_name: &str, args: &[Value]) -> Value {
+        if let Some(var) = self.ctx.get_var(var_name) {
+            if var.cranelift_type == ir::types::I64 {
+                let func_ptr = self.ir.raw().ins().stack_load(ir::types::I64, var.slot, 0);
+                let sig_ref = self.ir.closure_signature(args.len());
+                let results = self.ir.call_indirect(sig_ref, func_ptr, args);
+                if !results.is_empty() { return results[0]; }
+            }
+        }
+        self.ir.null()
     }
 
     /// Log a value (dispatches by type).
@@ -581,19 +638,151 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
         ptr
     }
 
-    /// Struct field access.
+    /// Struct field access by name — resolves through struct layout.
     pub fn field_access(&mut self, obj: Value, field: &str) -> Value {
-        // Check struct layout for typed field access
-        // (simplified — full implementation needs var_struct_type resolution)
+        // Fallback: generic access
         let idx = self.ir.const_i64(0);
         if let Some(f) = self.ctx.get_func("__struct_get_ptr") {
             self.ir.call(*f, &[obj, idx])
         } else { self.ir.null() }
     }
 
+    /// Field access on a named variable — resolves struct layout + field type.
+    pub fn field_access_on(&mut self, var_name: &str, obj: Value, field: &str) -> Value {
+        if let Some(struct_name) = self.ctx.var_struct_type.get(var_name).cloned() {
+            if let Some(layout) = self.ctx.struct_layouts.get(&struct_name) {
+                if let Some(idx) = layout.field_index(field) {
+                    let field_kind = layout.field_kind(field);
+                    let idx_val = self.ir.const_i64(idx as i64);
+                    return if field_kind == RocaType::Number {
+                        if let Some(f) = self.ctx.get_func("__struct_get_f64") { self.ir.call(*f, &[obj, idx_val]) }
+                        else { self.ir.const_number(0.0) }
+                    } else {
+                        if let Some(f) = self.ctx.get_func("__struct_get_ptr") { self.ir.call(*f, &[obj, idx_val]) }
+                        else { self.ir.null() }
+                    };
+                }
+            }
+        }
+        // Fallback: use var kind for proper length dispatch
+        match field {
+            "length" | "len" => {
+                let kind = self.ctx.get_var(var_name)
+                    .map(|v| v.kind.clone())
+                    .unwrap_or(RocaType::Unknown);
+                self.length_with_kind(obj, kind)
+            }
+            _ => obj,
+        }
+    }
+
+    /// Set a struct field by name on a named variable.
+    pub fn field_assign(&mut self, var_name: &str, field: &str, val: Value) {
+        if let Some(struct_name) = self.ctx.var_struct_type.get(var_name).cloned() {
+            if let Some(layout) = self.ctx.struct_layouts.get(&struct_name) {
+                if let Some(idx) = layout.field_index(field) {
+                    let obj = self.var(var_name);
+                    let idx_val = self.ir.const_i64(idx as i64);
+                    self.struct_set(obj, idx_val, val);
+                }
+            }
+        }
+    }
+
+    /// Set a field on a struct pointer at the given index value.
+    pub fn struct_set(&mut self, ptr: Value, idx: Value, val: Value) {
+        crate::emit_helpers::emit_struct_set(self.ir, ptr, idx, val, &mut self.ctx);
+    }
+
+    /// Struct literal with constraint validation.
+    pub fn struct_lit_checked(
+        &mut self,
+        name: &str,
+        fields: &[(&str, Value)],
+        field_defs: Option<&[roca::Field]>,
+    ) -> Value {
+        // Register layout if not present
+        if !self.ctx.struct_layouts.contains_key(name) {
+            let layout_fields: Vec<(String, RocaType)> = fields.iter()
+                .map(|(n, v)| {
+                    let kind = if self.ir.is_number(*v) { RocaType::Number }
+                    else if self.ir.value_ir_type(*v) == types::I8 { RocaType::Bool }
+                    else { RocaType::Unknown };
+                    (n.to_string(), kind)
+                })
+                .collect();
+            self.ctx.struct_layouts.insert(name.to_string(), StructLayout { fields: layout_fields });
+        }
+
+        let num_fields = self.ir.const_i64(fields.len() as i64);
+        let ptr = if let Some(f) = self.ctx.get_func("__struct_alloc") {
+            self.ir.call(*f, &[num_fields])
+        } else { return self.ir.null(); };
+
+        let indices: Vec<usize> = {
+            let layout = self.ctx.struct_layouts.get(name).unwrap();
+            fields.iter().map(|(n, _)| layout.field_index(n).unwrap_or(0)).collect()
+        };
+
+        for (i, &(_, val)) in fields.iter().enumerate() {
+            let idx_val = self.ir.const_i64(indices[i] as i64);
+            crate::emit_helpers::emit_struct_set(self.ir, ptr, idx_val, val, &mut self.ctx);
+        }
+
+        // Constraint validation
+        if let Some(defs) = field_defs {
+            let layout = self.ctx.struct_layouts.get(name).cloned();
+            for field_def in defs {
+                if field_def.constraints.is_empty() { continue; }
+                let layout_idx = layout.as_ref().and_then(|l| l.field_index(&field_def.name));
+                if fields.iter().any(|(n, _)| *n == field_def.name) && layout_idx.is_some() {
+                    let is_string = matches!(field_def.type_ref, roca::TypeRef::String);
+                    let field_idx = self.ir.const_i64(layout_idx.unwrap() as i64);
+                    let get_fn = if is_string { "__struct_get_ptr" } else { "__struct_get_f64" };
+                    if let Some(&get) = self.ctx.get_func(get_fn) {
+                        let val = self.ir.call(get, &[ptr, field_idx]);
+                        self.validate_constraints(val, is_string, &field_def.name, &field_def.constraints);
+                    }
+                }
+            }
+        }
+
+        ptr
+    }
+
+    /// Pop last element from an array.
+    pub fn array_pop(&mut self, arr: Value) -> Value {
+        if let Some(&get) = self.ctx.get_func("__array_get_f64") {
+            if let Some(&len_fn) = self.ctx.get_func("__array_len") {
+                let len = self.ir.call(len_fn, &[arr]);
+                let one = self.ir.const_i64(1);
+                let last_idx = self.ir.isub(len, one);
+                return self.ir.call(get, &[arr, last_idx]);
+            }
+        }
+        self.ir.const_number(0.0)
+    }
+
+    /// Release a reference-counted value (for temp string cleanup).
+    pub fn release_rc(&mut self, val: Value) {
+        if let Some(&f) = self.ctx.get_func("__rc_release") {
+            self.ir.call_void(f, &[val]);
+        }
+    }
+
+    /// Check if a value is a number type.
+    pub fn is_number(&self, val: Value) -> bool {
+        self.ir.is_number(val)
+    }
+
     /// Get length of array or string.
     pub fn length(&mut self, obj: Value) -> Value {
         let kind = if self.ir.is_number(obj) { RocaType::Number } else { RocaType::Unknown };
+        crate::emit_helpers::emit_length(self.ir, obj, kind, &mut self.ctx)
+    }
+
+    /// Get length with explicit kind hint.
+    pub fn length_with_kind(&mut self, obj: Value, kind: RocaType) -> Value {
         crate::emit_helpers::emit_length(self.ir, obj, kind, &mut self.ctx)
     }
 
@@ -857,6 +1046,22 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
     pub fn infer_type(&self, expr: &roca::Expr) -> RocaType {
         ast_infer_kind(expr, &self.ctx)
     }
+
+    /// Check if a function name is registered in compiled functions.
+    pub fn has_func(&self, name: &str) -> bool {
+        self.ctx.get_func(name).is_some()
+    }
+
+    /// Get struct field definitions (for constraint validation).
+    pub fn struct_defs(&self, name: &str) -> Option<Vec<roca::Field>> {
+        self.ctx.struct_defs.get(name).cloned()
+    }
+
+    /// Check if a name.variant is a known enum variant.
+    pub fn is_enum_variant(&self, type_name: &str, variant: &str) -> bool {
+        self.ctx.enum_variants.get(type_name)
+            .map_or(false, |vs| vs.contains(&variant.to_string()))
+    }
 }
 
 // ─── Async ────────────────────────────────────────────
@@ -869,7 +1074,307 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
         self.ctx.set_var_kind(name.to_string(), slot.0, cl_type, RocaType::Unknown);
     }
 
-    // TODO: wait_all, wait_first — need function pointer array building
+    /// Wait for a single async expression with type hint.
+    pub fn wait_single_typed(&mut self, name: &str, val: Value, kind: RocaType) {
+        let cl_type = self.ir.value_ir_type(val);
+        let slot = self.ir.alloc_var(val);
+        self.ctx.set_var_kind(name.to_string(), slot.0, cl_type, kind);
+    }
+
+    /// Bind a failed_name variable to false (used for wait statements).
+    pub fn bind_failed(&mut self, failed_name: &str) {
+        let false_val = self.ir.const_bool(false);
+        let err_slot = self.ir.alloc_var(false_val);
+        self.ctx.set_var_kind(failed_name.to_string(), err_slot.0, types::I8, RocaType::Bool);
+    }
+
+    /// Build a function-pointer array from pre-compiled wait function names.
+    fn build_wait_fn_array(&mut self, fn_names: &[String]) -> (Value, Value) {
+        let arr = if let Some(&arr_new) = self.ctx.get_func("__array_new") {
+            self.ir.call(arr_new, &[])
+        } else {
+            self.ir.null()
+        };
+        for name in fn_names {
+            if let Some(&func_ref) = self.ctx.get_func(name) {
+                let ptr = self.ir.func_addr(func_ref);
+                if let Some(&push) = self.ctx.get_func("__array_push_str") {
+                    self.ir.call_void(push, &[arr, ptr]);
+                }
+            }
+        }
+        let count = self.ir.const_i64(fn_names.len() as i64);
+        (arr, count)
+    }
+
+    /// Wait for all async functions, bind results to names.
+    pub fn wait_all(&mut self, names: &[String], failed_name: &str, fn_names: &[String]) {
+        let (arr, count) = self.build_wait_fn_array(fn_names);
+        if let Some(&wait_all) = self.ctx.get_func("__wait_all") {
+            let results = self.ir.call(wait_all, &[arr, count]);
+            for (i, name) in names.iter().enumerate() {
+                if let Some(&get) = self.ctx.get_func("__array_get_f64") {
+                    let idx = self.ir.const_i64(i as i64);
+                    let val = self.ir.call(get, &[results, idx]);
+                    let slot = self.ir.alloc_var(val);
+                    self.ctx.set_var_kind(name.clone(), slot.0, types::F64, RocaType::Number);
+                }
+            }
+        }
+        self.bind_failed(failed_name);
+    }
+
+    /// Wait for the first async function to complete.
+    pub fn wait_first(&mut self, names: &[String], failed_name: &str, fn_names: &[String]) {
+        let (arr, count) = self.build_wait_fn_array(fn_names);
+        if let Some(&wait_first) = self.ctx.get_func("__wait_first") {
+            let val = self.ir.call(wait_first, &[arr, count]);
+            if !names.is_empty() {
+                let slot = self.ir.alloc_var(val);
+                self.ctx.set_var_kind(names[0].clone(), slot.0, types::F64, RocaType::Number);
+            }
+        }
+        self.bind_failed(failed_name);
+    }
+}
+
+// ─── Constraints ─────────────────────────────────────
+
+impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
+    /// Validate parameter constraints at function entry.
+    pub fn validate_param_constraints(&mut self, params: &[roca::Param]) {
+        for param in params {
+            if param.constraints.is_empty() { continue; }
+            let var = match self.ctx.get_var(&param.name) {
+                Some(v) => v.clone(),
+                None => continue,
+            };
+            let val = self.ir.raw().ins().stack_load(var.cranelift_type, var.slot, 0);
+            let is_string = matches!(param.type_ref, roca::TypeRef::String);
+            self.validate_constraints(val, is_string, &param.name, &param.constraints);
+        }
+    }
+
+    /// Validate constraints on a value.
+    pub fn validate_constraints(
+        &mut self,
+        val: Value,
+        is_string: bool,
+        name: &str,
+        constraints: &[roca::Constraint],
+    ) {
+        for constraint in constraints {
+            match constraint {
+                roca::Constraint::Min(n) if !is_string => {
+                    let min_val = self.ir.const_number(*n);
+                    let cmp = self.ir.raw().ins().fcmp(ir::condcodes::FloatCC::LessThan, val, min_val);
+                    let cmp_ext = self.ir.extend_bool(cmp);
+                    self.emit_constraint_trap(cmp_ext, name, &format!("must be >= {}", n));
+                }
+                roca::Constraint::Max(n) if !is_string => {
+                    let max_val = self.ir.const_number(*n);
+                    let cmp = self.ir.raw().ins().fcmp(ir::condcodes::FloatCC::GreaterThan, val, max_val);
+                    let cmp_ext = self.ir.extend_bool(cmp);
+                    self.emit_constraint_trap(cmp_ext, name, &format!("must be <= {}", n));
+                }
+                roca::Constraint::Min(n) | roca::Constraint::MinLen(n) if is_string => {
+                    if let Some(&len_fn) = self.ctx.get_func("__string_len") {
+                        let len = self.ir.call(len_fn, &[val]);
+                        let min_val = self.ir.const_i64(*n as i64);
+                        let cmp = self.ir.raw().ins().icmp(ir::condcodes::IntCC::SignedLessThan, len, min_val);
+                        let cmp_ext = self.ir.extend_bool(cmp);
+                        self.emit_constraint_trap(cmp_ext, name, &format!("min length {}", n));
+                    }
+                }
+                roca::Constraint::Max(n) | roca::Constraint::MaxLen(n) if is_string => {
+                    if let Some(&len_fn) = self.ctx.get_func("__string_len") {
+                        let len = self.ir.call(len_fn, &[val]);
+                        let max_val = self.ir.const_i64(*n as i64);
+                        let cmp = self.ir.raw().ins().icmp(ir::condcodes::IntCC::SignedGreaterThan, len, max_val);
+                        let cmp_ext = self.ir.extend_bool(cmp);
+                        self.emit_constraint_trap(cmp_ext, name, &format!("max length {}", n));
+                    }
+                }
+                roca::Constraint::Contains(s) => {
+                    let needle = self.ir.leak_cstr(s);
+                    if let Some(&includes) = self.ctx.get_func("__string_includes") {
+                        let result = self.ir.call(includes, &[val, needle]);
+                        let not_result = {
+                            let ext = self.ir.extend_bool(result);
+                            let one = self.ir.const_i64(1);
+                            self.ir.isub(one, ext)
+                        };
+                        self.emit_constraint_trap(not_result, name, &format!("must contain \"{}\"", s));
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Emit a constraint violation trap: if cond is non-zero, print error and return default.
+    fn emit_constraint_trap(&mut self, cond: Value, field: &str, msg: &str) {
+        let trap_block = self.ir.create_block();
+        let ok_block = self.ir.create_block();
+        self.ir.brif(cond, trap_block, ok_block);
+
+        self.ir.switch_to(trap_block);
+        self.ir.seal(trap_block);
+        let err_msg = self.ir.leak_cstr(&format!("{}: {}", field, msg));
+        if let Some(&panic_fn) = self.ctx.get_func("__constraint_panic") {
+            self.ir.call_void(panic_fn, &[err_msg]);
+        }
+        let default = default_for_ir_type(self.ir.raw(), self.ctx.return_type);
+        if self.ctx.returns_err {
+            let err_tag = self.ir.raw().ins().iconst(types::I8, 1);
+            self.ir.ret_with_err(default, err_tag);
+        } else {
+            self.ir.ret(default);
+        }
+
+        self.ir.switch_to(ok_block);
+        self.ir.seal(ok_block);
+    }
+}
+
+// ─── Inline Map/Filter ──────────────────────────────
+
+impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
+    /// Inline map: iterate arr, apply body_fn to each element, collect results.
+    pub fn inline_map(
+        &mut self,
+        arr: Value,
+        binding: &str,
+        body_fn: impl FnOnce(&mut Body) -> Value,
+    ) -> Value {
+        let result_arr = if let Some(&f) = self.ctx.get_func("__array_new") {
+            self.ir.call(f, &[])
+        } else { return self.ir.null(); };
+
+        let len = if let Some(&f) = self.ctx.get_func("__array_len") {
+            self.ir.call(f, &[arr])
+        } else { return result_arr; };
+        let len_slot = self.ir.alloc_var(len);
+        let arr_slot = self.ir.alloc_var(arr);
+        let result_slot = self.ir.alloc_var(result_arr);
+
+        let zero = self.ir.null();
+        let idx_slot = self.ir.alloc_var(zero);
+        let header = self.ir.create_block();
+        let body_block = self.ir.create_block();
+        let exit = self.ir.create_block();
+
+        self.ir.jump(header);
+        self.ir.switch_to(header);
+        let idx = self.ir.raw().ins().stack_load(types::I64, idx_slot.0, 0);
+        let len_val = self.ir.raw().ins().stack_load(types::I64, len_slot.0, 0);
+        let cond = self.ir.raw().ins().icmp(ir::condcodes::IntCC::SignedLessThan, idx, len_val);
+        self.ir.brif(cond, body_block, exit);
+
+        self.ir.switch_to(body_block);
+        self.ir.seal(body_block);
+
+        let cur_idx = self.ir.raw().ins().stack_load(types::I64, idx_slot.0, 0);
+        let cur_arr = self.ir.raw().ins().stack_load(types::I64, arr_slot.0, 0);
+        let elem = if let Some(&f) = self.ctx.get_func("__array_get_f64") {
+            self.ir.call(f, &[cur_arr, cur_idx])
+        } else { self.ir.const_number(0.0) };
+
+        let elem_slot = self.ir.alloc_var(elem);
+        self.ctx.set_var_kind(binding.to_string(), elem_slot.0, types::F64, RocaType::Number);
+
+        let result = body_fn(self);
+
+        let res_arr = self.ir.raw().ins().stack_load(types::I64, result_slot.0, 0);
+        crate::emit_helpers::emit_array_push(self.ir, res_arr, result, &mut self.ctx);
+
+        let next_idx = self.ir.raw().ins().stack_load(types::I64, idx_slot.0, 0);
+        let one = self.ir.const_i64(1);
+        let incremented = self.ir.iadd(next_idx, one);
+        self.ir.raw().ins().stack_store(incremented, idx_slot.0, 0);
+        self.ir.jump(header);
+        self.ir.seal(header);
+
+        self.ir.switch_to(exit);
+        self.ir.seal(exit);
+
+        self.ir.raw().ins().stack_load(types::I64, result_slot.0, 0)
+    }
+
+    /// Inline filter: iterate arr, keep elements where body_fn returns truthy.
+    pub fn inline_filter(
+        &mut self,
+        arr: Value,
+        binding: &str,
+        body_fn: impl FnOnce(&mut Body) -> Value,
+    ) -> Value {
+        let result_arr = if let Some(&f) = self.ctx.get_func("__array_new") {
+            self.ir.call(f, &[])
+        } else { return self.ir.null(); };
+
+        let len = if let Some(&f) = self.ctx.get_func("__array_len") {
+            self.ir.call(f, &[arr])
+        } else { return result_arr; };
+        let len_slot = self.ir.alloc_var(len);
+        let arr_slot = self.ir.alloc_var(arr);
+        let result_slot = self.ir.alloc_var(result_arr);
+
+        let zero = self.ir.null();
+        let idx_slot = self.ir.alloc_var(zero);
+        let header = self.ir.create_block();
+        let body_block = self.ir.create_block();
+        let exit = self.ir.create_block();
+
+        self.ir.jump(header);
+        self.ir.switch_to(header);
+        let idx = self.ir.raw().ins().stack_load(types::I64, idx_slot.0, 0);
+        let len_val = self.ir.raw().ins().stack_load(types::I64, len_slot.0, 0);
+        let cond = self.ir.raw().ins().icmp(ir::condcodes::IntCC::SignedLessThan, idx, len_val);
+        self.ir.brif(cond, body_block, exit);
+
+        self.ir.switch_to(body_block);
+        self.ir.seal(body_block);
+
+        let cur_idx = self.ir.raw().ins().stack_load(types::I64, idx_slot.0, 0);
+        let cur_arr = self.ir.raw().ins().stack_load(types::I64, arr_slot.0, 0);
+        let elem = if let Some(&f) = self.ctx.get_func("__array_get_f64") {
+            self.ir.call(f, &[cur_arr, cur_idx])
+        } else { self.ir.const_number(0.0) };
+
+        let elem_slot = self.ir.alloc_var(elem);
+        self.ctx.set_var_kind(binding.to_string(), elem_slot.0, types::F64, RocaType::Number);
+
+        let result = body_fn(self);
+
+        // Conditional push: if result is truthy, push element
+        let then_push = self.ir.create_block();
+        let after_push = self.ir.create_block();
+        self.ir.brif(result, then_push, after_push);
+
+        self.ir.switch_to(then_push);
+        self.ir.seal(then_push);
+        let push_elem = self.ir.raw().ins().stack_load(types::F64, elem_slot.0, 0);
+        let res_arr = self.ir.raw().ins().stack_load(types::I64, result_slot.0, 0);
+        if let Some(&f) = self.ctx.get_func("__array_push_f64") {
+            self.ir.call_void(f, &[res_arr, push_elem]);
+        }
+        self.ir.jump(after_push);
+
+        self.ir.switch_to(after_push);
+        self.ir.seal(after_push);
+
+        let next_idx = self.ir.raw().ins().stack_load(types::I64, idx_slot.0, 0);
+        let one = self.ir.const_i64(1);
+        let incremented = self.ir.iadd(next_idx, one);
+        self.ir.raw().ins().stack_store(incremented, idx_slot.0, 0);
+        self.ir.jump(header);
+        self.ir.seal(header);
+
+        self.ir.switch_to(exit);
+        self.ir.seal(exit);
+
+        self.ir.raw().ins().stack_load(types::I64, result_slot.0, 0)
+    }
 }
 
 // ─── Match ────────────────────────────────────────────
@@ -954,4 +1459,130 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
         self.ir.seal(merge);
         self.ir.block_param(merge, 0)
     }
+
+    /// Match expression with lazy result evaluation.
+    /// Arms provide pattern data but result expressions are evaluated inside branches
+    /// via the emit_fn callback, allowing bindings to be available.
+    pub fn match_lazy<Arm>(
+        &mut self,
+        scrutinee: Value,
+        arms: &[Arm],
+        default_expr: &Option<roca::Expr>,
+        emit_fn: fn(&mut Body, &roca::Expr) -> Value,
+    ) -> Value
+    where
+        Arm: MatchArmLazy,
+    {
+        let is_float = self.ir.is_number(scrutinee);
+
+        // Infer result type: check default arm first (always concrete), then first arm
+        let result_type = if let Some(def) = default_expr {
+            let kind = self.infer_type(def);
+            if kind == RocaType::Number { RocaType::Number } else { RocaType::Unknown }
+        } else if let Some(first) = arms.first() {
+            let kind = self.infer_type(first.kind().value_expr());
+            if kind == RocaType::Number { RocaType::Number } else { RocaType::Unknown }
+        } else if is_float { RocaType::Number }
+        else { RocaType::Unknown };
+
+        let merge = self.ir.create_block();
+        self.ir.append_block_param(merge, &result_type);
+        let scrutinee_slot = self.ir.alloc_var(scrutinee);
+        let scr_type = if is_float { RocaType::Number } else { RocaType::Unknown };
+
+        for arm in arms {
+            match arm.kind() {
+                LazyArmKind::Value { pattern, value_expr } => {
+                    let scr = self.ir.load_var(scrutinee_slot, &scr_type);
+                    let cond = if is_float {
+                        self.ir.f_eq(scr, *pattern)
+                    } else if let Some(f) = self.ctx.get_func("__string_eq") {
+                        let eq = self.ir.call(*f, &[scr, *pattern]);
+                        self.ir.extend_bool(eq)
+                    } else {
+                        self.ir.i_eq(scr, *pattern)
+                    };
+                    let then_block = self.ir.create_block();
+                    let next_block = self.ir.create_block();
+                    self.ir.brif(cond, then_block, next_block);
+
+                    self.ir.switch_to(then_block);
+                    self.ir.seal(then_block);
+                    let result = emit_fn(self, value_expr);
+                    self.ir.jump_with(merge, result);
+
+                    self.ir.switch_to(next_block);
+                    self.ir.seal(next_block);
+                }
+                LazyArmKind::Variant { variant, bindings, value_expr } => {
+                    let scr = self.ir.load_var(scrutinee_slot, &RocaType::Unknown);
+                    let zero_idx = self.ir.const_i64(0);
+                    let tag_ptr = if let Some(&f) = self.ctx.get_func("__struct_get_ptr") {
+                        self.ir.call(f, &[scr, zero_idx])
+                    } else { self.ir.null() };
+                    let variant_cstr = self.ir.leak_cstr(variant);
+                    let cond = if let Some(&f) = self.ctx.get_func("__string_eq") {
+                        let eq = self.ir.call(f, &[tag_ptr, variant_cstr]);
+                        self.ir.extend_bool(eq)
+                    } else { self.ir.null() };
+
+                    let then_block = self.ir.create_block();
+                    let next_block = self.ir.create_block();
+                    self.ir.brif(cond, then_block, next_block);
+
+                    self.ir.switch_to(then_block);
+                    self.ir.seal(then_block);
+
+                    // Bind variant data fields
+                    let scr2 = self.ir.load_var(scrutinee_slot, &RocaType::Unknown);
+                    for (i, binding) in bindings.iter().enumerate() {
+                        let field_idx = self.ir.const_i64((i + 1) as i64);
+                        let val = if let Some(&f) = self.ctx.get_func("__struct_get_f64") {
+                            self.ir.call(f, &[scr2, field_idx])
+                        } else { self.ir.const_number(0.0) };
+                        let slot = self.ir.alloc_var(val);
+                        self.ctx.set_var_kind(binding.clone(), slot.0, types::F64, RocaType::Number);
+                    }
+
+                    let result = emit_fn(self, value_expr);
+                    self.ir.jump_with(merge, result);
+
+                    self.ir.switch_to(next_block);
+                    self.ir.seal(next_block);
+                }
+            }
+        }
+
+        let default_val = if let Some(expr) = default_expr {
+            emit_fn(self, expr)
+        } else {
+            self.ir.default_for(&result_type)
+        };
+        self.ir.jump_with(merge, default_val);
+
+        self.ir.switch_to(merge);
+        self.ir.seal(merge);
+        self.ir.block_param(merge, 0)
+    }
+}
+
+/// Kind of a lazy match arm.
+pub enum LazyArmKind<'a> {
+    Value { pattern: &'a Value, value_expr: &'a roca::Expr },
+    Variant { variant: &'a str, bindings: &'a [String], value_expr: &'a roca::Expr },
+}
+
+impl<'a> LazyArmKind<'a> {
+    /// Get the value expression for type inference.
+    pub fn value_expr(&self) -> &'a roca::Expr {
+        match self {
+            LazyArmKind::Value { value_expr, .. } => value_expr,
+            LazyArmKind::Variant { value_expr, .. } => value_expr,
+        }
+    }
+}
+
+/// Trait for accessing match arm data lazily.
+pub trait MatchArmLazy {
+    fn kind(&self) -> LazyArmKind<'_>;
 }

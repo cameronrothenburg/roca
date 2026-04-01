@@ -1,7 +1,5 @@
 //! Native engine — Cranelift JIT compilation for proof tests and native execution.
 
-pub mod types;
-pub mod helpers;
 pub mod runtime;
 pub mod emit;
 pub mod test_runner;

@@ -55,6 +55,19 @@ impl Function {
         self
     }
 
+    /// Add a single parameter by name and type.
+    pub fn param(mut self, name: &str, roca_type: RocaType) -> Self {
+        self.params.push(Param { name: name.to_string(), roca_type, constraints: Vec::new() });
+        self
+    }
+
+    /// Add a single parameter with constraints.
+    pub fn param_with_constraints(mut self, name: &str, roca_type: RocaType, constraints: Vec<roca_ast::Constraint>) -> Self {
+        let converted: Vec<rt::Constraint> = constraints.iter().map(rt::Constraint::from).collect();
+        self.params.push(Param { name: name.to_string(), roca_type, constraints: converted });
+        self
+    }
+
     /// Set return type.
     pub fn returns(mut self, roca_type: RocaType) -> Self {
         self.return_type = roca_type;
@@ -90,6 +103,12 @@ impl Function {
     /// Optionally set crash block.
     pub fn crash_opt(self, crash: Option<&roca_ast::CrashBlock>) -> Self {
         if let Some(c) = crash { self.crash(c) } else { self }
+    }
+
+    /// Register a single crash handler for a call.
+    pub fn crash_handler(mut self, call_name: &str, strategy: &CrashHandlerKind) -> Self {
+        self.crash_handlers.insert(call_name.to_string(), strategy.clone());
+        self
     }
 
     pub fn with_return_kinds(mut self, kinds: HashMap<String, RocaType>) -> Self {

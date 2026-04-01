@@ -1674,9 +1674,6 @@ dependencies = [
 [[package]]
 name = "roca-ast"
 version = "0.3.0"
-dependencies = [
- "roca-types",
-]
 
 [[package]]
 name = "roca-check"
@@ -1801,6 +1798,9 @@ dependencies = [
 [[package]]
 name = "roca-types"
 version = "0.3.0"
+dependencies = [
+ "roca-ast",
+]
 
 [[package]]
 name = "rocalang"

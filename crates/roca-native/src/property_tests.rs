@@ -6,9 +6,10 @@ use cranelift_jit::JITModule;
 use cranelift_module::{Module, Linkage};
 
 use roca_ast as ast;
+use roca_cranelift::CraneliftType;
 use roca_ast::{Expr, TypeRef, Constraint};
 use super::test_runner::*;
-use super::types::roca_to_cranelift;
+
 
 const ROUNDS: usize = 50;
 
@@ -125,7 +126,7 @@ fn run_property(
             let (_val, err_tag) = call_with_err(ptr, &arity_func, &call_args);
             err_tag != 0
         } else {
-            let ret_type = roca_to_cranelift(&func.return_type);
+            let ret_type = roca_types::RocaType::from(&func.return_type).to_cranelift();
             if ret_type == types::F64 {
                 let _ = call_f64_fn(ptr, param_count, &call_args);
             } else if ret_type == types::I64 {

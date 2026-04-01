@@ -6,8 +6,9 @@ use cranelift_module::{Module, Linkage};
 use std::ffi::CStr;
 
 use roca_ast as ast;
+use roca_cranelift::CraneliftType;
 use roca_ast::{Expr, test_block::{TestBlock, TestCase}};
-use super::types::roca_to_cranelift;
+
 
 /// Result of running native proof tests
 pub struct NativeTestResult {
@@ -101,7 +102,7 @@ fn run_equals_test(
     failed: &mut usize,
     output: &mut String,
 ) {
-    let ret_type = roca_to_cranelift(&func.return_type);
+    let ret_type = roca_types::RocaType::from(&func.return_type).to_cranelift();
     let label = format_test_label(func, args);
 
     match ret_type {
@@ -229,9 +230,9 @@ pub(super) fn format_test_label(func: &ast::FnDef, args: &[Expr]) -> String {
 pub(super) fn build_sig(module: &JITModule, func: &ast::FnDef) -> cranelift_codegen::ir::Signature {
     let mut sig = module.make_signature();
     for p in &func.params {
-        sig.params.push(cranelift_codegen::ir::AbiParam::new(roca_to_cranelift(&p.type_ref)));
+        sig.params.push(cranelift_codegen::ir::AbiParam::new(roca_types::RocaType::from(&p.type_ref).to_cranelift()));
     }
-    sig.returns.push(cranelift_codegen::ir::AbiParam::new(roca_to_cranelift(&func.return_type)));
+    sig.returns.push(cranelift_codegen::ir::AbiParam::new(roca_types::RocaType::from(&func.return_type).to_cranelift()));
     sig
 }
 

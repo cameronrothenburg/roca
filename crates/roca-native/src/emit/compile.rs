@@ -1,4 +1,5 @@
 //! Top-level compilation: function declaration, closure pre-compilation, function/method bodies.
+//! Uses Function/Struct/Satisfies/ExternFn/ExternContract builders from roca-cranelift.
 
 use std::collections::HashMap;
 use cranelift_codegen::ir::types;
@@ -6,18 +7,16 @@ use cranelift_module::{Module, FuncId};
 
 use roca_ast::{self as roca};
 use roca_cranelift::api::Function;
-use roca_cranelift::builder::{FunctionCompiler, FunctionSpec};
-use roca_cranelift::cranelift_type::CraneliftType;
+use roca_cranelift::CraneliftType;
 use roca_types::RocaType;
 use crate::runtime::RuntimeFuncs;
-use roca_cranelift::context::{CompiledFuncs, EmitCtx, ValKind, StructLayout, VarInfo};
-use super::helpers::emit_scope_cleanup;
-use super::expr::emit_expr;
-use super::stmt::emit_stmt;
-use super::methods::emit_param_constraints;
+use roca_cranelift::context::CompiledFuncs;
+use super::emit::{emit_body, emit_expr, closure_hash};
 
-/// Build a map of function name → return ValKind from the source file.
-pub fn build_return_kind_map(source: &roca::SourceFile) -> HashMap<String, ValKind> {
+// ─── Metadata extraction ─────────────────────────────
+
+/// Build a map of function name → return RocaType from the source file.
+pub fn build_return_kind_map(source: &roca::SourceFile) -> HashMap<String, RocaType> {
     let mut map = HashMap::new();
     for item in &source.items {
         match item {
@@ -63,6 +62,8 @@ pub fn build_struct_def_map(source: &roca::SourceFile) -> HashMap<String, Vec<ro
     map
 }
 
+// ─── Forward declaration ─────────────────────────────
+
 /// Declare all functions in the module (signatures only, no bodies).
 /// This enables forward references — any function can call any other.
 pub fn declare_all_functions<M: Module>(
@@ -88,7 +89,6 @@ pub fn declare_all_functions<M: Module>(
             };
             if compiled.funcs.contains_key(&qualified) { continue; }
             let mut sig = module.make_signature();
-            // Struct methods get `self` (I64 struct pointer) as first param
             if struct_name.is_some() {
                 sig.params.push(AbiParam::new(types::I64));
             }
@@ -107,14 +107,15 @@ pub fn declare_all_functions<M: Module>(
     Ok(())
 }
 
+// ─── Closure pre-compilation ─────────────────────────
+
 /// Pre-compile all closures in a source file as top-level functions.
-/// Each closure gets a unique name based on its params and body hash.
 pub fn compile_closures<M: Module>(
     module: &mut M,
     source: &roca::SourceFile,
     rt: &RuntimeFuncs,
     compiled: &mut CompiledFuncs,
-    func_return_kinds: &HashMap<String, ValKind>,
+    func_return_kinds: &HashMap<String, RocaType>,
 ) -> Result<(), String> {
     let mut closures = Vec::new();
     for item in &source.items {
@@ -123,7 +124,7 @@ pub fn compile_closures<M: Module>(
         }
     }
     for (params, closure_body) in closures {
-        let name = format!("__closure_{}_{}", params.len(), super::expr::closure_hash(&params, &closure_body));
+        let name = format!("__closure_{}_{}", params.len(), closure_hash(&params, &closure_body));
         if compiled.funcs.contains_key(&name) { continue; }
 
         let mut func = Function::new(&name);
@@ -135,15 +136,12 @@ pub fn compile_closures<M: Module>(
 
         func.build(module, rt, compiled, |body| {
             let val = emit_expr(body, &closure_body);
-            emit_scope_cleanup(body.ir, &body.ctx, None);
-            body.ir.ret(val);
-            body.returned = true;
+            body.return_val(val);
         })?;
     }
     Ok(())
 }
 
-/// Collect closures that need pre-compilation as top-level functions.
 fn collect_closures(stmts: &[roca::Stmt], out: &mut Vec<(Vec<String>, roca::Expr)>) {
     for stmt in stmts {
         match stmt {
@@ -184,14 +182,15 @@ fn collect_closures(stmts: &[roca::Stmt], out: &mut Vec<(Vec<String>, roca::Expr
     }
 }
 
-/// Pre-compile wait expressions as zero-arg functions for concurrent execution.
-/// Each waitAll/waitFirst sub-expression becomes a standalone JIT function.
+// ─── Wait expression pre-compilation ─────────────────
+
+/// Pre-compile wait expressions as zero-arg functions.
 pub fn compile_wait_exprs<M: Module>(
     module: &mut M,
     source: &roca::SourceFile,
     rt: &RuntimeFuncs,
     compiled: &mut CompiledFuncs,
-    func_return_kinds: &HashMap<String, ValKind>,
+    func_return_kinds: &HashMap<String, RocaType>,
 ) -> Result<(), String> {
     let mut wait_exprs = Vec::new();
     for item in &source.items {
@@ -201,17 +200,13 @@ pub fn compile_wait_exprs<M: Module>(
     }
     for (name, expr) in wait_exprs {
         if compiled.funcs.contains_key(&name) { continue; }
-
-        let func = Function::new(&name)
+        Function::new(&name)
             .returns(RocaType::Number)
-            .with_return_kinds(func_return_kinds.clone());
-
-        func.build(module, rt, compiled, |body| {
-            let val = emit_expr(body, &expr);
-            emit_scope_cleanup(body.ir, &body.ctx, None);
-            body.ir.ret(val);
-            body.returned = true;
-        })?;
+            .with_return_kinds(func_return_kinds.clone())
+            .build(module, rt, compiled, |body| {
+                let val = emit_expr(body, &expr);
+                body.return_val(val);
+            })?;
     }
     Ok(())
 }
@@ -242,7 +237,6 @@ pub(super) fn wait_expr_hash(expr: &roca::Expr) -> u64 {
     expr_debug_hash(expr)
 }
 
-/// Shared hash for AST expressions — used by closure and wait compilation.
 pub(super) fn expr_debug_hash(expr: &roca::Expr) -> u64 {
     use std::hash::{Hash, Hasher, DefaultHasher};
     let mut h = DefaultHasher::new();
@@ -250,13 +244,15 @@ pub(super) fn expr_debug_hash(expr: &roca::Expr) -> u64 {
     h.finish()
 }
 
-/// Compile a Roca function to native code. Returns the FuncId.
+// ─── Function compilation ────────────────────────────
+
+/// Compile a Roca function to native code.
 pub fn compile_function<M: Module>(
     module: &mut M,
     func: &roca::FnDef,
     rt: &RuntimeFuncs,
     compiled: &mut CompiledFuncs,
-    func_return_kinds: &HashMap<String, ValKind>,
+    func_return_kinds: &HashMap<String, RocaType>,
     enum_variants: &HashMap<String, Vec<String>>,
     struct_defs: &HashMap<String, Vec<roca::Field>>,
 ) -> Result<FuncId, String> {
@@ -264,29 +260,22 @@ pub fn compile_function<M: Module>(
     for p in &func.params {
         f = f.param_with_constraints(&p.name, RocaType::from(&p.type_ref), p.constraints.clone());
     }
-    f = f.returns(RocaType::from(&func.return_type));
-    if func.returns_err { f = f.returns_err(); }
-    if let Some(crash) = &func.crash {
-        for h in &crash.handlers {
-            f = f.crash(&h.call, &h.strategy);
-        }
-    }
-    f = f.with_return_kinds(func_return_kinds.clone())
+    f = f.returns(RocaType::from(&func.return_type))
+        .returns_err_if(func.returns_err)
+        .crash_opt(func.crash.as_ref())
+        .with_return_kinds(func_return_kinds.clone())
         .with_enum_variants(enum_variants.clone())
         .with_struct_defs(struct_defs.clone());
 
+    let body_stmts = func.body.clone();
+    let params = func.params.clone();
     f.build(module, rt, compiled, |body| {
-        // Validate constrained params at function entry
-        emit_param_constraints(body, &func.params);
-
-        for stmt in &func.body {
-            if body.has_returned() { break; }
-            emit_stmt(body, stmt);
-        }
+        body.validate_param_constraints(&params);
+        emit_body(body, &body_stmts);
     })
 }
 
-/// Compile a struct method. `self` is the first parameter (struct pointer).
+/// Compile a struct method.
 pub fn compile_struct_method<M: Module>(
     module: &mut M,
     func: &roca::FnDef,
@@ -294,44 +283,37 @@ pub fn compile_struct_method<M: Module>(
     fields: &[roca::Field],
     rt: &RuntimeFuncs,
     compiled: &mut CompiledFuncs,
-    func_return_kinds: &HashMap<String, ValKind>,
+    func_return_kinds: &HashMap<String, RocaType>,
     enum_variants: &HashMap<String, Vec<String>>,
     struct_defs: &HashMap<String, Vec<roca::Field>>,
 ) -> Result<FuncId, String> {
-    let field_info: Vec<(String, RocaType)> = fields.iter().map(|f| {
-        (f.name.clone(), RocaType::from(&f.type_ref))
-    }).collect();
+    let field_info: Vec<(String, RocaType)> = fields.iter()
+        .map(|f| (f.name.clone(), RocaType::from(&f.type_ref)))
+        .collect();
 
-    let mut f = Function::new(&format!("{}.{}", struct_name, func.name));
-    f = f.self_param();
+    let mut f = Function::new(&format!("{}.{}", struct_name, func.name))
+        .self_param();
     for p in &func.params {
         f = f.param_with_constraints(&p.name, RocaType::from(&p.type_ref), p.constraints.clone());
     }
-    f = f.returns(RocaType::from(&func.return_type));
-    if func.returns_err { f = f.returns_err(); }
-    if let Some(crash) = &func.crash {
-        for h in &crash.handlers {
-            f = f.crash(&h.call, &h.strategy);
-        }
-    }
-    f = f.with_struct_layout(struct_name, StructLayout { fields: field_info })
+    f = f.returns(RocaType::from(&func.return_type))
+        .returns_err_if(func.returns_err)
+        .crash_opt(func.crash.as_ref())
+        .with_struct_layout(struct_name, roca_cranelift::context::StructLayout { fields: field_info })
         .with_self_struct_type(struct_name)
         .with_return_kinds(func_return_kinds.clone())
         .with_enum_variants(enum_variants.clone())
         .with_struct_defs(struct_defs.clone());
 
+    let body_stmts = func.body.clone();
+    let params = func.params.clone();
     f.build(module, rt, compiled, |body| {
-        // Validate constrained params at method entry
-        emit_param_constraints(body, &func.params);
-
-        for stmt in &func.body {
-            if body.has_returned() { break; }
-            emit_stmt(body, stmt);
-        }
+        body.validate_param_constraints(&params);
+        emit_body(body, &body_stmts);
     })
 }
 
-/// Compile an auto-stub for an extern fn — returns a default value.
+/// Compile an auto-stub for an extern fn.
 pub fn compile_extern_fn_stub<M: Module>(
     module: &mut M,
     extern_fn: &roca::ExternFnDef,
@@ -343,23 +325,17 @@ pub fn compile_extern_fn_stub<M: Module>(
     for p in &extern_fn.params {
         f = f.param(&p.name, RocaType::from(&p.type_ref));
     }
-    f = f.returns(RocaType::from(&extern_fn.return_type));
-    if extern_fn.returns_err { f = f.returns_err(); }
+    f = f.returns(RocaType::from(&extern_fn.return_type))
+        .returns_err_if(extern_fn.returns_err);
 
+    let default_expr = default_value_expr.clone();
     f.build(module, rt, compiled, |body| {
-        let val = emit_expr(body, default_value_expr);
-        if body.ctx.returns_err {
-            let no_err = body.ir.const_bool(false);
-            body.ir.ret_with_err(val, no_err);
-        } else {
-            body.ir.ret(val);
-        }
-        body.returned = true;
+        let val = emit_expr(body, &default_expr);
+        body.return_val(val);
     })
 }
 
 /// Compile auto-stubs for all methods in an extern contract.
-/// Each method gets a JIT function named "Contract.method" that returns a default value.
 pub fn compile_contract_stubs<M: Module>(
     module: &mut M,
     contract: &roca::ContractDef,
@@ -370,22 +346,18 @@ pub fn compile_contract_stubs<M: Module>(
         let qualified = format!("{}.{}", contract.name, sig_def.name);
         if compiled.funcs.contains_key(&qualified) { continue; }
 
+        let ret_type = RocaType::from(&sig_def.return_type);
+        let returns_err = sig_def.returns_err;
         let mut f = Function::new(&qualified);
         for p in &sig_def.params {
             f = f.param(&p.name, RocaType::from(&p.type_ref));
         }
-        f = f.returns(RocaType::from(&sig_def.return_type));
-        if sig_def.returns_err { f = f.returns_err(); }
+        f = f.returns(ret_type.clone()).returns_err_if(returns_err);
 
+        let ret_type_clone = ret_type;
         let result = f.build(module, rt, compiled, |body| {
-            let ret_val = body.ir.default_for(&RocaType::from(&sig_def.return_type));
-            if body.ctx.returns_err {
-                let no_err = body.ir.const_bool(false);
-                body.ir.ret_with_err(ret_val, no_err);
-            } else {
-                body.ir.ret(ret_val);
-            }
-            body.returned = true;
+            let dv = body.default_for(&ret_type_clone);
+            body.return_val(dv);
         });
 
         if result.is_err() {
