@@ -63,23 +63,23 @@ impl Rule for SelfTestRule {
     fn name(&self) -> &'static str { errors::SELF_REFERENTIAL_TEST }
 
     fn check_function(&self, ctx: &FnCheckContext) -> Vec<RuleError> {
-        let mut errs = Vec::new();
-        let f = ctx.func.def;
+        let test = match &ctx.func.def.test {
+            Some(t) => t,
+            None => return vec![],
+        };
 
-        if let Some(test) = &f.test {
-            for case in &test.cases {
-                if let TestCase::Equals { expected, .. } = case {
-                    if matches!(expected, Expr::Call { target, .. } if matches!(**target, Expr::SelfRef)) {
-                        errs.push(RuleError::new(
-                            errors::SELF_REFERENTIAL_TEST,
-                            "test expected value is a self() call — use a concrete expected value".to_string(),
-                            Some(ctx.func.qualified_name.clone()),
-                        ));
-                    }
+        let mut errs = Vec::new();
+        for case in &test.cases {
+            if let TestCase::Equals { expected, .. } = case {
+                if matches!(expected, Expr::Call { target, .. } if matches!(**target, Expr::SelfRef)) {
+                    errs.push(RuleError::new(
+                        errors::SELF_REFERENTIAL_TEST,
+                        "test expected value is a self() call — use a concrete expected value".to_string(),
+                        Some(ctx.func.qualified_name.clone()),
+                    ));
                 }
             }
         }
-
         errs
     }
 }
