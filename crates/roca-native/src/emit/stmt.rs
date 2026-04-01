@@ -3,8 +3,8 @@
 use cranelift_codegen::ir::InstBuilder;
 use roca_ast::{self as roca, Expr, Stmt};
 use roca_types::RocaType;
-use roca_cranelift::builder::{IrBuilder, Value};
-use roca_cranelift::context::{EmitCtx, ValKind};
+use roca_cranelift::api::{Body, Value};
+use roca_cranelift::context::ValKind;
 use roca_cranelift::cranelift_type::CraneliftType;
 use super::helpers::{
     infer_kind, emit_scope_cleanup, emit_free_by_kind, emit_loop_body_cleanup,
@@ -12,260 +12,273 @@ use super::helpers::{
 };
 use super::expr::emit_expr;
 
-pub fn emit_stmt(ir: &mut IrBuilder, stmt: &Stmt, ctx: &mut EmitCtx, returned: &mut bool) {
+pub fn emit_stmt(body: &mut Body, stmt: &Stmt) {
     match stmt {
         Stmt::Const { name, value, .. } | Stmt::Let { name, value, .. } => {
-            let kind = infer_kind(value, ctx);
+            let kind = infer_kind(value, &body.ctx);
             if let Expr::StructLit { name: struct_name, .. } = value {
-                ctx.var_struct_type.insert(name.clone(), struct_name.clone());
+                body.ctx.var_struct_type.insert(name.clone(), struct_name.clone());
             }
-            let val = emit_expr(ir, value, ctx);
-            let cl_type = ir.value_ir_type(val);
-            let slot = ir.alloc_var(val);
-            ctx.set_var_kind(name.clone(), slot.0, cl_type, kind);
+            let val = emit_expr(body, value);
+            let cl_type = body.ir.value_ir_type(val);
+            let slot = body.ir.alloc_var(val);
+            body.ctx.set_var_kind(name.clone(), slot.0, cl_type, kind);
         }
         Stmt::Return(expr) => {
             let skip = if let Expr::Ident(name) = expr { Some(name.as_str()) } else { None };
-            let val = emit_expr(ir, expr, ctx);
-            emit_scope_cleanup(ir, ctx, skip);
-            if ctx.returns_err {
-                let no_err = ir.const_bool(false);
-                ir.ret_with_err(val, no_err);
+            let val = emit_expr(body, expr);
+            emit_scope_cleanup(body.ir, &body.ctx, skip);
+            if body.ctx.returns_err {
+                let no_err = body.ir.const_bool(false);
+                body.ir.ret_with_err(val, no_err);
             } else {
-                ir.ret(val);
+                body.ir.ret(val);
             }
-            *returned = true;
+            body.returned = true;
         }
-        Stmt::Expr(expr) => { emit_expr(ir, expr, ctx); }
+        Stmt::Expr(expr) => { emit_expr(body, expr); }
         Stmt::If { condition, then_body, else_body, .. } => {
-            emit_if(ir, condition, then_body, else_body.as_deref(), ctx, returned);
+            emit_if(body, condition, then_body, else_body.as_deref());
         }
-        Stmt::While { condition, body, .. } => {
-            emit_while(ir, condition, body, ctx, returned);
+        Stmt::While { condition, body: while_body, .. } => {
+            emit_while(body, condition, while_body);
         }
-        Stmt::For { binding, iter, body } => {
-            emit_for(ir, binding, iter, body, ctx, returned);
+        Stmt::For { binding, iter, body: for_body } => {
+            emit_for(body, binding, iter, for_body);
         }
         Stmt::Break => {
-            if let Some(exit) = ctx.loop_exit {
-                emit_loop_body_cleanup(ir, ctx);
-                ir.raw().ins().jump(exit, &[]);
-                *returned = true;
+            if let Some(exit) = body.ctx.loop_exit {
+                emit_loop_body_cleanup(body.ir, &body.ctx);
+                body.ir.raw().ins().jump(exit, &[]);
+                body.returned = true;
             }
         }
         Stmt::Continue => {
-            if let Some(header) = ctx.loop_header {
-                emit_loop_body_cleanup(ir, ctx);
-                ir.raw().ins().jump(header, &[]);
-                *returned = true;
+            if let Some(header) = body.ctx.loop_header {
+                emit_loop_body_cleanup(body.ir, &body.ctx);
+                body.ir.raw().ins().jump(header, &[]);
+                body.returned = true;
             }
         }
         Stmt::Assign { name, value } => {
-            if let Some(var) = ctx.get_var(name) {
+            if let Some(var) = body.ctx.get_var(name) {
                 let slot = var.slot;
                 let is_heap = var.is_heap;
                 let cl_type = var.cranelift_type;
                 let kind = var.kind.clone();
                 if is_heap {
-                    let refs = FreeRefs::from_ctx(ctx);
-                    emit_free_by_kind(ir, slot, cl_type, kind, &refs);
+                    let refs = FreeRefs::from_ctx(&body.ctx);
+                    emit_free_by_kind(body.ir, slot, cl_type, kind, &refs);
                 }
-                let val = emit_expr(ir, value, ctx);
-                ir.raw().ins().stack_store(val, slot, 0);
+                let val = emit_expr(body, value);
+                body.ir.raw().ins().stack_store(val, slot, 0);
             }
         }
         Stmt::FieldAssign { target, field, value } => {
-            emit_field_assign(ir, target, field, value, ctx);
+            emit_field_assign(body, target, field, value);
         }
         Stmt::LetResult { name, err_name, value } => {
-            emit_let_result(ir, name, err_name, value, ctx);
+            emit_let_result(body, name, err_name, value);
         }
         Stmt::ReturnErr { name, .. } => {
-            if ctx.returns_err {
-                emit_scope_cleanup(ir, ctx, None);
-                let default_val = roca_cranelift::helpers::default_for_ir_type(ir.raw(), ctx.return_type);
+            if body.ctx.returns_err {
+                emit_scope_cleanup(body.ir, &body.ctx, None);
+                let default_val = roca_cranelift::helpers::default_for_ir_type(body.ir.raw(), body.ctx.return_type);
                 let tag = (name.bytes().fold(1u8, |a, c| a.wrapping_add(c))).max(1);
-                let err_tag = ir.raw().ins().iconst(cranelift_codegen::ir::types::I8, tag as i64);
-                ir.ret_with_err(default_val, err_tag);
-                *returned = true;
+                let err_tag = body.ir.raw().ins().iconst(cranelift_codegen::ir::types::I8, tag as i64);
+                body.ir.ret_with_err(default_val, err_tag);
+                body.returned = true;
             }
         }
         Stmt::Wait { names, failed_name, kind } => {
-            emit_wait(ir, names, failed_name, kind, ctx);
+            emit_wait(body, names, failed_name, kind);
         }
     }
 }
 
 fn emit_if(
-    ir: &mut IrBuilder,
+    body: &mut Body,
     condition: &Expr,
     then_body: &[Stmt],
     else_body: Option<&[Stmt]>,
-    ctx: &mut EmitCtx,
-    _returned: &mut bool,
 ) {
-    let cond = emit_expr(ir, condition, ctx);
-    let then_block = ir.create_block();
-    let else_block = ir.create_block();
-    let merge_block = ir.create_block();
-    ir.brif(cond, then_block, else_block);
+    let cond = emit_expr(body, condition);
+    let then_block = body.ir.create_block();
+    let else_block = body.ir.create_block();
+    let merge_block = body.ir.create_block();
+    body.ir.brif(cond, then_block, else_block);
 
-    let heap_base = ctx.live_heap_vars.len();
-    let saved_vars = ctx.vars.clone();
-    let saved_struct_types = ctx.var_struct_type.clone();
+    let heap_base = body.ctx.live_heap_vars.len();
+    let saved_vars = body.ctx.vars.clone();
+    let saved_struct_types = body.ctx.var_struct_type.clone();
 
-    ir.switch_to(then_block);
-    ir.seal(then_block);
+    body.ir.switch_to(then_block);
+    body.ir.seal(then_block);
     let mut then_ret = false;
-    for s in then_body { if then_ret { break; } emit_stmt(ir, s, ctx, &mut then_ret); }
-    if !then_ret { ir.jump(merge_block); }
-
-    ctx.live_heap_vars.truncate(heap_base);
-    ctx.vars = saved_vars.clone();
-    ctx.var_struct_type = saved_struct_types.clone();
-
-    ir.switch_to(else_block);
-    ir.seal(else_block);
-    let mut else_ret = false;
-    if let Some(body) = else_body {
-        for s in body { if else_ret { break; } emit_stmt(ir, s, ctx, &mut else_ret); }
+    for s in then_body {
+        if then_ret { break; }
+        emit_stmt(body, s);
+        then_ret = body.returned;
+        body.returned = false;
     }
-    if !else_ret { ir.jump(merge_block); }
+    if !then_ret { body.ir.jump(merge_block); }
 
-    ctx.live_heap_vars.truncate(heap_base);
-    ctx.vars = saved_vars;
-    ctx.var_struct_type = saved_struct_types;
+    body.ctx.live_heap_vars.truncate(heap_base);
+    body.ctx.vars = saved_vars.clone();
+    body.ctx.var_struct_type = saved_struct_types.clone();
 
-    ir.switch_to(merge_block);
-    ir.seal(merge_block);
+    body.ir.switch_to(else_block);
+    body.ir.seal(else_block);
+    let mut else_ret = false;
+    if let Some(stmts) = else_body {
+        for s in stmts {
+            if else_ret { break; }
+            emit_stmt(body, s);
+            else_ret = body.returned;
+            body.returned = false;
+        }
+    }
+    if !else_ret { body.ir.jump(merge_block); }
+
+    body.ctx.live_heap_vars.truncate(heap_base);
+    body.ctx.vars = saved_vars;
+    body.ctx.var_struct_type = saved_struct_types;
+
+    body.ir.switch_to(merge_block);
+    body.ir.seal(merge_block);
 }
 
 fn emit_while(
-    ir: &mut IrBuilder,
+    body: &mut Body,
     condition: &Expr,
-    body: &[Stmt],
-    ctx: &mut EmitCtx,
-    _returned: &mut bool,
+    while_body: &[Stmt],
 ) {
-    let header = ir.create_block();
-    let body_block = ir.create_block();
-    let exit = ir.create_block();
+    let header = body.ir.create_block();
+    let body_block = body.ir.create_block();
+    let exit = body.ir.create_block();
 
-    let prev_exit = ctx.loop_exit.replace(exit.0);
-    let prev_header = ctx.loop_header.replace(header.0);
-    let prev_heap_base = ctx.loop_heap_base;
-    ctx.loop_heap_base = ctx.live_heap_vars.len();
+    let prev_exit = body.ctx.loop_exit.replace(exit.0);
+    let prev_header = body.ctx.loop_header.replace(header.0);
+    let prev_heap_base = body.ctx.loop_heap_base;
+    body.ctx.loop_heap_base = body.ctx.live_heap_vars.len();
 
-    ir.jump(header);
-    ir.switch_to(header);
-    let cond = emit_expr(ir, condition, ctx);
-    ir.brif(cond, body_block, exit);
+    body.ir.jump(header);
+    body.ir.switch_to(header);
+    let cond = emit_expr(body, condition);
+    body.ir.brif(cond, body_block, exit);
 
-    ir.switch_to(body_block);
-    ir.seal(body_block);
+    body.ir.switch_to(body_block);
+    body.ir.seal(body_block);
     let mut body_ret = false;
-    for s in body { if body_ret { break; } emit_stmt(ir, s, ctx, &mut body_ret); }
-    if !body_ret {
-        emit_loop_body_cleanup(ir, ctx);
-        ir.jump(header);
+    for s in while_body {
+        if body_ret { break; }
+        emit_stmt(body, s);
+        body_ret = body.returned;
+        body.returned = false;
     }
-    ir.seal(header);
+    if !body_ret {
+        emit_loop_body_cleanup(body.ir, &body.ctx);
+        body.ir.jump(header);
+    }
+    body.ir.seal(header);
 
-    ir.switch_to(exit);
-    ir.seal(exit);
+    body.ir.switch_to(exit);
+    body.ir.seal(exit);
 
-    ctx.live_heap_vars.truncate(ctx.loop_heap_base);
-    ctx.loop_heap_base = prev_heap_base;
-    ctx.loop_exit = prev_exit;
-    ctx.loop_header = prev_header;
+    body.ctx.live_heap_vars.truncate(body.ctx.loop_heap_base);
+    body.ctx.loop_heap_base = prev_heap_base;
+    body.ctx.loop_exit = prev_exit;
+    body.ctx.loop_header = prev_header;
 }
 
 fn emit_for(
-    ir: &mut IrBuilder,
+    body: &mut Body,
     binding: &str,
     iter: &Expr,
-    body: &[Stmt],
-    ctx: &mut EmitCtx,
-    _returned: &mut bool,
+    for_body: &[Stmt],
 ) {
-    let arr = emit_expr(ir, iter, ctx);
-    let len_ref = ctx.get_func("__array_len").copied();
+    let arr = emit_expr(body, iter);
+    let len_ref = body.ctx.get_func("__array_len").copied();
 
     let len = if let Some(f) = len_ref {
-        ir.call(f, &[arr])
+        body.ir.call(f, &[arr])
     } else {
-        if ir.is_number(arr) {
-            ir.f64_to_i64(arr)
+        if body.ir.is_number(arr) {
+            body.ir.f64_to_i64(arr)
         } else {
             arr
         }
     };
 
-    let arr_slot = ir.alloc_var(arr);
-    let len_slot = ir.alloc_var(len);
-    let zero_i64 = ir.const_i64(0);
-    let idx_slot = ir.alloc_var(zero_i64);
+    let arr_slot = body.ir.alloc_var(arr);
+    let len_slot = body.ir.alloc_var(len);
+    let zero_i64 = body.ir.const_i64(0);
+    let idx_slot = body.ir.alloc_var(zero_i64);
 
-    let header = ir.create_block();
-    let body_block = ir.create_block();
-    let exit = ir.create_block();
+    let header = body.ir.create_block();
+    let body_block = body.ir.create_block();
+    let exit = body.ir.create_block();
 
-    let prev_exit = ctx.loop_exit.replace(exit.0);
-    let prev_header = ctx.loop_header.replace(header.0);
-    let prev_heap_base = ctx.loop_heap_base;
-    ctx.loop_heap_base = ctx.live_heap_vars.len();
+    let prev_exit = body.ctx.loop_exit.replace(exit.0);
+    let prev_header = body.ctx.loop_header.replace(header.0);
+    let prev_heap_base = body.ctx.loop_heap_base;
+    body.ctx.loop_heap_base = body.ctx.live_heap_vars.len();
 
-    ir.jump(header);
-    ir.switch_to(header);
+    body.ir.jump(header);
+    body.ir.switch_to(header);
 
-    let idx = ir.load_var(idx_slot, &RocaType::Unknown);
-    let len_val = ir.load_var(len_slot, &RocaType::Unknown);
-    let cond = ir.i_slt(idx, len_val);
-    ir.brif(cond, body_block, exit);
+    let idx = body.ir.load_var(idx_slot, &RocaType::Unknown);
+    let len_val = body.ir.load_var(len_slot, &RocaType::Unknown);
+    let cond = body.ir.i_slt(idx, len_val);
+    body.ir.brif(cond, body_block, exit);
 
-    ir.switch_to(body_block);
-    ir.seal(body_block);
+    body.ir.switch_to(body_block);
+    body.ir.seal(body_block);
 
-    let idx_val = ir.load_var(idx_slot, &RocaType::Unknown);
-    let cur_arr = ir.load_var(arr_slot, &RocaType::Unknown);
-    if let Some(f) = ctx.get_func("__array_get_f64") {
-        let elem = ir.call(*f, &[cur_arr, idx_val]);
-        let elem_slot = ir.alloc_var(elem);
-        ctx.set_var_kind(binding.to_string(), elem_slot.0, RocaType::Number.to_cranelift(), RocaType::Number);
+    let idx_val = body.ir.load_var(idx_slot, &RocaType::Unknown);
+    let cur_arr = body.ir.load_var(arr_slot, &RocaType::Unknown);
+    if let Some(f) = body.ctx.get_func("__array_get_f64") {
+        let elem = body.ir.call(*f, &[cur_arr, idx_val]);
+        let elem_slot = body.ir.alloc_var(elem);
+        body.ctx.set_var_kind(binding.to_string(), elem_slot.0, RocaType::Number.to_cranelift(), RocaType::Number);
     } else {
-        let idx_f = ir.i64_to_f64(idx_val);
-        let elem_slot = ir.alloc_var(idx_f);
-        ctx.set_var(binding.to_string(), elem_slot.0, RocaType::Number.to_cranelift());
+        let idx_f = body.ir.i64_to_f64(idx_val);
+        let elem_slot = body.ir.alloc_var(idx_f);
+        body.ctx.set_var(binding.to_string(), elem_slot.0, RocaType::Number.to_cranelift());
     }
 
     let mut body_ret = false;
-    for s in body { if body_ret { break; } emit_stmt(ir, s, ctx, &mut body_ret); }
+    for s in for_body {
+        if body_ret { break; }
+        emit_stmt(body, s);
+        body_ret = body.returned;
+        body.returned = false;
+    }
 
     if !body_ret {
-        emit_loop_body_cleanup(ir, ctx);
-        let cur = ir.load_var(idx_slot, &RocaType::Unknown);
-        let one = ir.const_i64(1);
-        let next = ir.iadd(cur, one);
-        ir.store_var(idx_slot, next);
-        ir.jump(header);
+        emit_loop_body_cleanup(body.ir, &body.ctx);
+        let cur = body.ir.load_var(idx_slot, &RocaType::Unknown);
+        let one = body.ir.const_i64(1);
+        let next = body.ir.iadd(cur, one);
+        body.ir.store_var(idx_slot, next);
+        body.ir.jump(header);
     }
-    ir.seal(header);
+    body.ir.seal(header);
 
-    ir.switch_to(exit);
-    ir.seal(exit);
+    body.ir.switch_to(exit);
+    body.ir.seal(exit);
 
-    ctx.live_heap_vars.truncate(ctx.loop_heap_base);
-    ctx.loop_heap_base = prev_heap_base;
-    ctx.loop_exit = prev_exit;
-    ctx.loop_header = prev_header;
+    body.ctx.live_heap_vars.truncate(body.ctx.loop_heap_base);
+    body.ctx.loop_heap_base = prev_heap_base;
+    body.ctx.loop_exit = prev_exit;
+    body.ctx.loop_header = prev_header;
 }
 
 fn emit_field_assign(
-    ir: &mut IrBuilder,
+    body: &mut Body,
     target: &Expr,
     field: &str,
     value: &Expr,
-    ctx: &mut EmitCtx,
 ) {
     let var_name = match target {
         Expr::Ident(name) => Some(name.as_str()),
@@ -273,15 +286,15 @@ fn emit_field_assign(
         _ => None,
     };
     if let Some(var_name) = var_name {
-        if let Some(struct_name) = ctx.var_struct_type.get(var_name).cloned() {
-            if let Some(layout) = ctx.struct_layouts.get(&struct_name) {
+        if let Some(struct_name) = body.ctx.var_struct_type.get(var_name).cloned() {
+            if let Some(layout) = body.ctx.struct_layouts.get(&struct_name) {
                 if let Some(idx) = layout.field_index(field) {
-                    let obj = if let Some(var) = ctx.get_var(var_name) {
-                        ir.raw().ins().stack_load(var.cranelift_type, var.slot, 0)
+                    let obj = if let Some(var) = body.ctx.get_var(var_name) {
+                        body.ir.raw().ins().stack_load(var.cranelift_type, var.slot, 0)
                     } else { return; };
-                    let val = emit_expr(ir, value, ctx);
-                    let idx_val = ir.const_i64(idx as i64);
-                    emit_struct_set(ir, obj, idx_val, val, ctx);
+                    let val = emit_expr(body, value);
+                    let idx_val = body.ir.const_i64(idx as i64);
+                    emit_struct_set(body.ir, obj, idx_val, val, &mut body.ctx);
                 }
             }
         }
@@ -289,35 +302,34 @@ fn emit_field_assign(
 }
 
 fn emit_let_result(
-    ir: &mut IrBuilder,
+    body: &mut Body,
     name: &str,
     err_name: &str,
     value: &Expr,
-    ctx: &mut EmitCtx,
 ) {
     if let Expr::Call { target, args } = value {
         if let Expr::Ident(fn_name) = target.as_ref() {
-            if let Some(func_ref) = ctx.get_func(fn_name) {
+            if let Some(func_ref) = body.ctx.get_func(fn_name) {
                 let func_ref = *func_ref;
-                let arg_vals: Vec<Value> = args.iter().map(|a| emit_expr(ir, a, ctx)).collect();
-                let results = ir.call_multi(func_ref, &arg_vals);
+                let arg_vals: Vec<Value> = args.iter().map(|a| emit_expr(body, a)).collect();
+                let results = body.ir.call_multi(func_ref, &arg_vals);
                 if results.len() >= 2 {
                     let val = results[0];
                     let err = results[1];
-                    let cl_type = ir.value_ir_type(val);
-                    let val_slot = ir.alloc_var(val);
-                    let kind = if ir.is_number(val) { RocaType::Number } else { RocaType::Unknown };
-                    ctx.set_var_kind(name.to_string(), val_slot.0, cl_type, kind);
-                    let err_slot = ir.alloc_var(err);
-                    ctx.set_var_kind(err_name.to_string(), err_slot.0, cranelift_codegen::ir::types::I8, RocaType::Bool);
+                    let cl_type = body.ir.value_ir_type(val);
+                    let val_slot = body.ir.alloc_var(val);
+                    let kind = if body.ir.is_number(val) { RocaType::Number } else { RocaType::Unknown };
+                    body.ctx.set_var_kind(name.to_string(), val_slot.0, cl_type, kind);
+                    let err_slot = body.ir.alloc_var(err);
+                    body.ctx.set_var_kind(err_name.to_string(), err_slot.0, cranelift_codegen::ir::types::I8, RocaType::Bool);
                 } else if !results.is_empty() {
                     let val = results[0];
-                    let cl_type = ir.value_ir_type(val);
-                    let val_slot = ir.alloc_var(val);
-                    ctx.set_var(name.to_string(), val_slot.0, cl_type);
-                    let zero = ir.const_bool(false);
-                    let err_slot = ir.alloc_var(zero);
-                    ctx.set_var_kind(err_name.to_string(), err_slot.0, cranelift_codegen::ir::types::I8, RocaType::Bool);
+                    let cl_type = body.ir.value_ir_type(val);
+                    let val_slot = body.ir.alloc_var(val);
+                    body.ctx.set_var(name.to_string(), val_slot.0, cl_type);
+                    let zero = body.ir.const_bool(false);
+                    let err_slot = body.ir.alloc_var(zero);
+                    body.ctx.set_var_kind(err_name.to_string(), err_slot.0, cranelift_codegen::ir::types::I8, RocaType::Bool);
                 }
             }
         }
@@ -325,77 +337,75 @@ fn emit_let_result(
 }
 
 fn build_wait_fn_array(
-    ir: &mut IrBuilder,
+    body: &mut Body,
     exprs: &[roca::Expr],
-    ctx: &mut EmitCtx,
 ) -> (Value, Value) {
-    let arr = if let Some(&arr_new) = ctx.get_func("__array_new") {
-        ir.call(arr_new, &[])
+    let arr = if let Some(&arr_new) = body.ctx.get_func("__array_new") {
+        body.ir.call(arr_new, &[])
     } else {
-        ir.null()
+        body.null()
     };
     for expr in exprs {
         let name = format!("__wait_{}", super::compile::wait_expr_hash(expr));
-        if let Some(&func_ref) = ctx.get_func(&name) {
-            let ptr = ir.func_addr(func_ref);
-            if let Some(&push) = ctx.get_func("__array_push_str") {
-                ir.call_void(push, &[arr, ptr]);
+        if let Some(&func_ref) = body.ctx.get_func(&name) {
+            let ptr = body.ir.func_addr(func_ref);
+            if let Some(&push) = body.ctx.get_func("__array_push_str") {
+                body.ir.call_void(push, &[arr, ptr]);
             }
         }
     }
-    let count = ir.const_i64(exprs.len() as i64);
+    let count = body.ir.const_i64(exprs.len() as i64);
     (arr, count)
 }
 
 fn emit_wait(
-    ir: &mut IrBuilder,
+    body: &mut Body,
     names: &[String],
     failed_name: &str,
     kind: &roca::WaitKind,
-    ctx: &mut EmitCtx,
 ) {
     match kind {
         roca::WaitKind::Single(expr) => {
-            let val = emit_expr(ir, expr, ctx);
-            let cl_type = ir.value_ir_type(val);
+            let val = emit_expr(body, expr);
+            let cl_type = body.ir.value_ir_type(val);
             if !names.is_empty() {
-                let slot = ir.alloc_var(val);
-                let kind = infer_kind(expr, ctx);
-                ctx.set_var_kind(names[0].clone(), slot.0, cl_type, kind);
+                let slot = body.ir.alloc_var(val);
+                let kind = infer_kind(expr, &body.ctx);
+                body.ctx.set_var_kind(names[0].clone(), slot.0, cl_type, kind);
             }
-            let false_val = ir.const_bool(false);
-            let err_slot = ir.alloc_var(false_val);
-            ctx.set_var_kind(failed_name.to_string(), err_slot.0, cranelift_codegen::ir::types::I8, RocaType::Bool);
+            let false_val = body.ir.const_bool(false);
+            let err_slot = body.ir.alloc_var(false_val);
+            body.ctx.set_var_kind(failed_name.to_string(), err_slot.0, cranelift_codegen::ir::types::I8, RocaType::Bool);
         }
         roca::WaitKind::All(exprs) => {
-            let (arr, count) = build_wait_fn_array(ir, exprs, ctx);
-            if let Some(&wait_all) = ctx.get_func("__wait_all") {
-                let results = ir.call(wait_all, &[arr, count]);
+            let (arr, count) = build_wait_fn_array(body, exprs);
+            if let Some(&wait_all) = body.ctx.get_func("__wait_all") {
+                let results = body.ir.call(wait_all, &[arr, count]);
                 for (i, name) in names.iter().enumerate() {
-                    if let Some(&get) = ctx.get_func("__array_get_f64") {
-                        let idx = ir.const_i64(i as i64);
-                        let val = ir.call(get, &[results, idx]);
-                        let slot = ir.alloc_var(val);
-                        ctx.set_var_kind(name.clone(), slot.0, RocaType::Number.to_cranelift(), RocaType::Number);
+                    if let Some(&get) = body.ctx.get_func("__array_get_f64") {
+                        let idx = body.ir.const_i64(i as i64);
+                        let val = body.ir.call(get, &[results, idx]);
+                        let slot = body.ir.alloc_var(val);
+                        body.ctx.set_var_kind(name.clone(), slot.0, RocaType::Number.to_cranelift(), RocaType::Number);
                     }
                 }
             }
-            let false_val = ir.const_bool(false);
-            let err_slot = ir.alloc_var(false_val);
-            ctx.set_var_kind(failed_name.to_string(), err_slot.0, cranelift_codegen::ir::types::I8, RocaType::Bool);
+            let false_val = body.ir.const_bool(false);
+            let err_slot = body.ir.alloc_var(false_val);
+            body.ctx.set_var_kind(failed_name.to_string(), err_slot.0, cranelift_codegen::ir::types::I8, RocaType::Bool);
         }
         roca::WaitKind::First(exprs) => {
-            let (arr, count) = build_wait_fn_array(ir, exprs, ctx);
-            if let Some(&wait_first) = ctx.get_func("__wait_first") {
-                let val = ir.call(wait_first, &[arr, count]);
+            let (arr, count) = build_wait_fn_array(body, exprs);
+            if let Some(&wait_first) = body.ctx.get_func("__wait_first") {
+                let val = body.ir.call(wait_first, &[arr, count]);
                 if !names.is_empty() {
-                    let slot = ir.alloc_var(val);
-                    ctx.set_var_kind(names[0].clone(), slot.0, RocaType::Number.to_cranelift(), RocaType::Number);
+                    let slot = body.ir.alloc_var(val);
+                    body.ctx.set_var_kind(names[0].clone(), slot.0, RocaType::Number.to_cranelift(), RocaType::Number);
                 }
             }
-            let false_val = ir.const_bool(false);
-            let err_slot = ir.alloc_var(false_val);
-            ctx.set_var_kind(failed_name.to_string(), err_slot.0, cranelift_codegen::ir::types::I8, RocaType::Bool);
+            let false_val = body.ir.const_bool(false);
+            let err_slot = body.ir.alloc_var(false_val);
+            body.ctx.set_var_kind(failed_name.to_string(), err_slot.0, cranelift_codegen::ir::types::I8, RocaType::Bool);
         }
     }
 }

@@ -64,9 +64,9 @@ pub enum StringPart {
 
 /// Roca scope — wraps IR builder + context. Every Roca construct is a method.
 pub struct Body<'a, 'b: 'a, 'c> {
-    pub(crate) ir: &'c mut IrBuilder<'a, 'b>,
-    pub(crate) ctx: EmitCtx,
-    pub(crate) returned: bool,
+    pub ir: &'c mut IrBuilder<'a, 'b>,
+    pub ctx: EmitCtx,
+    pub returned: bool,
 }
 
 // ─── Expressions ──────────────────────────────────────

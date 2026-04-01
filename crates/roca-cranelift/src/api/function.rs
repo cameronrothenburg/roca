@@ -167,7 +167,13 @@ impl Function {
             for (i, p) in spec.params.iter().enumerate() {
                 let cl_type = p.roca_type.to_cranelift();
                 let slot = ir.alloc_var(block_params[i + param_offset]);
-                ctx.set_var_kind(p.name.clone(), slot.0, cl_type, p.roca_type.clone());
+                // Params are borrowed, not owned — don't add to live_heap_vars
+                ctx.vars.insert(p.name.clone(), crate::context::VarInfo {
+                    slot: slot.0,
+                    cranelift_type: cl_type,
+                    kind: p.roca_type.clone(),
+                    is_heap: false,
+                });
             }
 
             // TODO: emit_param_constraints here using constraints vec

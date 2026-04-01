@@ -5,6 +5,7 @@ use cranelift_codegen::ir::types;
 use cranelift_module::{Module, FuncId};
 
 use roca_ast::{self as roca};
+use roca_cranelift::api::Function;
 use roca_cranelift::builder::{FunctionCompiler, FunctionSpec};
 use roca_cranelift::cranelift_type::CraneliftType;
 use roca_types::RocaType;
@@ -121,47 +122,22 @@ pub fn compile_closures<M: Module>(
             collect_closures(&f.body, &mut closures);
         }
     }
-    for (params, body) in closures {
-        let name = format!("__closure_{}_{}", params.len(), super::expr::closure_hash(&params, &body));
+    for (params, closure_body) in closures {
+        let name = format!("__closure_{}_{}", params.len(), super::expr::closure_hash(&params, &closure_body));
         if compiled.funcs.contains_key(&name) { continue; }
 
-        let spec = FunctionSpec {
-            name: name.clone(),
-            params: params.iter().map(|p| roca_cranelift::builder::ParamSpec {
-                name: p.clone(),
-                roca_type: RocaType::Number,
-            }).collect(),
-            self_param: false,
-            return_type: RocaType::Number,
-            returns_err: false,
-        };
+        let mut func = Function::new(&name);
+        for p in &params {
+            func = func.param(p, RocaType::Number);
+        }
+        func = func.returns(RocaType::Number)
+            .with_return_kinds(func_return_kinds.clone());
 
-        FunctionCompiler::compile(module, &spec, rt, compiled, |ir, func_refs, block_params| {
-            let mut emit_ctx = EmitCtx {
-                vars: HashMap::new(),
-                func_refs,
-                returns_err: false,
-                return_type: types::F64,
-                struct_layouts: HashMap::new(),
-                var_struct_type: HashMap::new(),
-                crash_handlers: HashMap::new(),
-                func_return_kinds: func_return_kinds.clone(),
-                enum_variants: HashMap::new(),
-                struct_defs: HashMap::new(),
-                live_heap_vars: Vec::new(),
-                loop_heap_base: 0,
-                loop_exit: None,
-                loop_header: None,
-            };
-
-            for (i, p) in params.iter().enumerate() {
-                let slot = ir.alloc_var(block_params[i]);
-                emit_ctx.set_var_kind(p.clone(), slot.0, types::F64, ValKind::Number);
-            }
-
-            let val = emit_expr(ir, &body, &mut emit_ctx);
-            emit_scope_cleanup(ir, &emit_ctx, None);
-            ir.ret(val);
+        func.build(module, rt, compiled, |body| {
+            let val = emit_expr(body, &closure_body);
+            emit_scope_cleanup(body.ir, &body.ctx, None);
+            body.ir.ret(val);
+            body.returned = true;
         })?;
     }
     Ok(())
@@ -226,35 +202,15 @@ pub fn compile_wait_exprs<M: Module>(
     for (name, expr) in wait_exprs {
         if compiled.funcs.contains_key(&name) { continue; }
 
-        let spec = FunctionSpec {
-            name: name.clone(),
-            params: vec![],
-            self_param: false,
-            return_type: RocaType::Number,
-            returns_err: false,
-        };
+        let func = Function::new(&name)
+            .returns(RocaType::Number)
+            .with_return_kinds(func_return_kinds.clone());
 
-        FunctionCompiler::compile(module, &spec, rt, compiled, |ir, func_refs, _block_params| {
-            let mut emit_ctx = EmitCtx {
-                vars: HashMap::new(),
-                func_refs,
-                returns_err: false,
-                return_type: types::F64,
-                struct_layouts: HashMap::new(),
-                var_struct_type: HashMap::new(),
-                crash_handlers: HashMap::new(),
-                func_return_kinds: func_return_kinds.clone(),
-                enum_variants: HashMap::new(),
-                struct_defs: HashMap::new(),
-                live_heap_vars: Vec::new(),
-                loop_heap_base: 0,
-                loop_exit: None,
-                loop_header: None,
-            };
-
-            let val = emit_expr(ir, &expr, &mut emit_ctx);
-            emit_scope_cleanup(ir, &emit_ctx, None);
-            ir.ret(val);
+        func.build(module, rt, compiled, |body| {
+            let val = emit_expr(body, &expr);
+            emit_scope_cleanup(body.ir, &body.ctx, None);
+            body.ir.ret(val);
+            body.returned = true;
         })?;
     }
     Ok(())
@@ -304,57 +260,28 @@ pub fn compile_function<M: Module>(
     enum_variants: &HashMap<String, Vec<String>>,
     struct_defs: &HashMap<String, Vec<roca::Field>>,
 ) -> Result<FuncId, String> {
-    let spec = FunctionSpec::from_fn(&func.name, &func.params, &func.return_type, func.returns_err);
-
-    FunctionCompiler::compile(module, &spec, rt, compiled, |ir, func_refs, block_params| {
-        let ret_type = RocaType::from(&func.return_type).to_cranelift();
-        let mut crash_handlers = HashMap::new();
-        if let Some(crash) = &func.crash {
-            for handler in &crash.handlers {
-                crash_handlers.insert(handler.call.clone(), handler.strategy.clone());
-            }
+    let mut f = Function::new(&func.name);
+    for p in &func.params {
+        f = f.param_with_constraints(&p.name, RocaType::from(&p.type_ref), p.constraints.clone());
+    }
+    f = f.returns(RocaType::from(&func.return_type));
+    if func.returns_err { f = f.returns_err(); }
+    if let Some(crash) = &func.crash {
+        for h in &crash.handlers {
+            f = f.crash(&h.call, &h.strategy);
         }
-        let mut emit_ctx = EmitCtx {
-            vars: HashMap::new(),
-            func_refs,
-            returns_err: func.returns_err,
-            return_type: ret_type,
-            struct_layouts: HashMap::new(),
-            var_struct_type: HashMap::new(),
-            crash_handlers,
-            func_return_kinds: func_return_kinds.clone(),
-            enum_variants: enum_variants.clone(),
-            struct_defs: struct_defs.clone(),
-            live_heap_vars: Vec::new(),
-            loop_heap_base: 0,
-            loop_exit: None,
-            loop_header: None,
-        };
+    }
+    f = f.with_return_kinds(func_return_kinds.clone())
+        .with_enum_variants(enum_variants.clone())
+        .with_struct_defs(struct_defs.clone());
 
-        for (i, p) in func.params.iter().enumerate() {
-            let cl_type = RocaType::from(&p.type_ref).to_cranelift();
-            let slot = ir.alloc_var(block_params[i]);
-            emit_ctx.set_var(p.name.clone(), slot.0, cl_type);
-        }
-
+    f.build(module, rt, compiled, |body| {
         // Validate constrained params at function entry
-        emit_param_constraints(ir, &func.params, &mut emit_ctx);
+        emit_param_constraints(body, &func.params);
 
-        let mut returned = false;
         for stmt in &func.body {
-            if returned { break; }
-            emit_stmt(ir, stmt, &mut emit_ctx, &mut returned);
-        }
-
-        if !returned {
-            emit_scope_cleanup(ir, &emit_ctx, None);
-            let default_val = ir.default_for(&RocaType::from(&func.return_type));
-            if func.returns_err {
-                let no_err = ir.const_bool(false);
-                ir.ret_with_err(default_val, no_err);
-            } else {
-                ir.ret(default_val);
-            }
+            if body.has_returned() { break; }
+            emit_stmt(body, stmt);
         }
     })
 }
@@ -371,69 +298,35 @@ pub fn compile_struct_method<M: Module>(
     enum_variants: &HashMap<String, Vec<String>>,
     struct_defs: &HashMap<String, Vec<roca::Field>>,
 ) -> Result<FuncId, String> {
-    let spec = FunctionSpec::from_method(struct_name, &func.name, &func.params, &func.return_type, func.returns_err);
+    let field_info: Vec<(String, RocaType)> = fields.iter().map(|f| {
+        (f.name.clone(), RocaType::from(&f.type_ref))
+    }).collect();
 
-    FunctionCompiler::compile(module, &spec, rt, compiled, |ir, func_refs, block_params| {
-        let ret_type = RocaType::from(&func.return_type).to_cranelift();
-        let mut crash_handlers = HashMap::new();
-        if let Some(crash) = &func.crash {
-            for handler in &crash.handlers {
-                crash_handlers.insert(handler.call.clone(), handler.strategy.clone());
-            }
+    let mut f = Function::new(&format!("{}.{}", struct_name, func.name));
+    f = f.self_param();
+    for p in &func.params {
+        f = f.param_with_constraints(&p.name, RocaType::from(&p.type_ref), p.constraints.clone());
+    }
+    f = f.returns(RocaType::from(&func.return_type));
+    if func.returns_err { f = f.returns_err(); }
+    if let Some(crash) = &func.crash {
+        for h in &crash.handlers {
+            f = f.crash(&h.call, &h.strategy);
         }
-        let mut emit_ctx = EmitCtx {
-            vars: HashMap::new(),
-            func_refs,
-            returns_err: func.returns_err,
-            return_type: ret_type,
-            struct_layouts: HashMap::new(),
-            var_struct_type: HashMap::new(),
-            crash_handlers,
-            func_return_kinds: func_return_kinds.clone(),
-            enum_variants: enum_variants.clone(),
-            struct_defs: struct_defs.clone(),
-            live_heap_vars: Vec::new(),
-            loop_heap_base: 0,
-            loop_exit: None,
-            loop_header: None,
-        };
+    }
+    f = f.with_struct_layout(struct_name, StructLayout { fields: field_info })
+        .with_self_struct_type(struct_name)
+        .with_return_kinds(func_return_kinds.clone())
+        .with_enum_variants(enum_variants.clone())
+        .with_struct_defs(struct_defs.clone());
 
-        let field_info: Vec<(String, RocaType)> = fields.iter().map(|f| {
-            (f.name.clone(), RocaType::from(&f.type_ref))
-        }).collect();
-        emit_ctx.struct_layouts.insert(struct_name.to_string(), StructLayout { fields: field_info });
-        emit_ctx.var_struct_type.insert("self".to_string(), struct_name.to_string());
-
-        let self_slot = ir.alloc_var(block_params[0]);
-        // self is borrowed — store in vars but NOT in live_heap_vars (don't free at scope exit)
-        emit_ctx.vars.insert("self".to_string(), VarInfo {
-            slot: self_slot.0, cranelift_type: types::I64, kind: ValKind::Struct(struct_name.to_string()), is_heap: false,
-        });
-
-        for (i, p) in func.params.iter().enumerate() {
-            let cl_type = RocaType::from(&p.type_ref).to_cranelift();
-            let slot = ir.alloc_var(block_params[i + 1]);
-            emit_ctx.set_var(p.name.clone(), slot.0, cl_type);
-        }
-
+    f.build(module, rt, compiled, |body| {
         // Validate constrained params at method entry
-        emit_param_constraints(ir, &func.params, &mut emit_ctx);
+        emit_param_constraints(body, &func.params);
 
-        let mut returned = false;
         for stmt in &func.body {
-            if returned { break; }
-            emit_stmt(ir, stmt, &mut emit_ctx, &mut returned);
-        }
-
-        if !returned {
-            emit_scope_cleanup(ir, &emit_ctx, None);
-            let default_val = ir.default_for(&RocaType::from(&func.return_type));
-            if func.returns_err {
-                let no_err = ir.const_bool(false);
-                ir.ret_with_err(default_val, no_err);
-            } else {
-                ir.ret(default_val);
-            }
+            if body.has_returned() { break; }
+            emit_stmt(body, stmt);
         }
     })
 }
@@ -446,33 +339,22 @@ pub fn compile_extern_fn_stub<M: Module>(
     rt: &RuntimeFuncs,
     compiled: &mut CompiledFuncs,
 ) -> Result<FuncId, String> {
-    let spec = FunctionSpec::from_fn(&extern_fn.name, &extern_fn.params, &extern_fn.return_type, extern_fn.returns_err);
+    let mut f = Function::new(&extern_fn.name);
+    for p in &extern_fn.params {
+        f = f.param(&p.name, RocaType::from(&p.type_ref));
+    }
+    f = f.returns(RocaType::from(&extern_fn.return_type));
+    if extern_fn.returns_err { f = f.returns_err(); }
 
-    FunctionCompiler::compile(module, &spec, rt, compiled, |ir, func_refs, _block_params| {
-        let mut emit_ctx = EmitCtx {
-            vars: HashMap::new(),
-            func_refs,
-            returns_err: extern_fn.returns_err,
-            return_type: RocaType::from(&extern_fn.return_type).to_cranelift(),
-            struct_layouts: HashMap::new(),
-            var_struct_type: HashMap::new(),
-            crash_handlers: HashMap::new(),
-            func_return_kinds: HashMap::new(),
-            enum_variants: HashMap::new(),
-            struct_defs: HashMap::new(),
-            live_heap_vars: Vec::new(),
-            loop_heap_base: 0,
-            loop_exit: None,
-            loop_header: None,
-        };
-
-        let val = emit_expr(ir, default_value_expr, &mut emit_ctx);
-        if extern_fn.returns_err {
-            let no_err = ir.const_bool(false);
-            ir.ret_with_err(val, no_err);
+    f.build(module, rt, compiled, |body| {
+        let val = emit_expr(body, default_value_expr);
+        if body.ctx.returns_err {
+            let no_err = body.ir.const_bool(false);
+            body.ir.ret_with_err(val, no_err);
         } else {
-            ir.ret(val);
+            body.ir.ret(val);
         }
+        body.returned = true;
     })
 }
 
@@ -488,25 +370,22 @@ pub fn compile_contract_stubs<M: Module>(
         let qualified = format!("{}.{}", contract.name, sig_def.name);
         if compiled.funcs.contains_key(&qualified) { continue; }
 
-        let spec = FunctionSpec {
-            name: qualified.clone(),
-            params: sig_def.params.iter().map(|p| roca_cranelift::builder::ParamSpec {
-                name: p.name.clone(),
-                roca_type: RocaType::from(&p.type_ref),
-            }).collect(),
-            self_param: false,
-            return_type: RocaType::from(&sig_def.return_type),
-            returns_err: sig_def.returns_err,
-        };
+        let mut f = Function::new(&qualified);
+        for p in &sig_def.params {
+            f = f.param(&p.name, RocaType::from(&p.type_ref));
+        }
+        f = f.returns(RocaType::from(&sig_def.return_type));
+        if sig_def.returns_err { f = f.returns_err(); }
 
-        let result = FunctionCompiler::compile(module, &spec, rt, compiled, |ir, _func_refs, _block_params| {
-            let ret_val = ir.default_for(&RocaType::from(&sig_def.return_type));
-            if sig_def.returns_err {
-                let no_err = ir.const_bool(false);
-                ir.ret_with_err(ret_val, no_err);
+        let result = f.build(module, rt, compiled, |body| {
+            let ret_val = body.ir.default_for(&RocaType::from(&sig_def.return_type));
+            if body.ctx.returns_err {
+                let no_err = body.ir.const_bool(false);
+                body.ir.ret_with_err(ret_val, no_err);
             } else {
-                ir.ret(ret_val);
+                body.ir.ret(ret_val);
             }
+            body.returned = true;
         });
 
         if result.is_err() {
