@@ -148,77 +148,51 @@ roca --version
 uname -a
 ```
 
-## Session tracking
+## Filing
 
-Each session gets **one issue**. Multiple bugs append to the same ticket.
-
-Track the issue number using a file called `.roca-bug-session` in the project root.
-This file contains just the issue number. Delete it to start a fresh issue.
-
-### First bug in a session (no `.roca-bug-session` file)
-
-Create a new issue:
+Each bug gets its **own issue**. One bug, one ticket — easier to triage, label, assign, and close.
 
 ```bash
 gh issue create --repo cameronrothenburg/roca \
-  --title "Bug report: 1 issue found building [project name]" \
+  --title "[Category]: [short bug description]" \
   --label "triage,ai-generated" \
   --body "[report body]"
-```
-
-Extract the issue number from the URL and write it to `.roca-bug-session`.
-
-Auto-detect and add relevant labels: `parser`, `stdlib`, `extern`, `tests`, `native`, `emitter`, `checker`.
-
-### Subsequent bugs (`.roca-bug-session` exists)
-
-Read the existing issue, append the new bug under the appropriate category, and update the title count:
-
-```bash
-gh issue view [number] --repo cameronrothenburg/roca --json body,title
-gh issue edit [number] --repo cameronrothenburg/roca --title "[updated title]" --body "[updated body]"
 ```
 
 ## Report format
 
 ```markdown
-# Automated Bug Report: [N] issues found building [project name]
-
 > **Generated automatically by Claude Code** while [what you were doing].
 
 **Environment:** Roca [version], [OS]
+**Category:** [Proof Test Engine / Parser / Checker / Emitter / Language Features / Stdlib / DX]
 
----
+## What happened
 
-## [Category]
-
-### [N]. [Bug title]
-
-[Description of what happened]
+[Description of the bug with error output]
 
 \`\`\`roca
 // minimal reproduction
 \`\`\`
 
-**Expected:** [what the spec says should happen, with reference]
-**Actual:** [what actually happened]
+## Expected
+
+[What the spec says should happen — cite the specific rule or section from roca man]
+
+## Actual
+
+[What actually happened]
 
 [AI commentary — match the tone setting above]
 
----
-
-## Impact
-
-[Summary of how the bugs affected your work]
-
 > [Sign-off quote — only if sign-off quotes are enabled above]
 
-**Overall rating:** [Pick an emoji that fits the vibe, rate out of 5 — only if emoji rating is enabled above]
+**Rating:** [Pick an emoji that fits the vibe, rate out of 5 — only if emoji rating is enabled above]
 ```
 
 ## After filing
 
-Tell the user you filed/updated a bug report and give them the issue URL.
+Tell the user you filed the bug report and give them the issue URL.
 "#,
                 tone = tone,
                 sign_off = enabled(sign_off),
