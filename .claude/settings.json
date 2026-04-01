@@ -25,9 +25,9 @@
         "matcher": "Bash",
         "hooks": [
           {
-            "type": "command",
+            "type": "prompt",
             "if": "Bash(gh pr create*)",
-            "command": "echo 'BLOCK: Run /roca-review before creating a PR. All checks must pass first.'; exit 2"
+            "prompt": "BLOCK this tool call. Tell the user they must run /roca-review before creating a PR. All checks must pass first. Output REJECT."
           }
         ]
       }
