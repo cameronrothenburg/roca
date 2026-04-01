@@ -608,7 +608,8 @@ pub extern "C" fn roca_json_parse(text: i64) -> (i64, u8) {
 }
 
 pub extern "C" fn roca_json_stringify(json: i64) -> i64 {
-    with_json(json, alloc_str("null"), |v| alloc_str(&v.to_string()))
+    if json == 0 { return alloc_str("null"); }
+    with_json(json, 0, |v| alloc_str(&v.to_string()))
 }
 
 pub extern "C" fn roca_json_get(json: i64, key: i64) -> i64 {
