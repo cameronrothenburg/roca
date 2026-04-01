@@ -1,0 +1,9 @@
+contract Database {
+            save(data: String) -> String, err {
+                err connection = "connection lost"
+                err duplicate = "duplicate key"
+            }
+            find(id: String) -> String, err {
+                err not_found = "not found"
+            }
+        }

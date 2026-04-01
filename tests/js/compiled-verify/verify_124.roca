@@ -1,0 +1,21 @@
+contract Stringable { to_string() -> String }
+
+        pub struct Email {
+            value: String
+            validate(raw: String) -> Email, err {
+                err invalid = "bad"
+            }
+        }{
+            fn validate(raw: String) -> Email, err {
+                if raw == "" { return err.invalid }
+                return Email { value: raw }
+                test { self("a@b.com") is Ok self("") is err.invalid }
+            }
+        }
+
+        Email satisfies Stringable {
+            fn to_string() -> String {
+                return self.value
+                test { self() == "test" }
+            }
+        }

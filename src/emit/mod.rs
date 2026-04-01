@@ -12,37 +12,10 @@ pub(crate) mod functions;
 pub(crate) mod structs;
 mod crash;
 pub(crate) mod dts;
-pub mod test_harness;
 
 use std::collections::HashMap;
 use crate::ast::{self, Item, FnDef};
 
-/// Load stdlib JS runtime snippet dynamically by module name.
-/// Looks for stdlib/{name}.js alongside the roca binary.
-fn stdlib_runtime(module: &str) -> Option<String> {
-    let exe = std::env::current_exe().ok()?;
-    let exe_dir = exe.parent()?;
-
-    for base in &[
-        exe_dir.join("../packages/stdlib"),
-        exe_dir.join("../../packages/stdlib"),
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("packages/stdlib"),
-    ] {
-        // Check flat: stdlib/{name}.js (legacy)
-        let flat = base.join(format!("{}.js", module));
-        if let Ok(source) = std::fs::read_to_string(&flat) {
-            return Some(source);
-        }
-        // Check subdirectories: stdlib/{subdir}/{name}.js
-        for subdir in &["core", "io", "net", "data", "security", "time"] {
-            let nested = base.join(subdir).join(format!("{}.js", module));
-            if let Ok(source) = std::fs::read_to_string(&nested) {
-                return Some(source);
-            }
-        }
-    }
-    None
-}
 use oxc_allocator::Allocator;
 use oxc_ast::ast::*;
 use oxc_ast::AstBuilder;
@@ -66,12 +39,13 @@ pub fn emit(file: &ast::SourceFile) -> String {
         }
     }
 
-    // Collect import lines (emitted as raw string prefix)
-    // std:: imports are resolved by the compiler — not emitted as JS imports
+    // Collect imports and detect stdlib usage in a single pass
     let mut import_lines = Vec::new();
+    let mut stdlib_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+
     for item in &file.items {
-        if let Item::Import(imp) = item {
-            match &imp.source {
+        match item {
+            Item::Import(imp) => match &imp.source {
                 ast::ImportSource::Path(path) => {
                     let js_path = path.replace(".roca", ".js");
                     import_lines.push(format!(
@@ -80,17 +54,28 @@ pub fn emit(file: &ast::SourceFile) -> String {
                         js_path,
                     ));
                 }
-                ast::ImportSource::Std(Some(module)) => {
-                    if let Some(js) = stdlib_runtime(module) {
-                        import_lines.push(js.to_string());
+                ast::ImportSource::Std(Some(_)) => {
+                    for name in &imp.names {
+                        stdlib_names.insert(name.clone());
                     }
                 }
-                ast::ImportSource::Std(None) => {
-                    // import from std — primitives, no JS needed
+                ast::ImportSource::Std(None) => {}
+            },
+            Item::ExternContract(c) => {
+                // Only stdlib contracts get roca. prefix — user-defined extern contracts don't
+                if crate::constants::RESERVED_NAMES.contains(&c.name.as_str()) {
+                    stdlib_names.insert(c.name.clone());
                 }
             }
+            _ => {}
         }
     }
+
+    if !stdlib_names.is_empty() {
+        import_lines.insert(0, "import roca from \"@rocalang/runtime\";".to_string());
+    }
+
+    shapes::set_stdlib_contracts(stdlib_names);
 
     let mut body = ast.vec();
 
@@ -146,7 +131,7 @@ pub fn emit(file: &ast::SourceFile) -> String {
                 // Handled in pre-pass — methods merged into struct class
             }
             Item::ExternContract(_) | Item::ExternFn(_) => {
-                // Stubs appended after OXC output below
+                // Types only — runtime provides implementations
             }
         }
     }
@@ -154,41 +139,9 @@ pub fn emit(file: &ast::SourceFile) -> String {
     let program = ast.program(SPAN, SourceType::mjs(), source_text, ast.vec(), None, ast.vec(), body);
     let code = Codegen::new().build(&program).code;
 
-    // Generate stub exports for extern contracts that have no JS wrapper.
-    // Contracts imported via std:: get real JS wrappers from stdlib_runtime().
-    // User-defined extern contracts (no stdlib wrapper) need default stubs.
-    let imported_contracts: std::collections::HashSet<&str> = file.items.iter().filter_map(|item| {
-        if let Item::Import(imp) = item {
-            if matches!(&imp.source, ast::ImportSource::Std(Some(_))) {
-                return Some(imp.names.iter().map(|n| n.as_str()).collect::<Vec<_>>());
-            }
-        }
-        None
-    }).flatten().collect();
-
-    let mut extern_stubs = Vec::new();
-    for item in &file.items {
-        if let Item::ExternContract(c) = item {
-            if imported_contracts.contains(c.name.as_str()) { continue; }
-            let methods: Vec<String> = c.functions.iter().map(|sig| {
-                let default = test_harness::values::emit_expr_js(
-                    &test_harness::values::default_expr_for_type(&sig.return_type)
-                );
-                let ret = if sig.returns_err {
-                    format!("{{ value: {}, err: null }}", default)
-                } else {
-                    default
-                };
-                format!("{}() {{ return {}; }}", sig.name, ret)
-            }).collect();
-            extern_stubs.push(format!("export const {} = {{ {} }};", c.name, methods.join(", ")));
-        }
-    }
-
     let mut parts = Vec::new();
     if !import_lines.is_empty() { parts.push(import_lines.join("\n")); }
     if !code.is_empty() { parts.push(code); }
-    if !extern_stubs.is_empty() { parts.push(extern_stubs.join("\n")); }
     parts.join("\n")
 }
 

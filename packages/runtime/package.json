@@ -1,0 +1,22 @@
+{
+  "name": "@rocalang/runtime",
+  "version": "0.3.0",
+  "description": "Runtime stdlib for compiled Roca programs",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js"
+  },
+  "keywords": [
+    "roca",
+    "rocalang",
+    "runtime",
+    "stdlib"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cameronrothenburg/roca.git",
+    "directory": "packages/runtime"
+  }
+}

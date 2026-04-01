@@ -1,0 +1,11 @@
+pub fn with_index() -> String {
+            const arr = ["a", "b", "c"]
+            const result = arr.map(fn(item, i) -> String(i) + ":" + item)
+            return result.join(",")
+            crash {
+                arr.map -> skip
+                result.join -> skip
+                String -> skip
+            }
+            test { self() == "0:a,1:b,2:c" }
+        }

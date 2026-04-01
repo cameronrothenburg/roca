@@ -1,0 +1,5 @@
+pub fn has_at(s: String) -> Bool {
+            return s.includes("@")
+            crash { s.includes -> skip }
+            test { self("a@b") == true self("nope") == false }
+        }

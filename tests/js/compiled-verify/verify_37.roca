@@ -1,0 +1,4 @@
+pub fn eq(a: Number, b: Number) -> Bool {
+            return a == b
+            test { self(1, 1) == true self(1, 2) == false }
+        }

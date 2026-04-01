@@ -1,0 +1,5 @@
+pub fn get() -> Number {
+            const matrix = [[1, 2], [3, 4]]
+            return matrix[1][0]
+            test { self() == 3 }
+        }

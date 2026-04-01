@@ -1,0 +1,4 @@
+pub fn same(a: Bool, b: Bool) -> Bool {
+            return a == b
+            test { self(true, true) == true self(true, false) == false }
+        }

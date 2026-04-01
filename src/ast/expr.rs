@@ -55,7 +55,7 @@ pub enum Expr {
     Null,
     /// self keyword
     SelfRef,
-    /// Enum variant constructor: Token.Number(42)
+    /// Enum variant constructor: Token.Number(42) — parsed but not yet emitted by parser
     #[allow(dead_code)]
     EnumVariant {
         enum_name: String,

@@ -7,6 +7,45 @@ use crate::{emit, resolve};
 use super::config::*;
 use super::log::{log_event, LogEvent};
 
+/// Emit JS without native testing — used by verify tests and --emit-only flag.
+/// Skips non-critical diagnostics (missing-doc, missing-test, ok-on-infallible, reserved-name).
+pub fn emit_file(path: &Path) {
+    let path_str = path.display().to_string();
+    let project = resolve::resolve_file(path);
+    let file = match resolve_file_from_project_lenient(path, &project) {
+        Ok(f) => f,
+        Err(msg) => {
+            eprintln!("{}\n\n✗ errors — no JS emitted", msg);
+            std::process::exit(1);
+        }
+    };
+
+    let js = emit::emit(&file);
+    let out_dir = resolve_out_dir(path);
+    fs::create_dir_all(&out_dir).unwrap_or_else(|e| {
+        eprintln!("error creating {}: {}", out_dir.display(), e);
+        std::process::exit(1);
+    });
+
+    let name = path.file_stem().unwrap().to_str().unwrap();
+    let out_path = out_dir.join(format!("{}.js", name));
+    fs::write(&out_path, &js).unwrap_or_else(|e| {
+        eprintln!("error writing {}: {}", out_path.display(), e);
+        std::process::exit(1);
+    });
+
+    let dts = emit::emit_dts(&file);
+    if !dts.is_empty() {
+        let dts_path = out_dir.join(format!("{}.d.ts", name));
+        let _ = fs::write(&dts_path, &dts);
+    }
+
+    let checked = vec![(path.to_path_buf(), path_str.clone(), file)];
+    write_package_json(path.parent().unwrap_or(Path::new(".")), &out_dir, &checked);
+
+    println!("✓ emitted → {}", out_path.display());
+}
+
 pub fn build_file(path: &Path) {
     let path_str = path.display().to_string();
     let project = resolve::resolve_file(path);
@@ -41,27 +80,18 @@ pub fn build_file(path: &Path) {
         let _ = fs::write(&dts_path, &dts);
     }
 
-    // Run tests
-    let source_dir = path.parent();
-    if let Some((test_js, _count)) = emit::test_harness::emit_tests(&file, "__embed__", source_dir) {
-        let (stdout, success) = super::runtime::run_tests(&test_js);
+    // Run tests natively via Cranelift JIT
+    let native_result = crate::native::test_runner::run_tests(&file);
+    if native_result.passed > 0 || native_result.failed > 0 {
+        print!("{}", native_result.output);
+        println!("{} passed, {} failed", native_result.passed, native_result.failed);
 
-        let (passed, failed) = parse_test_counts(&stdout);
-        log_event(&LogEvent::TestResult {
-            file: &path_str,
-            passed, failed,
-            output: &stdout,
-        });
-
-        if !success {
-            print!("{}", stdout);
-            let _ = fs::remove_file(&out_path);
+        if native_result.failed > 0 {
+            let _ = fs::remove_dir_all(&out_dir);
             eprintln!("\n✗ proof tests failed — no JS emitted");
             log_event(&LogEvent::BuildFailed { file: &path_str, reason: "proof tests failed" });
             std::process::exit(1);
         }
-
-        print!("{}", stdout);
     }
 
     // Generate package.json in out/
@@ -149,31 +179,20 @@ pub fn build_directory(dir: &Path) {
     // ─── Generate out/package.json ────────────────────────
     write_package_json(dir, &out_dir, &checked);
 
-    // ─── Phase 3: Test each file (embed mode) ────────────
+    // ─── Phase 3: Test each file natively via Cranelift JIT ────
     println!("testing...");
 
     let mut total_passed = 0;
     let mut total_failed = 0;
 
-    for (file_path, fp_str, file) in &checked {
-        let src_dir = file_path.parent();
-        if let Some((test_js, _count)) = emit::test_harness::emit_tests(file, "__embed__", src_dir) {
-            let (stdout, success) = super::runtime::run_tests(&test_js);
-
-            let (passed, failed) = parse_test_counts(&stdout);
-            log_event(&LogEvent::TestResult {
-                file: fp_str,
-                passed, failed,
-                output: &stdout,
-            });
-
-            if !success {
-                print!("{}", stdout);
-                log_event(&LogEvent::BuildFailed { file: fp_str, reason: "proof tests failed" });
+    for (_file_path, fp_str, file) in &checked {
+        let result = crate::native::test_runner::run_tests(file);
+        if result.passed > 0 || result.failed > 0 {
+            print!("{}", result.output);
+            total_passed += result.passed;
+            total_failed += result.failed;
+            if result.failed > 0 {
                 failed_files.push(fp_str.clone());
-                total_failed += failed;
-            } else {
-                total_passed += passed;
             }
         }
     }
@@ -181,7 +200,8 @@ pub fn build_directory(dir: &Path) {
     println!("\n{} passed, {} failed across {} file(s)", total_passed, total_failed, files.len());
 
     if !failed_files.is_empty() {
-        eprintln!("\n✗ {} file(s) failed:", failed_files.len());
+        let _ = fs::remove_dir_all(&out_dir);
+        eprintln!("\n✗ {} file(s) failed — output removed:", failed_files.len());
         for f in &failed_files { eprintln!("  {}", f); }
         std::process::exit(1);
     }
@@ -346,14 +366,3 @@ fn pathdiff(target: &Path, base: &Path) -> String {
     target_abs.display().to_string()
 }
 
-fn parse_test_counts(output: &str) -> (usize, usize) {
-    for line in output.lines() {
-        if line.contains("passed") && line.contains("failed") {
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            let passed = parts.first().and_then(|s| s.parse().ok()).unwrap_or(0);
-            let failed = parts.get(2).and_then(|s| s.parse().ok()).unwrap_or(0);
-            return (passed, failed);
-        }
-    }
-    (0, 0)
-}

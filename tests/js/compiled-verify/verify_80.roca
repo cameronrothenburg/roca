@@ -1,0 +1,7 @@
+pub fn check(x: Number) -> String {
+            return match x {
+                0 => "zero"
+                1 => "one"
+            }
+            test { self(0) == "zero" }
+        }

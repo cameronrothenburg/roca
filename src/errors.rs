@@ -56,8 +56,12 @@ pub const ERR_IN_BODY: &str = "err-in-body";
 pub const MANUAL_ERR_CHECK: &str = "manual-err-check";
 // Doc rules
 pub const MISSING_DOC: &str = "missing-doc";
-// Function error rules
-pub const FN_ERROR_DEF: &str = "no-fn-error-def";
+// Reserved name rules
+pub const RESERVED_NAME: &str = "reserved-name";
+// Test rules
+pub const OK_ON_INFALLIBLE: &str = "ok-on-infallible";
+// Crash rules (chain validation)
+pub const NONTERMINAL_CHAIN: &str = "nonterminal-chain";
 // Ownership rules
 pub const USE_AFTER_MOVE: &str = "use-after-move";
 pub const MOVE_IN_LOOP: &str = "move-in-loop";

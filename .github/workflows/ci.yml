@@ -7,7 +7,7 @@ on:
     paths:
       - 'src/**'
       - 'packages/**'
-      - 'examples/**'
+      - 'tests/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
 
@@ -38,11 +38,16 @@ jobs:
       - name: Run tests
         run: cargo test
 
-      - name: Install CLI
-        run: cargo install --path .
+      - name: Install bun
+        uses: oven-sh/setup-bun@v2
 
-      - name: Check worker example
+      - name: CLI smoke test
         run: |
-          cd examples/worker
-          roca check
-          roca build
+          cargo install --path .
+          roca check tests/js/projects/api
+
+      - name: Run JS tests
+        run: |
+          cd tests/js
+          bun install
+          bun test

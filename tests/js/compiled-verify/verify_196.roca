@@ -1,0 +1,5 @@
+import { Url } from std::url
+        pub fn check(raw: String) -> Bool {
+            return Url.isValid(raw)
+            test { self("https://example.com") == true }
+        }

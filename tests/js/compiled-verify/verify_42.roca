@@ -1,0 +1,6 @@
+contract HttpClient {
+            get(url: String) -> String, err {
+                err timeout = "request timed out"
+                err not_found = "404 not found"
+            }
+        }

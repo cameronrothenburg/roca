@@ -1,0 +1,6 @@
+pub fn cast(val: String) -> String {
+            let s, e = String(val)
+            return s
+            crash { String -> fallback("none") }
+            test { self("hello") == "hello" }
+        }

@@ -1,0 +1,10 @@
+pub fn double_all() -> String {
+            const nums = [1, 2, 3]
+            const doubled = nums.map(fn(x) -> x * 2)
+            return doubled.join(",")
+            crash {
+                nums.map -> skip
+                doubled.join -> skip
+            }
+            test { self() == "2,4,6" }
+        }

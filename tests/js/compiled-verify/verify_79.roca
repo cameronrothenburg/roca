@@ -1,0 +1,13 @@
+pub fn label(x: Number) -> String {
+            const msg = match x {
+                1 => "one"
+                2 => "two"
+                _ => "other"
+            }
+            return msg
+            test {
+                self(1) == "one"
+                self(2) == "two"
+                self(99) == "other"
+            }
+        }

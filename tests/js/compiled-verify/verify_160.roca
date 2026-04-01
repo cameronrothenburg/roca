@@ -1,0 +1,30 @@
+contract Loggable { to_log() -> String }
+
+        pub struct Secret {
+            value: String
+            create(v: String) -> Secret
+        }{
+            pub fn create(v: String) -> Secret {
+                return Secret { value: v }
+                test {}
+            }
+        }
+
+        Secret satisfies Loggable {
+            fn to_log() -> String {
+                return "REDACTED"
+                test {}
+            }
+        }
+
+        pub fn process(s: String) -> String {
+            const secret = Secret.create(s)
+            log(secret.to_log())
+            return "done"
+            crash {
+                Secret.create -> skip
+                secret.to_log -> halt
+                log -> skip
+            }
+            test { self("my-password") == "done" }
+        }

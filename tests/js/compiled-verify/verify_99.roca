@@ -1,0 +1,4 @@
+pub fn greet(name: String) -> String {
+            return "hello {name}"
+            test { self("cam") == "hello cam" }
+        }

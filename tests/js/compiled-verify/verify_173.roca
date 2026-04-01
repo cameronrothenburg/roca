@@ -1,0 +1,10 @@
+pub fn count() -> Number {
+            log("one")
+            log("two")
+            log("three")
+            return 3
+            crash {
+                log -> skip
+            }
+            test { self() == 3 }
+        }

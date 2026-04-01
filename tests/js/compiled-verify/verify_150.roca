@@ -1,0 +1,4 @@
+pub fn char_count(s: String) -> Number {
+            return s.length
+            test { self("hello") == 5 }
+        }

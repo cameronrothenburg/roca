@@ -9,7 +9,6 @@ pub mod satisfies;
 pub mod function;
 pub mod crash;
 pub mod test_block;
-pub mod mock;
 pub mod parser;
 
 pub use tokenizer::tokenize;

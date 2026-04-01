@@ -1,0 +1,4 @@
+pub fn check(a: String, b: String) -> Bool {
+            return a != b
+            test { self("a", "b") == true self("a", "a") == false }
+        }

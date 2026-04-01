@@ -1,0 +1,9 @@
+pub fn sum() -> Number {
+            const nums = [1, 2, 3]
+            let total = 0
+            for n in nums {
+                total = total + n
+            }
+            return total
+            test { self() == 6 }
+        }

@@ -117,7 +117,16 @@ fn eval_expr(input: &str, defs: &[String]) {
 }
 
 fn run_bun(js: &str) {
-    super::runtime::run_js(js);
+    match std::process::Command::new("node")
+        .arg("--input-type=module")
+        .arg("-e")
+        .arg(js)
+        .status()
+    {
+        Ok(s) if !s.success() => eprintln!("  JS execution failed (exit {})", s.code().unwrap_or(-1)),
+        Err(e) => eprintln!("  error: could not run node: {}\n  install Node.js to use the JS REPL", e),
+        _ => {}
+    }
 }
 
 fn is_definition(s: &str) -> bool {

@@ -1,0 +1,21 @@
+/// Always fails
+        pub struct AlwaysFail {
+            call(s: String) -> String, err {
+                err broken = "broken"
+            }
+        }{
+            pub fn call(s: String) -> String, err {
+                if s == "" { return err.broken }
+                return s
+                test { self("ok") == "ok" self("") is err.broken }
+            }
+        }
+
+        /// Calls always fail
+        pub fn caller() -> String, err {
+            if false { return err.broken }
+            const result = AlwaysFail.call("")
+            return result
+            crash { AlwaysFail.call -> retry(3, 0) |> halt }
+            test { self() is Ok self() is err.broken }
+        }

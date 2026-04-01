@@ -1,0 +1,11 @@
+pub fn prefix_all() -> String {
+            const prefix = "hi-"
+            const items = ["a", "b", "c"]
+            const result = items.map(fn(x) -> prefix + x)
+            return result.join(",")
+            crash {
+                items.map -> skip
+                result.join -> skip
+            }
+            test { self() == "hi-a,hi-b,hi-c" }
+        }

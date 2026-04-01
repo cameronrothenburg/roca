@@ -1,0 +1,14 @@
+{
+  "name": "roca-js-tests",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@rocalang/runtime": "file:../../packages/runtime"
+  },
+  "devDependencies": {
+    "bun-types": "latest"
+  }
+}

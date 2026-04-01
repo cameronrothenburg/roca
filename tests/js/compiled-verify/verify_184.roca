@@ -1,0 +1,6 @@
+import { Crypto } from std::crypto
+        /// Gets a UUID
+        pub fn new_id() -> String {
+            return Crypto.randomUUID()
+            test {}
+        }

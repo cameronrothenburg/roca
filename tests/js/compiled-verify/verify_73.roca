@@ -1,0 +1,19 @@
+/// Validates input
+        pub struct Validate {
+            call(s: String) -> String, err {
+                err empty = "empty"
+            }
+        }{
+            pub fn call(s: String) -> String, err {
+                if s == "" { return err.empty }
+                return s
+                test { self("a") == "a" self("") is err.empty }
+            }
+        }
+        /// Processes input
+        pub fn process(s: String) -> String {
+            const result = Validate.call(s)
+            return "ok"
+            crash { Validate.call -> fallback("") }
+            test { self("a") == "ok" }
+        }

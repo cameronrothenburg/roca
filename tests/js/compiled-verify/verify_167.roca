@@ -1,0 +1,4 @@
+pub fn test_wait() -> String {
+            return "sync"
+            test { self() == "sync" }
+        }

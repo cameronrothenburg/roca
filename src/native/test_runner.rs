@@ -17,6 +17,17 @@ pub struct NativeTestResult {
 
 /// Run all test blocks in a source file via JIT.
 pub fn run_tests(source: &ast::SourceFile) -> NativeTestResult {
+    run_tests_inner(source, true)
+}
+
+/// Run test blocks only — no property tests. Used by the verify harness
+/// where adversarial inputs could crash the JIT-compiled code.
+#[allow(dead_code)]
+pub fn run_tests_only(source: &ast::SourceFile) -> NativeTestResult {
+    run_tests_inner(source, false)
+}
+
+fn run_tests_inner(source: &ast::SourceFile, with_property_tests: bool) -> NativeTestResult {
     let mut module = super::create_jit_module();
     if let Err(e) = super::compile_all(&mut module, source) {
         return NativeTestResult {
@@ -30,12 +41,26 @@ pub fn run_tests(source: &ast::SourceFile) -> NativeTestResult {
     let mut failed = 0;
     let mut output = String::new();
 
-    // Run test blocks
     for item in &source.items {
-        if let ast::Item::Function(f) = item {
-            if let Some(test) = &f.test {
-                run_fn_tests(&mut module, f, test, &mut passed, &mut failed, &mut output);
+        match item {
+            ast::Item::Function(f) => {
+                if let Some(test) = &f.test {
+                    run_fn_tests(&mut module, f, test, &mut passed, &mut failed, &mut output);
+                }
+                if with_property_tests && f.is_pub && super::property_tests::all_params_generable(f) {
+                    super::property_tests::run_property_tests(&mut module, f, None, &mut passed, &mut failed, &mut output);
+                }
             }
+            ast::Item::Struct(s) => {
+                if with_property_tests {
+                    for method in &s.methods {
+                        if method.is_pub && super::property_tests::all_params_generable(method) {
+                            super::property_tests::run_property_tests(&mut module, method, Some(&s.name), &mut passed, &mut failed, &mut output);
+                        }
+                    }
+                }
+            }
+            _ => {}
         }
     }
 
@@ -106,11 +131,19 @@ fn run_equals_test(
         }
         t if t == types::I64 => {
             // String return
-            let sig = build_sig(module, func);
-            let id = module.declare_function(&func.name, Linkage::Export, &sig).unwrap();
-            let ptr = module.get_finalized_function(id);
-            let result_ptr = call_str_fn(ptr, func.params.len(), args);
-            let result = read_cstr_safe(result_ptr);
+            let result = if func.returns_err {
+                let sig = build_sig_with_err(module, func);
+                let id = module.declare_function(&func.name, Linkage::Export, &sig).unwrap();
+                let ptr = module.get_finalized_function(id);
+                let (val_bits, _err) = call_with_err(ptr, func, args);
+                read_cstr_safe(val_bits as i64 as *const u8)
+            } else {
+                let sig = build_sig(module, func);
+                let id = module.declare_function(&func.name, Linkage::Export, &sig).unwrap();
+                let ptr = module.get_finalized_function(id);
+                let result_ptr = call_str_fn(ptr, func.params.len(), args);
+                read_cstr_safe(result_ptr)
+            };
             let exp = expr_to_string(expected);
             if result == exp {
                 output.push_str(&format!("  ✓ {} == \"{}\"\n", label, exp));
@@ -188,14 +221,14 @@ fn run_err_test(
     }
 }
 
-// ─── Helpers ──────────────────────────────────────────
+// ─── Helpers (pub(super) for property_tests) ─────────
 
-fn format_test_label(func: &ast::FnDef, args: &[Expr]) -> String {
+pub(super) fn format_test_label(func: &ast::FnDef, args: &[Expr]) -> String {
     let args_str: Vec<String> = args.iter().map(|a| format!("{:?}", a)).collect();
     format!("{}({})", func.name, args_str.join(", "))
 }
 
-fn build_sig(module: &JITModule, func: &ast::FnDef) -> cranelift_codegen::ir::Signature {
+pub(super) fn build_sig(module: &JITModule, func: &ast::FnDef) -> cranelift_codegen::ir::Signature {
     let mut sig = module.make_signature();
     for p in &func.params {
         sig.params.push(cranelift_codegen::ir::AbiParam::new(roca_to_cranelift(&p.type_ref)));
@@ -204,13 +237,13 @@ fn build_sig(module: &JITModule, func: &ast::FnDef) -> cranelift_codegen::ir::Si
     sig
 }
 
-fn build_sig_with_err(module: &JITModule, func: &ast::FnDef) -> cranelift_codegen::ir::Signature {
+pub(super) fn build_sig_with_err(module: &JITModule, func: &ast::FnDef) -> cranelift_codegen::ir::Signature {
     let mut sig = build_sig(module, func);
     sig.returns.push(cranelift_codegen::ir::AbiParam::new(types::I8));
     sig
 }
 
-fn call_f64_fn(ptr: *const u8, param_count: usize, args: &[Expr]) -> f64 {
+pub(super) fn call_f64_fn(ptr: *const u8, param_count: usize, args: &[Expr]) -> f64 {
     unsafe {
         match param_count {
             0 => std::mem::transmute::<_, fn() -> f64>(ptr)(),
@@ -234,12 +267,13 @@ fn call_f64_fn(ptr: *const u8, param_count: usize, args: &[Expr]) -> f64 {
     }
 }
 
-fn call_str_fn(ptr: *const u8, param_count: usize, args: &[Expr]) -> *const u8 {
+pub(super) fn call_str_fn(ptr: *const u8, param_count: usize, args: &[Expr]) -> *const u8 {
+    let mut pool = Vec::new();
     unsafe {
         match param_count {
             0 => std::mem::transmute::<_, fn() -> *const u8>(ptr)(),
             1 => {
-                let a = expr_to_arg(&args[0]);
+                let a = expr_to_arg(&args[0], &mut pool);
                 match a {
                     Arg::F64(v) => std::mem::transmute::<_, fn(f64) -> *const u8>(ptr)(v),
                     Arg::Str(p) => std::mem::transmute::<_, fn(*const u8) -> *const u8>(ptr)(p),
@@ -248,14 +282,16 @@ fn call_str_fn(ptr: *const u8, param_count: usize, args: &[Expr]) -> *const u8 {
             _ => std::ptr::null(),
         }
     }
+    // pool drops here, freeing CStrings after the call completes
 }
 
-fn call_bool_fn(ptr: *const u8, param_count: usize, args: &[Expr]) -> bool {
+pub(super) fn call_bool_fn(ptr: *const u8, param_count: usize, args: &[Expr]) -> bool {
+    let mut pool = Vec::new();
     unsafe {
         match param_count {
             0 => std::mem::transmute::<_, fn() -> u8>(ptr)() != 0,
             1 => {
-                let a = expr_to_arg(&args[0]);
+                let a = expr_to_arg(&args[0], &mut pool);
                 match a {
                     Arg::F64(v) => std::mem::transmute::<_, fn(f64) -> u8>(ptr)(v) != 0,
                     Arg::Str(p) => std::mem::transmute::<_, fn(*const u8) -> u8>(ptr)(p) != 0,
@@ -266,7 +302,7 @@ fn call_bool_fn(ptr: *const u8, param_count: usize, args: &[Expr]) -> bool {
     }
 }
 
-fn call_with_err(ptr: *const u8, func: &ast::FnDef, args: &[Expr]) -> (f64, u8) {
+pub(super) fn call_with_err(ptr: *const u8, func: &ast::FnDef, args: &[Expr]) -> (f64, u8) {
     unsafe {
         match func.params.len() {
             0 => std::mem::transmute::<_, fn() -> (f64, u8)>(ptr)(),
@@ -284,23 +320,27 @@ fn call_with_err(ptr: *const u8, func: &ast::FnDef, args: &[Expr]) -> (f64, u8) 
     }
 }
 
-enum Arg {
+pub(super) enum Arg {
     F64(f64),
     Str(*const u8),
 }
 
-fn expr_to_arg(expr: &Expr) -> Arg {
+/// Convert an Expr to a JIT-callable argument.
+/// String args are stored in `string_pool` to keep them alive for the call duration.
+pub(super) fn expr_to_arg<'a>(expr: &Expr, string_pool: &'a mut Vec<std::ffi::CString>) -> Arg {
     match expr {
         Expr::Number(n) => Arg::F64(*n),
         Expr::String(s) => {
-            let leaked = Box::into_raw(format!("{}\0", s).into_boxed_str());
-            Arg::Str(leaked as *const u8)
+            let cstr = std::ffi::CString::new(s.as_str()).unwrap_or_default();
+            let ptr = cstr.as_ptr() as *const u8;
+            string_pool.push(cstr);
+            Arg::Str(ptr)
         }
         _ => Arg::F64(0.0),
     }
 }
 
-fn expr_to_f64(expr: &Expr) -> f64 {
+pub(super) fn expr_to_f64(expr: &Expr) -> f64 {
     match expr {
         Expr::Number(n) => *n,
         Expr::Bool(true) => 1.0,

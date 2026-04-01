@@ -18,11 +18,4 @@ pub fn roca_to_cranelift(ty: &TypeRef) -> Type {
     }
 }
 
-/// Whether this type lives on the heap (needs RC management).
-/// Not yet used by emit.rs (which infers heap from Cranelift I64 type),
-/// but will be needed when emit tracks Roca types through the pipeline.
-#[allow(dead_code)]
-pub fn is_heap_type(ty: &TypeRef) -> bool {
-    !matches!(ty, TypeRef::Number | TypeRef::Bool | TypeRef::Ok)
-}
 

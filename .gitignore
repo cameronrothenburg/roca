@@ -1,5 +1,7 @@
 /target
 /docs/book
+/out
 *.js
-!packages/stdlib/*.js
+!packages/runtime/*.js
+!tests/js/*.js
 !docs/*.js

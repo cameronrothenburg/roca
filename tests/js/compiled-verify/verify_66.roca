@@ -1,0 +1,10 @@
+pub enum HttpCode {
+            ok = 200
+            not_found = 404
+            server_error = 500
+        }
+
+        pub fn is_ok(code: Number) -> Bool {
+            return code == HttpCode.ok
+            test { self(200) == true self(404) == false }
+        }

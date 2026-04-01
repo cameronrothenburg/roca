@@ -1,0 +1,13 @@
+contract Describable { describe() -> String }
+
+        pub struct Product {
+            name: String
+            price: Number
+        }{}
+
+        Product satisfies Describable {
+            fn describe() -> String {
+                return self.name + " costs " + self.price
+                test { self() == "Widget costs 10" }
+            }
+        }

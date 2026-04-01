@@ -1,0 +1,10 @@
+pub fn process(input: String) -> String {
+            const trimmed = input.trim()
+            const upper = trimmed.toUpperCase()
+            return upper
+            crash {
+                input.trim -> skip
+                trimmed.toUpperCase -> skip
+            }
+            test { self(" hello ") == "HELLO" }
+        }

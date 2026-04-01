@@ -1,0 +1,5 @@
+pub fn format(n: Number) -> String {
+            return n.toFixed(2)
+            crash { n.toFixed -> skip }
+            test { self(3.14159) == "3.14" }
+        }

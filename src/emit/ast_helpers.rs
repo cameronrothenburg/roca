@@ -71,11 +71,6 @@ pub(crate) fn assign_expr<'a>(ast: &AstBuilder<'a>, name: &str, value: Expressio
     ast.expression_assignment(SPAN, AssignmentOperator::Assign, AssignmentTarget::from(target), value)
 }
 
-pub(crate) fn update_inc<'a>(ast: &AstBuilder<'a>, name: &'a str) -> Expression<'a> {
-    let target = SimpleAssignmentTarget::AssignmentTargetIdentifier(ast.alloc(ast.identifier_reference(SPAN, name)));
-    ast.expression_update(SPAN, UpdateOperator::Increment, false, target)
-}
-
 pub(crate) fn console_call<'a>(ast: &AstBuilder<'a>, method: &'a str, args: oxc_allocator::Vec<'a, Argument<'a>>) -> Expression<'a> {
     let callee = static_field(ast, "console", method);
     ast.expression_call(SPAN, callee, NONE, args, false)

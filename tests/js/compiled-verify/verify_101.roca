@@ -1,0 +1,4 @@
+pub fn show(val: String) -> String {
+            return "{val}!"
+            test { self("hi") == "hi!" }
+        }

@@ -1,0 +1,7 @@
+import { Encoding } from std::encoding
+        pub fn to_b64(s: String) -> String {
+            const result = Encoding.btoa(s)
+            return result
+            crash { Encoding.btoa -> fallback("") }
+            test { self("hello") == "aGVsbG8=" }
+        }

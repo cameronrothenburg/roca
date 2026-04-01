@@ -1,0 +1,5 @@
+out/
+compiled/
+compiled-stdlib/
+node_modules/
+bun.lockb

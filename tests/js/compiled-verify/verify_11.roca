@@ -1,0 +1,6 @@
+pub fn build() -> String {
+            let msg = "hello"
+            msg = msg + " world"
+            return msg
+            test { self() == "hello world" }
+        }

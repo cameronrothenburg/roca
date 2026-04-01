@@ -1,0 +1,6 @@
+pub fn greet(name: String) -> String {
+            log(name)
+            return name
+            crash { log -> skip }
+            test { self("cam") == "cam" }
+        }

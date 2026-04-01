@@ -54,6 +54,20 @@ mod tests {
     }
 
     #[test]
+    fn ok_on_infallible() {
+        let e = errors(r#"fn add(a: Number, b: Number) -> Number { return a + b test { self(1, 2) is Ok } }"#);
+        assert!(e.iter().any(|e| e.code == "ok-on-infallible"),
+            "expected ok-on-infallible for non-error function using is Ok, got: {:?}", e);
+    }
+
+    #[test]
+    fn ok_on_fallible_allowed() {
+        let e = errors(r#"fn v(s: String) -> String, err { if s == "" { return err.missing } return s test { self("ok") is Ok self("") is err.missing } }"#);
+        assert!(!e.iter().any(|e| e.code == "ok-on-infallible"),
+            "is Ok on error-returning function should be fine, got: {:?}", e);
+    }
+
+    #[test]
     fn struct_method_errors_from_signature() {
         // Errors declared in struct contract block (signature) should require test coverage
         let e = errors(r#"
@@ -225,7 +239,17 @@ fn check_test_coverage(f: &FnDef, declared_errors: &[ErrDecl], qn: &str, errors:
         all_error_names.insert(name);
     }
 
+    // ok-on-infallible: `is Ok` on a function with no error paths
     if all_error_names.is_empty() && !f.returns_err {
+        for case in &test.cases {
+            if let TestCase::IsOk { .. } = case {
+                errors.push(RuleError::new(
+                    errors::OK_ON_INFALLIBLE,
+                    format!("'{}' does not return errors — `is Ok` is meaningless here", f.name),
+                    Some(qn.to_string()),
+                ));
+            }
+        }
         return;
     }
 

@@ -1,0 +1,11 @@
+import { Encoding } from std::encoding
+        pub fn roundtrip(s: String) -> String {
+            const encoded = Encoding.btoa(s)
+            const decoded = Encoding.atob(encoded)
+            return decoded
+            crash {
+                Encoding.btoa -> fallback("")
+                Encoding.atob -> fallback("")
+            }
+            test { self("test data") == "test data" }
+        }

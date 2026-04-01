@@ -1,0 +1,14 @@
+pub fn check(flag: Bool, code: Number) -> String, err {
+            if flag {
+                return match code {
+                    200 => "ok"
+                    _ => err.bad
+                }
+            }
+            return "skipped"
+            test {
+                self(true, 200) == "ok"
+                self(true, 500) is err.bad
+                self(false, 200) == "skipped"
+            }
+        }

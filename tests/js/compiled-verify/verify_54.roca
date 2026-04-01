@@ -1,0 +1,32 @@
+/// Fetches data
+        pub struct Fetch {
+            call(url: String) -> String, err {
+                err invalid = "invalid"
+                err timeout = "timeout"
+            }
+        }{
+            pub fn call(url: String) -> String, err {
+                if url == "" { return err.invalid }
+                if url == "timeout" { return err.timeout }
+                return "data"
+                test {
+                    self("ok") == "data"
+                    self("") is err.invalid
+                    self("timeout") is err.timeout
+                }
+            }
+        }
+
+        /// Loads data
+        pub fn load() -> String {
+            const result = Fetch.call("timeout")
+            return result
+            crash {
+                Fetch.call {
+                    err.timeout -> fallback("cached")
+                    err.invalid -> fallback("none")
+                    default -> halt
+                }
+            }
+            test { self() == "cached" }
+        }

@@ -1,0 +1,11 @@
+pub enum Status {
+            active = "active"
+            inactive = "inactive"
+            suspended = "suspended"
+        }
+
+        pub fn check(s: String) -> String {
+            if s == Status.active { return "is active" }
+            return "not active"
+            test { self("active") == "is active" }
+        }

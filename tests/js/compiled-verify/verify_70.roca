@@ -1,0 +1,12 @@
+/// Divides numbers
+        pub struct Divide {
+            call(a: Number, b: Number) -> Number, err {
+                err division_by_zero = "division_by_zero"
+            }
+        }{
+            pub fn call(a: Number, b: Number) -> Number, err {
+                if b == 0 { return err.division_by_zero }
+                return a / b
+                test { self(10, 2) == 5 self(10, 0) is err.division_by_zero }
+            }
+        }

@@ -59,9 +59,13 @@ fn main() {
             }
         }
         "build" => {
-            let path = resolve_path_arg(&args);
+            let emit_only = args.iter().any(|a| a == "--emit-only");
+            let path_args: Vec<String> = args.iter().filter(|a| !a.starts_with("--")).cloned().collect();
+            let path = resolve_path_arg(&path_args);
             if path.is_dir() {
                 build_directory(&path);
+            } else if emit_only {
+                cli::build::emit_file(&path);
             } else {
                 build_file(&path);
             }
@@ -107,8 +111,28 @@ fn main() {
                 std::process::exit(1);
             });
 
-            if !cli::runtime::run_js(&code) {
-                std::process::exit(1);
+            // Run compiled JS via node (pipe via stdin to avoid arg size limits)
+            use std::io::Write;
+            let mut child = std::process::Command::new("node")
+                .arg("--input-type=module")
+                .arg("-")
+                .stdin(std::process::Stdio::piped())
+                .spawn()
+                .unwrap_or_else(|e| {
+                    eprintln!("error: could not run node: {}", e);
+                    eprintln!("install Node.js or Bun to use 'roca run'");
+                    std::process::exit(1);
+                });
+            child.stdin.take().unwrap().write_all(code.as_bytes()).unwrap();
+            let status = child.wait();
+            match status {
+                Ok(s) if !s.success() => std::process::exit(1),
+                Err(e) => {
+                    eprintln!("error: could not run node: {}", e);
+                    eprintln!("install Node.js or Bun to use 'roca run'");
+                    std::process::exit(1);
+                }
+                _ => {}
             }
         }
         "search" => {
@@ -199,9 +223,9 @@ fn print_help() {
     println!("  check [path]         Parse and check rules without emitting JS");
     println!("  build [path]         Compile .roca files to JS with proof tests");
     println!("  test [path]          Build + run proof tests, then clean output");
-    println!("  run [path]           Build + execute via embedded V8");
+    println!("  run [path]           Build + execute via Node.js");
     println!("  gen-extern <.d.ts>   Generate extern contracts from TypeScript declarations");
-    println!("  repl [--native]      Interactive REPL (V8 default, --native for Cranelift)");
+    println!("  repl [--native]      Interactive REPL (Node default, --native for Cranelift)");
     println!("  search <query>       Search stdlib and project for types/functions");
     println!("  patterns             Show coding patterns and JS integration examples");
     println!("  lsp                  Start language server (stdio)");

@@ -1,0 +1,6 @@
+pub fn fail(msg: String) -> String {
+            error(msg)
+            return msg
+            crash { error -> skip }
+            test { self("oops") == "oops" }
+        }

@@ -93,6 +93,41 @@ pub fn resolve_file_from_project(path: &Path, project: &resolve::ResolvedProject
     Ok(file)
 }
 
+/// Like resolve_file_from_project but skips non-critical diagnostics.
+pub fn resolve_file_from_project_lenient(path: &Path, project: &resolve::ResolvedProject) -> Result<ast::SourceFile, String> {
+    use super::log::{log_event, LogEvent};
+    use crate::errors;
+
+    let path_str = path.display().to_string();
+    let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+
+    let file = match project.files.get(&canonical) {
+        Some(f) => f.clone(),
+        None => {
+            let source_text = fs::read_to_string(path).unwrap_or_default();
+            parse::try_parse(&source_text)
+                .map_err(|e| {
+                    let msg = format!("{}: {}", path.display(), e);
+                    log_event(&LogEvent::ParseError { file: &path_str, message: &e.message, source: &source_text });
+                    msg
+                })?
+        }
+    };
+    let source_dir = path.parent();
+    let all_errors = check::check_with_registry_and_dir(&file, &project.registry, source_dir);
+    let critical: Vec<_> = all_errors.iter()
+        .filter(|e| e.code != errors::MISSING_DOC && e.code != errors::MISSING_TEST
+                  && e.code != errors::OK_ON_INFALLIBLE && e.code != errors::RESERVED_NAME)
+        .collect();
+    if !critical.is_empty() {
+        let source_text = fs::read_to_string(path).unwrap_or_default();
+        log_event(&LogEvent::CheckErrors { file: &path_str, errors: &all_errors, source: &source_text });
+        let msg = critical.iter().map(|e| format!("{}", e)).collect::<Vec<_>>().join("\n");
+        return Err(msg);
+    }
+    Ok(file)
+}
+
 pub fn collect_roca_files(dir: &Path, files: &mut Vec<PathBuf>) {
     if let Ok(entries) = fs::read_dir(dir) {
         for entry in entries.flatten() {

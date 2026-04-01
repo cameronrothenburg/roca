@@ -1,0 +1,17 @@
+pub fn sum_to(n: Number) -> Number {
+            let total = 0
+            let i = 1
+            if i <= n {
+                total = total + i
+                i = i + 1
+                if i <= n {
+                    total = total + i
+                    i = i + 1
+                    if i <= n {
+                        total = total + i
+                    }
+                }
+            }
+            return total
+            test { self(3) == 6 }
+        }

@@ -516,18 +516,14 @@ pub fn compile_struct_method<M: Module>(
     Ok(func_id)
 }
 
-/// Compile a mock stub for an extern fn.
-pub fn compile_mock_stub<M: Module>(
+/// Compile an auto-stub for an extern fn — returns a default value.
+pub fn compile_extern_fn_stub<M: Module>(
     module: &mut M,
     extern_fn: &roca::ExternFnDef,
-    mock: &roca::MockDef,
+    default_value: &roca::Expr,
     rt: &RuntimeFuncs,
     compiled: &mut CompiledFuncs,
 ) -> Result<FuncId, String> {
-    let mock_entry = match mock.entries.first() {
-        Some(e) => e,
-        None => return Err(format!("empty mock for {}", extern_fn.name)),
-    };
 
     let mut sig = module.make_signature();
     for param in &extern_fn.params {
@@ -539,7 +535,7 @@ pub fn compile_mock_stub<M: Module>(
     }
 
     let func_id = module.declare_function(&extern_fn.name, Linkage::Export, &sig)
-        .map_err(|e| format!("declare mock {}: {}", extern_fn.name, e))?;
+        .map_err(|e| format!("declare stub {}: {}", extern_fn.name, e))?;
     compiled.funcs.insert(extern_fn.name.clone(), func_id);
 
     let mut ctx = module.make_context();
@@ -569,7 +565,7 @@ pub fn compile_mock_stub<M: Module>(
         loop_header: None,
     };
 
-    let val = emit_expr(&mut builder, &mock_entry.value, &mut emit_ctx);
+    let val = emit_expr(&mut builder, default_value, &mut emit_ctx);
     if extern_fn.returns_err {
         let no_err = builder.ins().iconst(types::I8, 0);
         builder.ins().return_(&[val, no_err]);
@@ -579,7 +575,7 @@ pub fn compile_mock_stub<M: Module>(
 
     builder.finalize();
     module.define_function(func_id, &mut ctx)
-        .map_err(|e| format!("compile mock {}: {}", extern_fn.name, e))?;
+        .map_err(|e| format!("compile stub {}: {}", extern_fn.name, e))?;
     module.clear_context(&mut ctx);
     Ok(func_id)
 }
@@ -628,8 +624,14 @@ pub fn compile_contract_stubs<M: Module>(
         }
 
         builder.finalize();
-        module.define_function(func_id, &mut ctx)
-            .map_err(|e| format!("compile stub {}: {}", qualified, e))?;
+        match module.define_function(func_id, &mut ctx) {
+            Ok(_) => {}
+            Err(_) => {
+                // Skip stubs that fail to compile (e.g., generic params)
+                module.clear_context(&mut ctx);
+                continue;
+            }
+        }
         module.clear_context(&mut ctx);
     }
     Ok(())

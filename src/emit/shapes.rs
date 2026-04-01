@@ -16,6 +16,22 @@ use oxc_span::SPAN;
 use super::ast_helpers::*;
 use super::helpers::{make_error_simple, make_result, null};
 
+use std::collections::HashSet;
+use std::cell::RefCell;
+
+thread_local! {
+    static STDLIB_CONTRACTS: RefCell<HashSet<String>> = RefCell::new(HashSet::new());
+}
+
+/// Register stdlib contract names for `roca.` prefixing in JS output.
+pub fn set_stdlib_contracts(names: HashSet<String>) {
+    STDLIB_CONTRACTS.with(|c| *c.borrow_mut() = names);
+}
+
+fn is_stdlib_contract(name: &str) -> bool {
+    STDLIB_CONTRACTS.with(|c| c.borrow().contains(name))
+}
+
 // ─── Expression shapes ───────────────────────────────────
 // Each function takes the AST shape's fields and returns an OXC Expression.
 // Children are emitted by calling `expr_to_js` recursively.
@@ -66,7 +82,14 @@ fn js_self<'a>(ast: &AstBuilder<'a>) -> Expression<'a> {
 }
 
 fn js_ident<'a>(ast: &AstBuilder<'a>, name: &str) -> Expression<'a> {
-    if name == "Ok" { null_lit(ast) } else { ident(ast, name) }
+    if name == "Ok" { return null_lit(ast); }
+    // Stdlib contracts accessed via roca.ContractName
+    if is_stdlib_contract(name) {
+        let roca_obj = ident(ast, "roca");
+        let n = ast.str(name);
+        return Expression::from(ast.member_expression_static(SPAN, roca_obj, ast.identifier_name(SPAN, n), false));
+    }
+    ident(ast, name)
 }
 
 // ─── Unary shapes ─────────────────────────────────────────

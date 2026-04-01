@@ -29,10 +29,6 @@ pub fn log_event(event: &LogEvent) {
             format!(r#"{{"ts":"{}","event":"check_errors","file":"{}","error_count":{},"errors":[{}],"source":"{}"}}"#,
                 timestamp(), escape(file), errors.len(), errs.join(","), escape(source))
         }
-        LogEvent::TestResult { file, passed, failed, output } => {
-            format!(r#"{{"ts":"{}","event":"test_result","file":"{}","passed":{},"failed":{},"output":"{}"}}"#,
-                timestamp(), escape(file), passed, failed, escape(output))
-        }
         LogEvent::BuildSuccess { file, output_path } => {
             format!(r#"{{"ts":"{}","event":"build_success","file":"{}","output":"{}"}}"#,
                 timestamp(), escape(file), escape(output_path))
@@ -58,12 +54,6 @@ pub enum LogEvent<'a> {
         file: &'a str,
         errors: &'a [crate::errors::RuleError],
         source: &'a str,
-    },
-    TestResult {
-        file: &'a str,
-        passed: usize,
-        failed: usize,
-        output: &'a str,
     },
     BuildSuccess {
         file: &'a str,

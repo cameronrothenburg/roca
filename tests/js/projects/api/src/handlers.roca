@@ -1,0 +1,20 @@
+import { User, ApiResponse } from "./types.roca"
+
+/// Get a user by name — returns success response
+pub fn get_user(name: String) -> ApiResponse {
+    const user = User.create(name, 25)
+    return ApiResponse.success(user.name)
+test {
+    self("cam") == ApiResponse { status: 200, body: "cam" }
+}}
+
+/// Validate name length
+pub fn validate_name(name: String) -> ApiResponse {
+    if name.length < 2 {
+        return ApiResponse.fail("name too short")
+    }
+    return ApiResponse.success(name)
+test {
+    self("cam") == ApiResponse { status: 200, body: "cam" }
+    self("x") == ApiResponse { status: 400, body: "name too short" }
+}}

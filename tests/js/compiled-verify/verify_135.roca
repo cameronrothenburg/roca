@@ -1,0 +1,5 @@
+pub fn convert(n: Number) -> String {
+            return String(n)
+            crash { String -> skip }
+            test { self(42) == "42" }
+        }

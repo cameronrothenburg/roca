@@ -1,0 +1,10 @@
+pub struct Profile {
+            name: String
+            bio: Optional<String>
+        }{}
+
+        pub fn has_bio(p: Profile) -> Bool {
+            if p.bio == null { return false }
+            return true
+            test { self(Profile { name: "cam", bio: null }) == false }
+        }

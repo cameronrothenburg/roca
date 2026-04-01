@@ -1,0 +1,14 @@
+pub fn use_map() -> Bool {
+            const m = Map()
+            m.set("name", "cam")
+            m.set("city", "rothenburg")
+            const val = m.get("name")
+            return m.has("name")
+            crash {
+                Map -> skip
+                m.set -> skip
+                m.get -> skip
+                m.has -> skip
+            }
+            test { self() == true }
+        }

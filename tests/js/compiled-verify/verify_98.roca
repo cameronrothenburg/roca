@@ -1,0 +1,26 @@
+pub fn classify(x: Number) -> String {
+            if x > 100 {
+                if x > 1000 {
+                    return "huge"
+                } else {
+                    return "big"
+                }
+            } else {
+                if x > 0 {
+                    if x > 50 {
+                        return "medium"
+                    } else {
+                        return "small"
+                    }
+                } else {
+                    return "zero-or-neg"
+                }
+            }
+            test {
+                self(2000) == "huge"
+                self(200) == "big"
+                self(75) == "medium"
+                self(10) == "small"
+                self(-5) == "zero-or-neg"
+            }
+        }
