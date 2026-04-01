@@ -1,6 +1,0 @@
-pub fn to_str(val: String) -> String {
-            let s, err = String(val)
-            return s
-            crash { String -> fallback("was null") }
-            test { self("hello") == "hello" }
-        }

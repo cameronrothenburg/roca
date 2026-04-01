@@ -192,6 +192,8 @@ Note: `roca_string_len` and `roca_array_len` return `i64` (count), not `f64`. Th
 | `roca_struct_alloc` | `(i64) -> i64` | Allocate struct |
 | `roca_free_struct` | `(i64, i64)` | Free struct, cascade release |
 | `roca_free_array` | `(i64)` | Free array |
+| `roca_box_alloc` | `(i64) -> i64` | Allocate untyped buffer with box header |
+| `roca_box_free` | `(i64)` | Run destructor (if registered) and free |
 
 ### 8.3.6 Concurrency Functions
 
@@ -213,14 +215,28 @@ Note: `roca_string_len` and `roca_array_len` return `i64` (count), not `f64`. Th
 
 Pointer returned to Roca code points to payload (header + 16 bytes).
 
-### 8.4.2 Ownership
+### 8.4.2 Box Header Layout
+
+```text
+[drop_fn: u64][alloc_size: u64][payload...]
+```
+
+Pointer returned to Roca code points to payload (header + 16 bytes).
+
+- `drop_fn` is a pointer to a type-erased destructor (`fn(*mut u8)`), or `0` for untyped buffers allocated via `roca_box_alloc`.
+- `alloc_size` is the total allocation size including the 16-byte header.
+- `roca_box_free` MUST invoke `drop_fn` (if non-zero) on the payload pointer before deallocating.
+
+Box headers are used for opaque stdlib types (JSON values, parsed URLs, HTTP responses) where the Roca emitter cannot inspect the internal structure. The emitter tags these values with a `ValKind` and inserts `roca_box_free` calls at scope exit, loop cleanup, and `let` reassignment.
+
+### 8.4.3 Ownership
 
 | Binding | Semantics | On pass |
 |---------|-----------|---------|
 | `const` | Immutable, borrowed | Callee MUST NOT free |
 | `let` | Mutable, moved | Caller MUST NOT access after passing |
 
-### 8.4.3 Scope Cleanup
+### 8.4.4 Scope Cleanup
 
 At function exit, all live heap variables MUST be released. The return value MUST be excluded from cleanup.
 

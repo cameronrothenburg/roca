@@ -1,5 +1,0 @@
-pub fn is_positive(n: Number) -> Bool {
-            if n > 0 { return true }
-            return false
-            test { self(1) == true self(0) == false }
-        }

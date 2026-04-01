@@ -170,7 +170,6 @@ runtime_funcs! {
 
     // Url
     (url_parse,         "roca_url_parse",         roca_url_parse,         [types::I64],                                [types::I64, types::I8]),
-    (url_free,          "roca_url_free",          roca_url_free,          [types::I64],                                []),
     (url_is_valid,      "roca_url_is_valid",      roca_url_is_valid,      [types::I64],                                [types::I8]),
     (url_hostname,      "roca_url_hostname",      roca_url_hostname,      [types::I64],                                [types::I64]),
     (url_protocol,      "roca_url_protocol",      roca_url_protocol,      [types::I64],                                [types::I64]),
@@ -193,7 +192,6 @@ runtime_funcs! {
 
     // JSON
     (json_parse,        "roca_json_parse",        roca_json_parse,        [types::I64],                                [types::I64, types::I8]),
-    (json_free,         "roca_json_free",         roca_json_free,         [types::I64],                                []),
     (json_stringify,    "roca_json_stringify",     roca_json_stringify,    [types::I64],                                [types::I64]),
     (json_get,          "roca_json_get",          roca_json_get,          [types::I64, types::I64],                    [types::I64]),
     (json_get_string,   "roca_json_get_string",   roca_json_get_string,   [types::I64, types::I64],                    [types::I64]),
@@ -208,7 +206,6 @@ runtime_funcs! {
     (http_put,          "roca_http_put",          roca_http_put,          [types::I64, types::I64],                    [types::I64, types::I8]),
     (http_patch,        "roca_http_patch",        roca_http_patch,        [types::I64, types::I64],                    [types::I64, types::I8]),
     (http_delete,       "roca_http_delete",       roca_http_delete,       [types::I64],                                [types::I64, types::I8]),
-    (http_free,         "roca_http_free",         roca_http_free,         [types::I64],                                []),
     (http_status,       "roca_http_status",       roca_http_status,       [types::I64],                                [types::F64]),
     (http_ok,           "roca_http_ok",           roca_http_ok,           [types::I64],                                [types::I8]),
     (http_text,         "roca_http_text",         roca_http_text,         [types::I64],                                [types::I64, types::I8]),
@@ -216,11 +213,14 @@ runtime_funcs! {
     (http_header,       "roca_http_header",       roca_http_header,       [types::I64, types::I64],                    [types::I64]),
 
     // Memory management
+    (box_alloc,         "roca_box_alloc",         roca_box_alloc,         [types::I64],                                [types::I64]),
+    (box_free,          "roca_box_free",          roca_box_free,          [types::I64],                                []),
     (string_new,        "roca_string_new",        roca_string_new,        [types::I64],                                [types::I64]),
     (rc_alloc,          "roca_rc_alloc",          roca_rc_alloc,          [types::I64],                                [types::I64]),
     (rc_retain,         "roca_rc_retain",         roca_rc_retain,         [types::I64],                                []),
     (rc_release,        "roca_rc_release",        roca_rc_release,        [types::I64],                                []),
     (free_array,        "roca_free_array",        roca_free_array,        [types::I64],                                []),
+    (free_json_array,   "roca_free_json_array",   roca_free_json_array,   [types::I64],                                []),
     (free_struct,       "roca_free_struct",       roca_free_struct,       [types::I64, types::I64],                    []),
 }
 

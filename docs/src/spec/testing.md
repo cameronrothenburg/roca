@@ -61,6 +61,8 @@ A test block MUST contain:
 
 An equality assertion calls `self` with arguments and compares the return value to an expected value using structural equality. For structs, all fields MUST match. For arrays, all elements MUST match in order and length.
 
+The expected value MUST NOT be a `self(...)` call. A `self()` call as the expected value proves nothing — it compares the function's output against its own output rather than a known-correct value. A conforming compiler MUST reject any equality assertion where the expected value is a `self(...)` call with diagnostic `self-referential-test`.
+
 ```roca
 pub fn double(n: Number) -> Number {
     return n * 2
@@ -231,7 +233,7 @@ A property test failure blocks JS emission, just like explicit test failures.
 
 ## 6.6 Auto-Stubs
 
-Functions that depend on `extern` contracts receive auto-generated stubs during test execution. The compiler derives stub return values from the contract's type signatures. No `mock` block is needed.
+Functions that depend on `extern` contracts receive auto-generated stubs during test execution. The compiler derives stub return values from the contract's type signatures.
 
 ### 6.6.1 Default Return Values
 
@@ -273,10 +275,6 @@ test {
     self(db, "") is err.not_found
 }}
 ```
-
-### 6.6.3 Stub Override
-
-A conforming implementation MAY support explicit stub overrides in test blocks for cases where default values are insufficient. The syntax and semantics of stub overrides are implementation-defined and are not specified in this version of the spec.
 
 ---
 

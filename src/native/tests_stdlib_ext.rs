@@ -694,3 +694,178 @@ fn http_get_bad_url() {
     let (_, err) = runtime::roca_http_get(url);
     assert_ne!(err, 0, "bad URL should return error");
 }
+
+// ─── Box allocator ──────────────────────────────────
+
+#[test]
+fn box_alloc_returns_nonzero() {
+    let ptr = runtime::roca_box_alloc(64);
+    assert_ne!(ptr, 0);
+    runtime::roca_box_free(ptr);
+}
+
+#[test]
+fn box_alloc_size_roundtrip() {
+    for size in [1, 8, 16, 64, 256, 1024, 4096] {
+        let ptr = runtime::roca_box_alloc(size);
+        assert_ne!(ptr, 0, "alloc of {} bytes returned null", size);
+        runtime::roca_box_free(ptr);
+    }
+}
+
+#[test]
+fn box_alloc_write_read() {
+    let ptr = runtime::roca_box_alloc(8);
+    unsafe {
+        *(ptr as *mut i64) = 0xDEADBEEF;
+        assert_eq!(*(ptr as *const i64), 0xDEADBEEF);
+    }
+    runtime::roca_box_free(ptr);
+}
+
+#[test]
+fn box_free_null_safe() {
+    runtime::roca_box_free(0);
+}
+
+#[test]
+fn box_alloc_different_sizes_no_corruption() {
+    let mut ptrs = Vec::new();
+    for i in 0..20i64 {
+        let size = (i + 1) * 8;
+        let ptr = runtime::roca_box_alloc(size);
+        unsafe { *(ptr as *mut i64) = i; }
+        ptrs.push((ptr, i));
+    }
+    for &(ptr, expected) in &ptrs {
+        assert_eq!(unsafe { *(ptr as *const i64) }, expected);
+    }
+    for (ptr, _) in ptrs {
+        runtime::roca_box_free(ptr);
+    }
+}
+
+// ─── Box allocator: destructor & MEM tracking regressions ───
+
+/// roca_box_free must invoke the drop trampoline for typed values.
+#[test]
+fn box_free_runs_drop_on_owned_type() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    static DROPPED: AtomicBool = AtomicBool::new(false);
+
+    struct Witness(String);
+    impl Drop for Witness {
+        fn drop(&mut self) {
+            DROPPED.store(true, Ordering::SeqCst);
+        }
+    }
+
+    DROPPED.store(false, Ordering::SeqCst);
+
+    let ptr = runtime::box_value(Witness("hello".to_string()));
+    assert_ne!(ptr, 0);
+
+    runtime::roca_box_free(ptr);
+
+    assert!(
+        DROPPED.load(Ordering::SeqCst),
+        "roca_box_free did not run Drop — inner heap allocations leak"
+    );
+}
+
+/// Box allocs must participate in MEM tracking so assert_clean catches leaks.
+#[test]
+fn box_alloc_tracked_by_mem() {
+    runtime::MEM.reset();
+
+    let ptr = runtime::roca_box_alloc(64);
+    assert_ne!(ptr, 0);
+
+    let (allocs, _, _, _, live) = runtime::MEM.stats();
+    assert_eq!(allocs, 1, "BUG: roca_box_alloc not tracked — MEM blind to box leaks");
+    assert!(live > 0, "live bytes should reflect the allocation");
+
+    runtime::roca_box_free(ptr);
+
+    let (allocs, frees, _, _, live) = runtime::MEM.stats();
+    assert_eq!(frees, 1, "BUG: roca_box_free not tracked");
+    assert_eq!(allocs, frees, "alloc/free mismatch");
+    assert_eq!(live, 0, "live bytes should be 0 after free");
+}
+
+/// JSON parse + free must leave MEM clean (combines both issues).
+#[test]
+fn box_free_json_mem_clean() {
+    let json_str = runtime::alloc_str(r#"{"key": "value", "nested": {"a": 1}}"#);
+
+    // Reset after alloc_str so we only measure the box alloc/free
+    runtime::MEM.reset();
+
+    let (ptr, err) = runtime::roca_json_parse(json_str);
+    assert_eq!(err, 0, "JSON parse should succeed");
+    assert_ne!(ptr, 0);
+
+    runtime::roca_box_free(ptr);
+
+    let (allocs, frees, ..) = runtime::MEM.stats();
+    assert_eq!(allocs, frees, "BUG: JSON box alloc/free not tracked by MEM");
+}
+
+// ─── Stdlib memory lifecycle: alloc everything, free everything, assert clean ───
+
+/// Exercises every heap-allocating stdlib path and verifies MEM is balanced.
+#[test]
+fn stdlib_mem_lifecycle_all_types() {
+    // Pre-allocate strings we'll need (these are RC-managed, not box-managed)
+    let url_str = runtime::alloc_str("https://example.com/path?q=1#frag");
+    let json_str = runtime::alloc_str(r#"{"name":"roca","tags":["fast","safe"],"nested":{"x":1}}"#);
+    let key_name = runtime::alloc_str("name");
+    let key_tags = runtime::alloc_str("tags");
+    let key_nested = runtime::alloc_str("nested");
+
+    // Reset MEM after string allocs so we only measure box/array/map operations
+    runtime::MEM.reset();
+
+    // ── JSON parse ──
+    let (json, err) = runtime::roca_json_parse(json_str);
+    assert_eq!(err, 0, "JSON parse failed");
+
+    // ── JSON.get (returns boxed JSON) ──
+    let nested = runtime::roca_json_get(json, key_nested);
+    assert_ne!(nested, 0, "JSON.get nested failed");
+
+    // ── JSON.getArray (returns array of boxed JSON) ──
+    let arr = runtime::roca_json_get_array(json, key_tags);
+    assert_ne!(arr, 0, "JSON.getArray failed");
+    let arr_len = runtime::roca_array_len(arr);
+    assert_eq!(arr_len, 2, "expected 2 tags");
+
+    // ── Url.parse ──
+    let (url, err) = runtime::roca_url_parse(url_str);
+    assert_eq!(err, 0, "Url.parse failed");
+
+    // Read some fields to prove values are live (these return RC strings)
+    let hostname = runtime::roca_url_hostname(url);
+    assert_ne!(hostname, 0);
+    let name_val = runtime::roca_json_get_string(json, key_name);
+
+    // ── Free everything ──
+    // RC strings from read operations
+    runtime::roca_rc_release(hostname);
+    runtime::roca_rc_release(name_val);
+    // Boxed types
+    runtime::roca_box_free(url);
+    runtime::roca_free_json_array(arr);
+    runtime::roca_box_free(nested);
+    runtime::roca_box_free(json);
+
+    // ── Assert MEM is clean ──
+    let (allocs, frees, _, _, live) = runtime::MEM.stats();
+    assert_eq!(
+        allocs, frees,
+        "MEM leak: {} allocs but {} frees (delta: {})",
+        allocs, frees, allocs as i64 - frees as i64
+    );
+    assert_eq!(live, 0, "MEM live bytes should be 0, got {}", live);
+}

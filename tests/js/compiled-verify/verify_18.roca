@@ -1,7 +1,0 @@
-pub fn both(a: Bool, b: Bool) -> Bool {
-            if a {
-                if b { return true }
-            }
-            return false
-            test { self(true, true) == true self(true, false) == false }
-        }

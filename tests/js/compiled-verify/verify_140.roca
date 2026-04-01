@@ -1,5 +1,0 @@
-pub fn convert(s: String) -> Bool {
-            return Bool(s)
-            crash { Bool -> skip }
-            test { self("hello") == true }
-        }

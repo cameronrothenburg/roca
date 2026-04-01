@@ -1,9 +1,0 @@
-pub fn make_buffer() -> Number {
-            const buf = ArrayBuffer(16)
-            return buf.byteLength
-            crash {
-                ArrayBuffer -> skip
-                buf.byteLength -> skip
-            }
-            test { self() == 16 }
-        }

@@ -1,5 +1,0 @@
-pub fn show(b: Bool) -> String {
-            return b.toString()
-            crash { b.toString -> skip }
-            test { self(true) == "true" }
-        }

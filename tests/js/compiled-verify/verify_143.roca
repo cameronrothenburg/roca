@@ -1,5 +1,0 @@
-pub fn label(name: String, age: Number) -> String {
-            return name + " is " + String(age)
-            crash { String -> skip }
-            test { self("cam", 25) == "cam is 25" }
-        }

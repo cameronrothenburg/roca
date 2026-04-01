@@ -1,9 +1,0 @@
-pub fn find_first_gt(threshold: Number) -> Number {
-            let i = 0
-            while i < 100 {
-                if i > threshold { break }
-                i = i + 1
-            }
-            return i
-            test { self(5) == 6 }
-        }

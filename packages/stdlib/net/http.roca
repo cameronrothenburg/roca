@@ -3,7 +3,7 @@
  * Import with: import { Http } from std::http
  *
  * Compiled output uses globalThis.fetch — works in browsers, Node, Bun, Workers.
- * The embedded runtime does not provide fetch (proof tests use mocks).
+ * The embedded runtime does not provide fetch (proof tests use auto-stubs).
  */
 pub extern contract Http {
     /// GET request

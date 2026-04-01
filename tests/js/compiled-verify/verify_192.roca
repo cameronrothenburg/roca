@@ -1,8 +1,0 @@
-import { Time } from std::time
-        pub fn try_parse(s: String) -> Number, err {
-            if false { return err.parse_failed }
-            const ts = Time.parse(s)
-            return ts
-            crash { Time.parse -> halt }
-            test { self("2026-01-01") == self("2026-01-01") self("bad") is err.parse_failed }
-        }

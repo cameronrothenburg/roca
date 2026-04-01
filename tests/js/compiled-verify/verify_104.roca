@@ -1,5 +1,0 @@
-pub fn show(n: Number) -> String {
-            return "value: {n.toString()}"
-            crash { n.toString -> skip }
-            test { self(42) == "value: 42" }
-        }

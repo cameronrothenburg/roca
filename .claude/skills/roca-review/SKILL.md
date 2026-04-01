@@ -51,12 +51,13 @@ Compile a unified report:
 ### Simplification
 [summary from /simplify]
 
-### Verdict: ✅ Ready for PR / ❌ Issues to fix
+### Verdict: Ready for PR / Issues to fix
 [list any blocking issues that must be resolved]
 ```
 
 ### Step 5: Fix or proceed
 
-- If **all clear**: write the lock file via Bash: `echo passed > .claude/.review-passed`, then tell the user the review passed and they can proceed with the PR
+- If **all clear**: write the lock file via Bash: `echo passed > .claude/.review-passed`, then tell the user the review passed and they can proceed with the PR. The `gh pr create` hook will consume the lock file automatically.
 - If **blocking issues found**: list them, fix what you can automatically, and re-run the failing checks. Do NOT write the lock file on failure.
 - Do NOT create a PR until all blocking issues are resolved
+- Do NOT attempt to remove `.review-passed` directly — only the `gh pr create` hook can consume it

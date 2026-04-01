@@ -1,4 +1,4 @@
-//! Control flow, data structures, string methods, arrays, crash/mock, and test runner tests
+//! Control flow, data structures, string methods, arrays, crash, and test runner tests
 
 use super::test_helpers::*;
 use crate::native::test_runner;
@@ -358,7 +358,7 @@ fn crash_halt_propagates() {
     assert_ne!(err, 0); // Error propagated
 }
 
-// ── Test runner and mocks ─────────────────────────────────────────────
+// ── Test runner and auto-stubs ────────────────────────────────────────
 
 #[test]
 fn native_test_runner_equality() {
@@ -409,7 +409,7 @@ fn native_test_runner_failing() {
 
 #[test]
 fn auto_stub_extern_fn() {
-    // Auto-stub returns default for Number (0.0) — no mock block needed
+    // Auto-stub returns default for Number (0.0)
     let mut m = jit(r#"
         extern fn fetch_price() -> Number
         pub fn get_price() -> Number {

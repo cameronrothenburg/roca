@@ -1,5 +1,0 @@
-pub fn convert(n: Number) -> Bool {
-            return Bool(n)
-            crash { Bool -> skip }
-            test { self(1) == true }
-        }

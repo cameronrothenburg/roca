@@ -1,4 +1,0 @@
-pub fn test_fn() -> String {
-            return "ok"
-            test { self() == "ok" }
-        }

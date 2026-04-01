@@ -1,5 +1,0 @@
-pub fn clean(name: String) -> String {
-            return "name: {name.trim()}"
-            crash { name.trim -> skip }
-            test { self("  cam  ") == "name: cam" }
-        }

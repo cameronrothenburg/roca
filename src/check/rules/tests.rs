@@ -112,7 +112,7 @@ mod tests {
     }
 
     #[test]
-    fn struct_test_without_mock() {
+    fn struct_test_passes() {
         let e = errors(r#"
             pub struct User {
                 name: String
@@ -133,7 +133,7 @@ mod tests {
     }
 
     #[test]
-    fn extern_contract_compiles_without_mock() {
+    fn extern_contract_compiles() {
         let e = errors(r#"
             extern contract Store {
                 getAll() -> String, err {
@@ -150,7 +150,7 @@ mod tests {
         "#);
         // No test-related errors should fire for this valid code
         let test_errs: Vec<_> = e.iter().filter(|e| e.code == "missing-test").collect();
-        assert!(test_errs.is_empty(), "should not require mock block: {:?}", test_errs);
+        assert!(test_errs.is_empty(), "valid extern contract usage should pass: {:?}", test_errs);
     }
 
     #[test]
@@ -206,7 +206,6 @@ impl Rule for TestsRule {
         };
 
         check_test_coverage(f, declared_errors, &ctx.func.qualified_name, &mut errors);
-        // Mock refs removed — auto-stubs replace manual mocks
         errors
     }
 }

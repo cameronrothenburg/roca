@@ -1,11 +1,11 @@
-//! Contract parser — `contract Name { signatures, errors, mock }`.
+//! Contract parser — `contract Name { signatures, errors }`.
 
 use crate::ast::*;
 use super::expr::{Parser, ParseResult};
 use super::tokenizer::Token;
 
 impl Parser {
-    /// Parse: contract Name { signatures, errors, mock }
+    /// Parse: contract Name { signatures, errors }
     pub fn parse_contract(&mut self, is_pub: bool) -> ParseResult<ContractDef> {
         self.expect(&Token::Contract)?;
         let name = self.expect_ident()?;
@@ -62,11 +62,6 @@ impl Parser {
                         // Function signature (parse_fn_signature collects doc)
                         functions.push(self.parse_fn_signature()?);
                     }
-                }
-                // Legacy mock block — skip entirely
-                Token::Mock => {
-                    self.advance();
-                    self.skip_braced_block();
                 }
                 // Identifier — could be a field or function signature
                 Token::Ident(_) => {

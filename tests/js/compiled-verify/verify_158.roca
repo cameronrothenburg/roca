@@ -1,6 +1,0 @@
-pub fn caution(msg: String) -> String {
-            warn(msg)
-            return msg
-            crash { warn -> skip }
-            test { self("careful") == "careful" }
-        }

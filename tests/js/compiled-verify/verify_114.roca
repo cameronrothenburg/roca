@@ -1,6 +1,0 @@
-pub fn to_str(n: Number) -> String {
-            let s, err = String(n)
-            return s
-            crash { String -> fallback("error") }
-            test { self(42) == "42" }
-        }

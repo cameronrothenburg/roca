@@ -18,6 +18,10 @@
           {
             "type": "command",
             "command": "if [ -n \"$CLAUDE_FILE\" ] && echo \"$CLAUDE_FILE\" | grep -qE '(Cargo\\.lock|bun\\.lock)$'; then echo 'BLOCK: Do not edit lock files directly'; exit 2; fi"
+          },
+          {
+            "type": "command",
+            "command": "if [ -n \"$CLAUDE_FILE\" ] && echo \"$CLAUDE_FILE\" | grep -q '.review-passed'; then echo 'BLOCK: Do not modify the review lock file directly'; exit 2; fi"
           }
         ]
       },

@@ -76,9 +76,8 @@ mod tests {
     }
 
     #[test]
-    fn extern_contract_no_mock_needed() {
-        // mock blocks are auto-generated — no user mock block required
+    fn extern_contract_valid() {
         let errors = check(r#"extern contract Good { get() -> String }"#);
-        assert!(errors.is_empty(), "extern contract should not require mock: {:?}", errors);
+        assert!(errors.is_empty(), "valid extern contract should pass: {:?}", errors);
     }
 }

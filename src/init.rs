@@ -92,10 +92,16 @@ pub fn generate_skills(with_claude_md: bool) {
     println!("  github.com/cameronrothenburg/roca/issues");
     println!();
     if prompt_yn("Enable automatic bug reporting?", true) {
-        let tone = prompt_input(
-            "Report tone? (snarky/professional/deadpan/enthusiastic)",
-            "snarky",
-        );
+        let tone = loop {
+            let t = prompt_input(
+                "Report tone? (snarky/professional/deadpan/enthusiastic)",
+                "snarky",
+            );
+            match t.as_str() {
+                "snarky" | "professional" | "deadpan" | "enthusiastic" => break t,
+                _ => println!("  Valid tones: snarky, professional, deadpan, enthusiastic"),
+            }
+        };
         let sign_off = prompt_yn("Include sign-off quotes?", true);
         let emoji_rating = prompt_yn("Include emoji rating?", true);
         let commentary = prompt_yn("Include AI commentary?", true);

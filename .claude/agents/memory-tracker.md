@@ -19,12 +19,13 @@ You analyze the Roca native runtime (Cranelift JIT) for memory safety issues. Th
 ## What to Analyze
 
 ### 1. Allocation tracking
-Every `alloc_str`, `alloc_bytes`, `Box::new`, or manual allocation must have a matching `MEM.track_alloc(size)` call.
+
+Every allocation path that does **not** already flow through tracked allocators (like `roca_rc_alloc`) must have a matching `MEM.track_alloc(size)` call. `alloc_str` and `alloc_bytes` already track via `roca_rc_alloc` — do not double-count.
 
 ```rust
-// Correct pattern
-let ptr = alloc_str(&value);
-MEM.track_alloc(value.len() + 1);
+// Only needed for raw allocations that bypass roca_rc_alloc
+let ptr = Box::into_raw(Box::new(value));
+MEM.track_alloc(std::mem::size_of_val(&value));
 ```
 
 ### 2. Deallocation

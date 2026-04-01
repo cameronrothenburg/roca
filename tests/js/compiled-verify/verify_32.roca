@@ -1,5 +1,0 @@
-pub fn apply() -> Number {
-            const double = fn(x) -> x * 2
-            return double(5)
-            test { self() == 10 }
-        }

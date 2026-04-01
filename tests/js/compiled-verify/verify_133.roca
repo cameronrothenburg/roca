@@ -1,6 +1,0 @@
-pub fn csv(items: String) -> String {
-            const arr = ["a", "b", "c"]
-            return arr.join(", ")
-            crash { arr.join -> skip }
-            test { self("x") == "a, b, c" }
-        }

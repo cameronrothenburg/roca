@@ -1,7 +1,0 @@
-pub fn build() -> Number {
-            let arr = [1, 2]
-            arr.push(3)
-            return arr.length
-            crash { arr.push -> skip }
-            test { self() == 3 }
-        }
