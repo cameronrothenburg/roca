@@ -4,7 +4,7 @@
 
 use cranelift_codegen::ir::{self, types, InstBuilder, Value};
 use roca_ast::{self as roca, BinOp};
-use roca_types::RocaType;
+use roca_types::{RocaType, CrashHandlerKind, CrashStep};
 use crate::builder::{IrBuilder, BlockId, VarSlot};
 use crate::context::{EmitCtx, StructLayout, VarInfo};
 use crate::cranelift_type::CraneliftType;
@@ -213,9 +213,14 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
 
 impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
     /// Call a function by name, return first result.
+    /// Automatically applies crash handlers if registered.
     pub fn call(&mut self, name: &str, args: &[Value]) -> Value {
-        // TODO: crash handler dispatch will be absorbed in Task 3
-        // For now, skip crash handling and call directly
+        if let Some(ast_handler) = self.ctx.crash_handlers.get(name).cloned() {
+            if let Some(&func_ref) = self.ctx.get_func(name) {
+                let handler = roca_types::CrashHandlerKind::from(&ast_handler);
+                return self.emit_crash_call(func_ref, args, &handler);
+            }
+        }
 
         if let Some(&func_ref) = self.ctx.get_func(name) {
             let results = self.ir.call_multi(func_ref, args);
@@ -342,6 +347,173 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
     fn call_runtime_2(&mut self, name: &str, a: Value, b: Value) -> Value {
         if let Some(&f) = self.ctx.get_func(name) { self.ir.call(f, &[a, b]) }
         else { a }
+    }
+
+    /// Internal: call with crash handler — retry loop + error chain dispatch.
+    fn emit_crash_call(
+        &mut self,
+        func_ref: ir::FuncRef,
+        args: &[Value],
+        handler: &CrashHandlerKind,
+    ) -> Value {
+        let chain = match handler {
+            CrashHandlerKind::Simple(chain) => chain.clone(),
+            CrashHandlerKind::Detailed { default, .. } => {
+                default.clone().unwrap_or_else(|| vec![CrashStep::Halt])
+            }
+        };
+
+        let retry = chain.iter().find_map(|s| {
+            if let CrashStep::Retry { attempts, delay_ms } = s { Some((*attempts, *delay_ms)) } else { None }
+        });
+
+        // Store args in slots for potential retry
+        let arg_slots: Vec<_> = args.iter().map(|v| self.ir.alloc_var(*v)).collect();
+        let arg_types: Vec<_> = args.iter().map(|v| self.ir.value_ir_type(*v)).collect();
+
+        // Initial call
+        let call_args: Vec<Value> = arg_slots.iter().zip(&arg_types).map(|(s, t)| {
+            self.ir.raw().ins().stack_load(*t, s.0, 0)
+        }).collect();
+        let results = self.ir.call_multi(func_ref, &call_args);
+        if results.len() < 2 {
+            return if results.is_empty() { self.ir.null() } else { results[0] };
+        }
+
+        let result_type = self.ir.value_ir_type(results[0]);
+        let value_slot = self.ir.alloc_var(results[0]);
+        let err_slot = self.ir.alloc_var(results[1]);
+
+        // Retry loop
+        if let Some((attempts, delay_ms)) = retry {
+            let header = self.ir.create_block();
+            let retry_body = self.ir.create_block();
+            let done = self.ir.create_block();
+
+            let counter_init = self.ir.const_i64(1);
+            let counter_slot = self.ir.alloc_var(counter_init);
+            let first_err = self.ir.raw().ins().stack_load(types::I8, err_slot.0, 0);
+            self.ir.brif(first_err, header, done);
+
+            self.ir.switch_to(header);
+            let counter = self.ir.raw().ins().stack_load(types::I64, counter_slot.0, 0);
+            let max = self.ir.const_i64(attempts as i64);
+            let has_more = self.ir.raw().ins().icmp(ir::condcodes::IntCC::SignedLessThan, counter, max);
+            self.ir.brif(has_more, retry_body, done);
+
+            self.ir.switch_to(retry_body);
+            self.ir.seal(retry_body);
+
+            if delay_ms > 0 {
+                if let Some(&sleep_fn) = self.ctx.get_func("__sleep") {
+                    let ms = self.ir.const_number(delay_ms as f64);
+                    self.ir.call_void(sleep_fn, &[ms]);
+                }
+            }
+
+            let retry_args: Vec<Value> = arg_slots.iter().zip(&arg_types).map(|(s, t)| {
+                self.ir.raw().ins().stack_load(*t, s.0, 0)
+            }).collect();
+            let retry_results = self.ir.call_multi(func_ref, &retry_args);
+            self.ir.raw().ins().stack_store(retry_results[0], value_slot.0, 0);
+            self.ir.raw().ins().stack_store(retry_results[1], err_slot.0, 0);
+
+            let cur = self.ir.raw().ins().stack_load(types::I64, counter_slot.0, 0);
+            let one = self.ir.const_i64(1);
+            let next = self.ir.iadd(cur, one);
+            self.ir.raw().ins().stack_store(next, counter_slot.0, 0);
+
+            let retry_err = self.ir.raw().ins().stack_load(types::I8, err_slot.0, 0);
+            self.ir.brif(retry_err, header, done);
+
+            self.ir.seal(header);
+            self.ir.switch_to(done);
+            self.ir.seal(done);
+        }
+
+        // Error handler dispatch
+        let final_value = self.ir.raw().ins().stack_load(result_type, value_slot.0, 0);
+        let final_err = self.ir.raw().ins().stack_load(types::I8, err_slot.0, 0);
+        self.emit_crash_handler(final_value, final_err, handler, result_type)
+    }
+
+    /// Internal: emit crash handler chain (ok/err branch + chain steps).
+    fn emit_crash_handler(
+        &mut self,
+        value: Value,
+        err_tag: Value,
+        handler: &CrashHandlerKind,
+        result_type: ir::Type,
+    ) -> Value {
+        let ok_block = self.ir.create_block();
+        let err_block = self.ir.create_block();
+        let merge = self.ir.create_block();
+        let rtype = if result_type == types::F64 { RocaType::Number } else { RocaType::Unknown };
+        self.ir.append_block_param(merge, &rtype);
+
+        self.ir.brif(err_tag, err_block, ok_block);
+
+        self.ir.switch_to(ok_block);
+        self.ir.seal(ok_block);
+        self.ir.jump_with(merge, value);
+
+        self.ir.switch_to(err_block);
+        self.ir.seal(err_block);
+
+        let chain = match handler {
+            CrashHandlerKind::Simple(chain) => chain.clone(),
+            CrashHandlerKind::Detailed { default, .. } => {
+                default.clone().unwrap_or_else(|| vec![CrashStep::Halt])
+            }
+        };
+        let chain: Vec<_> = chain.into_iter().filter(|s| !matches!(s, CrashStep::Retry { .. })).collect();
+        let terminates = chain.iter().any(|s| matches!(s, CrashStep::Halt | CrashStep::Panic));
+
+        let err_result = self.emit_crash_chain(&chain, result_type);
+        if !terminates {
+            self.ir.jump_with(merge, err_result);
+        }
+
+        self.ir.switch_to(merge);
+        self.ir.seal(merge);
+        self.ir.block_param(merge, 0)
+    }
+
+    /// Internal: emit crash chain steps (log, halt, panic, skip, fallback).
+    fn emit_crash_chain(&mut self, chain: &[CrashStep], result_type: ir::Type) -> Value {
+        let mut last_value = default_for_ir_type(self.ir.raw(), result_type);
+
+        for step in chain {
+            match step {
+                CrashStep::Log => {
+                    let msg = self.ir.leak_cstr("error");
+                    if let Some(&f) = self.ctx.get_func("__print") {
+                        self.ir.call_void(f, &[msg]);
+                    }
+                }
+                CrashStep::Halt => {
+                    emit_scope_cleanup(self.ir, &self.ctx, None);
+                    if self.ctx.returns_err {
+                        let err = self.ir.raw().ins().iconst(types::I8, 1);
+                        self.ir.ret_with_err(last_value, err);
+                    } else {
+                        self.ir.ret(last_value);
+                    }
+                    return last_value;
+                }
+                CrashStep::Panic => {
+                    self.ir.trap(1);
+                    return last_value;
+                }
+                CrashStep::Skip => {}
+                CrashStep::Fallback(_expr) => {
+                    // TODO: emit fallback expression — needs emit_expr which is in roca-native
+                    // For now, use default value
+                }
+                CrashStep::Retry { .. } => {} // handled in emit_crash_call
+            }
+        }
+        last_value
     }
 }
 
