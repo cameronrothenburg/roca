@@ -7,11 +7,16 @@
   "exports": {
     ".": "./index.js"
   },
-  "keywords": ["roca", "rocalang", "runtime", "stdlib"],
+  "keywords": [
+    "roca",
+    "rocalang",
+    "runtime",
+    "stdlib"
+  ],
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/cameronrothenburg/roca",
+    "url": "git+https://github.com/cameronrothenburg/roca.git",
     "directory": "packages/runtime"
   }
 }
