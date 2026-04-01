@@ -31,8 +31,11 @@ fn main() {
         std::process::exit(1);
     }
 
-    // Handle --help/-h on any subcommand
-    if args.len() >= 3 && (args[2] == "--help" || args[2] == "-h") {
+    // Handle --help/-h on any subcommand (any position after the command)
+    if args.len() >= 3
+        && !matches!(args[1].as_str(), "--help" | "-h" | "help" | "--version" | "-v" | "version")
+        && args[2..].iter().any(|a| a == "--help" || a == "-h")
+    {
         print_subcommand_help(&args[1]);
         return;
     }
@@ -219,7 +222,7 @@ fn print_subcommand_help(cmd: &str) {
         "check" => println!("roca check [path]\n\nParse and type-check .roca files without emitting JS.\nDefaults to src/ from roca.toml if no path given."),
         "build" => println!("roca build [path] [--emit-only]\n\nCompile .roca files to JS with proof tests.\n  --emit-only  Skip native tests, emit JS directly."),
         "test" => println!("roca test [path]\n\nBuild and run proof tests, then clean output."),
-        "run" => println!("roca run [path]\n\nBuild and execute via Node.js."),
+        "run" => println!("roca run [path]\n\nBuild and execute via Node.js or Bun."),
         "repl" => println!("roca repl [--native]\n\nInteractive REPL.\n  --native  Use Cranelift JIT instead of Node.js."),
         "search" => println!("roca search <query>\n\nSearch stdlib and project for types, methods, and functions."),
         "gen-extern" => println!("roca gen-extern <file.d.ts> [--out <path>]\n\nGenerate extern contracts from TypeScript declarations."),
