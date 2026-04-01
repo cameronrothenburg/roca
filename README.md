@@ -1,5 +1,8 @@
 # Roca
 
+[![CI](https://github.com/cameronrothenburg/roca/actions/workflows/ci.yml/badge.svg)](https://github.com/cameronrothenburg/roca/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/@rocalang/runtime)](https://www.npmjs.com/package/@rocalang/runtime)
+[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![CodeRabbit Pull Request Reviews](https://img.shields.io/coderabbit/prs/github/cameronrothenburg/roca?utm_source=oss&utm_medium=github&utm_campaign=cameronrothenburg%2Froca&labelColor=171717&color=FF570A&link=https%3A%2F%2Fcoderabbit.ai&label=CodeRabbit+Reviews)](https://coderabbit.ai)
 
 *Roca -- Spanish for rock, stone, cliff. Firme como una roca -- as solid as a rock.*
