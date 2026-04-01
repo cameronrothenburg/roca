@@ -1,7 +1,9 @@
 /target
 /docs/book
 /out
+/node_modules
 *.js
 !packages/runtime/*.js
 !tests/js/*.js
 !docs/*.js
+!commitlint.config.js
