@@ -20,6 +20,7 @@ roca-native = { path = "crates/roca-native" }
 roca-lsp = { path = "crates/roca-lsp" }
 roca-cli = { path = "crates/roca-cli" }
 roca-runtime = { path = "crates/roca-runtime" }
+roca-types = { path = "crates/roca-types" }
 roca-cranelift = { path = "crates/roca-cranelift" }
 
 # External dependencies

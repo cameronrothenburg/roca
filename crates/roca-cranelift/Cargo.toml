@@ -8,6 +8,7 @@ repository.workspace = true
 
 [dependencies]
 roca-ast.workspace = true
+roca-types.workspace = true
 roca-runtime.workspace = true
 cranelift-codegen.workspace = true
 cranelift-frontend.workspace = true

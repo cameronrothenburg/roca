@@ -1674,6 +1674,9 @@ dependencies = [
 [[package]]
 name = "roca-ast"
 version = "0.3.0"
+dependencies = [
+ "roca-types",
+]
 
 [[package]]
 name = "roca-check"
@@ -1716,6 +1719,7 @@ dependencies = [
  "cranelift-module",
  "roca-ast",
  "roca-runtime",
+ "roca-types",
 ]
 
 [[package]]
@@ -1792,6 +1796,10 @@ dependencies = [
  "url",
  "uuid",
 ]
+
+[[package]]
+name = "roca-types"
+version = "0.3.0"
 
 [[package]]
 name = "rocalang"

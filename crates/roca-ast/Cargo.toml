@@ -5,3 +5,6 @@ edition.workspace = true
 license.workspace = true
 description = "AST node types and language constants for the Roca compiler"
 repository.workspace = true
+
+[dependencies]
+roca-types.workspace = true
