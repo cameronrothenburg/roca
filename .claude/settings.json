@@ -30,12 +30,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "if echo \"$CLAUDE_BASH_COMMAND\" | grep -qF '.review-passed' && echo \"$CLAUDE_BASH_COMMAND\" | grep -qE '(rm|mv|unlink|truncate) ' && echo \"$CLAUDE_BASH_COMMAND\" | grep -qE '\\.review-passed[^[:space:]]*[[:space:]]+[^[:space:]]'; then echo 'BLOCK: Cannot remove .review-passed directly — only gh pr create can consume it'; exit 2; fi"
-          },
-          {
-            "type": "command",
             "if": "Bash(gh pr create*)",
-            "command": "if [ -f .claude/.review-passed ]; then rm -f .claude/.review-passed; exit 0; else echo 'BLOCK: Run /roca-review before creating a PR. All checks must pass first.'; exit 2; fi"
+            "command": "if [ -f .claude/.review-passed ]; then rm -f .claude/.review-passed; exit 0; else echo 'BLOCK: Run /roca-review before creating a PR. All checks must pass first.' >&2; exit 2; fi"
           }
         ]
       }
