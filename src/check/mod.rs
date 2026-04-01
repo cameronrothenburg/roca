@@ -29,6 +29,7 @@ fn all_rules() -> Vec<Box<dyn Rule>> {
         Box::new(rules::docs::DocsRule),
         Box::new(rules::ownership::OwnershipRule),
         Box::new(rules::reserved::ReservedNameRule),
+        Box::new(rules::self_test::SelfTestRule),
     ]
 }
 

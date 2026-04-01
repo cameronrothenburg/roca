@@ -14,3 +14,4 @@ pub mod manual_err;
 pub mod docs;
 pub mod ownership;
 pub mod reserved;
+pub mod self_test;

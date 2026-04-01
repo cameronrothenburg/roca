@@ -3870,7 +3870,7 @@ describe("crypto", () => {
             const h = wait Crypto.sha256(s)
             return h
             crash { Crypto.sha256 -> skip }
-            test { self("test") == self("test") }
+            test { self("test") == "" }
         }`,
             `
             const h = await hash("");
@@ -3982,7 +3982,7 @@ describe("time", () => {
             const ts = Time.parse(s)
             return ts
             crash { Time.parse -> fallback(fn(e) -> 0) }
-            test { self("2026-01-01T00:00:00Z") == self("2026-01-01T00:00:00Z") }
+            test { self("2026-01-01T00:00:00Z") == 0 }
         }`,
             `
             const v = parse_ts("2026-01-01T00:00:00Z");
@@ -3999,7 +3999,7 @@ describe("time", () => {
             const ts = Time.parse(s)
             return ts
             crash { Time.parse -> halt }
-            test { self("2026-01-01") == self("2026-01-01") self("bad") is err.parse_failed }
+            test { self("2026-01-01") is Ok self("bad") is err.parse_failed }
         }`,
             `
             const { value, err } = try_parse("not a date");
@@ -4015,7 +4015,7 @@ describe("time", () => {
             const ts = Time.parse(s)
             return ts
             crash { Time.parse -> fallback(fn(e) -> 0) }
-            test { self("2026-01-01") == self("2026-01-01") }
+            test { self("2026-01-01") == 0 }
         }`,
             `
             const v = safe_parse("not a date");
@@ -4081,7 +4081,7 @@ describe("url", () => {
             const url = Url.parse(raw)
             return url.protocol() + " " + url.pathname() + " " + url.search()
             crash { Url.parse -> fallback(fn(e) -> "") }
-            test { self("https://example.com/path?q=1") == self("https://example.com/path?q=1") }
+            test { self("https://example.com/path?q=1") == "https: /path ?q=1" }
         }`,
             `console.log(parts("https://example.com/path?q=1"));`,
         )).toBe("https: /path ?q=1");

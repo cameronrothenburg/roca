@@ -11,6 +11,7 @@ All rules are hard errors unless noted. Code that violates them does not compile
 | `unhandled-call` | Crash block missing a handler for a call |
 | `untested-error` | An error return path has no test case |
 | `no-success-test` | Error tests exist but no success case |
+| `self-referential-test` | Test expected value is a `self()` call — use a concrete value |
 
 ## Error handling rules
 

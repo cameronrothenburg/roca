@@ -57,6 +57,7 @@ Compile a unified report:
 
 ### Step 5: Fix or proceed
 
-- If **all clear**: tell the user the review passed and they can proceed with the PR
-- If **blocking issues found**: list them, fix what you can automatically, and re-run the failing checks
+- If **all clear**: write the lock file via Bash: `echo passed > .claude/.review-passed`, then use AskUserQuestion to ask the user whether to proceed with creating the PR. The `gh pr create` hook will consume the lock file automatically.
+- If **blocking issues found**: list the issues, fix what you can automatically, and re-run the failing checks. Do NOT write the lock file on failure.
 - Do NOT create a PR until all blocking issues are resolved
+- Do NOT attempt to remove `.review-passed` directly — only the `gh pr create` hook can consume it

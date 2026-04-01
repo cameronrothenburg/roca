@@ -18,6 +18,10 @@
           {
             "type": "command",
             "command": "if [ -n \"$CLAUDE_FILE\" ] && echo \"$CLAUDE_FILE\" | grep -qE '(Cargo\\.lock|bun\\.lock)$'; then echo 'BLOCK: Do not edit lock files directly'; exit 2; fi"
+          },
+          {
+            "type": "command",
+            "command": "if [ -n \"$CLAUDE_FILE\" ] && echo \"$CLAUDE_FILE\" | grep -q '.review-passed'; then echo 'BLOCK: Do not modify the review lock file directly'; exit 2; fi"
           }
         ]
       },
@@ -26,8 +30,12 @@
         "hooks": [
           {
             "type": "command",
+            "command": "if echo \"$CLAUDE_BASH_COMMAND\" | grep -qF '.review-passed' && echo \"$CLAUDE_BASH_COMMAND\" | grep -qE '(rm|mv|unlink|truncate) ' && echo \"$CLAUDE_BASH_COMMAND\" | grep -qE '\\.review-passed[^[:space:]]*[[:space:]]+[^[:space:]]'; then echo 'BLOCK: Cannot remove .review-passed directly — only gh pr create can consume it'; exit 2; fi"
+          },
+          {
+            "type": "command",
             "if": "Bash(gh pr create*)",
-            "command": "echo 'BLOCK: Run /roca-review before creating a PR. All checks must pass first.'; exit 2"
+            "command": "if [ -f .claude/.review-passed ]; then rm -f .claude/.review-passed; exit 0; else echo 'BLOCK: Run /roca-review before creating a PR. All checks must pass first.'; exit 2; fi"
           }
         ]
       }
