@@ -17,7 +17,17 @@
         "hooks": [
           {
             "type": "command",
-            "command": "if [ -n \"$CLAUDE_FILE\" ] && echo \"$CLAUDE_FILE\" | grep -qE '(Cargo\\.lock|bun\\.lock)$'; then echo 'BLOCK: Do not edit lock files directly — use cargo or bun commands instead'; exit 2; fi"
+            "command": "if [ -n \"$CLAUDE_FILE\" ] && echo \"$CLAUDE_FILE\" | grep -qE '(Cargo\\.lock|bun\\.lock)$'; then echo 'BLOCK: Do not edit lock files directly'; exit 2; fi"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "if": "Bash(gh pr create*)",
+            "command": "echo 'BLOCK: Run /roca-review before creating a PR. All checks must pass first.'; exit 2"
           }
         ]
       }
