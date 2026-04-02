@@ -1,4 +1,7 @@
 {
+  "env": {
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
+  },
   "hooks": {
     "PostToolUse": [
       {
@@ -7,6 +10,13 @@
           {
             "type": "command",
             "command": "file=\"$CLAUDE_FILE\"; if [ -n \"$file\" ] && [[ \"$file\" == *.rs ]]; then rustfmt \"$file\" 2>/dev/null; fi"
+          },
+          {
+            "type": "prompt",
+            "if": "Edit(*.rs)",
+            "prompt": "Review this Rust code edit for quick-fix shortcuts. BLOCK (exit 2) if you see ANY of: wrapping in unwrap()/expect()/clone() instead of handling properly, catch-all `_ =>` to silence warnings, `as` casts instead of From/TryFrom, commenting out code/tests, #[allow(..)] to suppress warnings, sentinel values instead of Option/Result, todo!()/unimplemented!() in non-prototype code, hardcoded defaults to pass tests, format!() for structured data, silently swallowed errors (empty catch, `let _ =` on important Result). If clean exit 0 silently. If bodge, explain the proper fix. Edit: $ARGUMENTS",
+            "model": "claude-sonnet-4-6",
+            "statusMessage": "Checking for shortcuts..."
           }
         ]
       }
@@ -20,18 +30,10 @@
             "command": "if [ -n \"$CLAUDE_FILE\" ] && echo \"$CLAUDE_FILE\" | grep -qE '(Cargo\\.lock|bun\\.lock)$'; then echo 'BLOCK: Do not edit lock files directly'; exit 2; fi"
           },
           {
-            "type": "command",
-            "command": "if [ -n \"$CLAUDE_FILE\" ] && echo \"$CLAUDE_FILE\" | grep -q '.review-passed'; then echo 'BLOCK: Do not modify the review lock file directly'; exit 2; fi"
-          }
-        ]
-      },
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "if": "Bash(gh pr create*)",
-            "command": "if [ -f .claude/.review-passed ]; then rm -f .claude/.review-passed; exit 0; else echo 'BLOCK: Run /roca-review before creating a PR. All checks must pass first.' >&2; exit 2; fi"
+            "type": "prompt",
+            "if": "Edit(*.rs)|Write(*.rs)",
+            "prompt": "Check the assistant's RECENT MESSAGE TEXT (not code) for language signaling a shortcut. BLOCK (exit 2) if you see: 'for now', 'quick fix', 'simple fix', 'as a workaround', 'temporarily', 'temp fix', 'placeholder', 'we can come back to this', 'revisit later', 'clean up later', 'to keep things simple' (when cutting corners), 'this should work', 'good enough', 'let's just', 'we'll just', 'to avoid dealing with', 'to sidestep', 'hacky but', 'not ideal but', 'ugly but'. These mean the assistant KNOWS the proper fix but is choosing a shortcut. Block and tell it to implement the correct approach. If no such language, exit 0 silently. Context: $ARGUMENTS",
+            "statusMessage": "Checking intent..."
           }
         ]
       }
