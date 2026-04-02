@@ -21,21 +21,17 @@ pub fn emit_body(body: &mut Body, nctx: &NativeCtx, stmts: &[Stmt]) {
 
 fn emit_stmt(body: &mut Body, nctx: &NativeCtx, stmt: &Stmt) {
     match stmt {
-        Stmt::Const { name, value, .. } => {
+        Stmt::Const { name, value, .. } | Stmt::Let { name, value, .. } => {
             if let Expr::StructLit { name: struct_name, .. } = value {
                 body.set_struct_type(name, struct_name);
             }
             let kind = nctx.infer_type(value, body);
             let val = emit_expr(body, nctx, value);
-            body.const_var_typed(name, val, kind);
-        }
-        Stmt::Let { name, value, .. } => {
-            if let Expr::StructLit { name: struct_name, .. } = value {
-                body.set_struct_type(name, struct_name);
+            if matches!(stmt, Stmt::Const { .. }) {
+                body.const_var_typed(name, val, kind);
+            } else {
+                body.let_var_typed(name, val, kind);
             }
-            let kind = nctx.infer_type(value, body);
-            let val = emit_expr(body, nctx, value);
-            body.let_var_typed(name, val, kind);
         }
         Stmt::Return(expr) => {
             let val = emit_expr(body, nctx, expr);

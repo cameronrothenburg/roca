@@ -97,6 +97,18 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
         self.flush_temps_inner();
     }
 
+    /// Evaluate a closure in an isolated temp scope. Temps created inside
+    /// are flushed before returning; the result value is claimed (not freed).
+    /// Used by match arms to prevent branch-local temps from leaking into merge.
+    fn with_isolated_temps(&mut self, f: impl FnOnce(&mut Self) -> Value) -> Value {
+        let saved = self.temps.clone();
+        let result = f(self);
+        self.claim_temp(result);
+        self.flush_temps_inner();
+        self.temps = saved;
+        result
+    }
+
     /// Free branch-local heap vars (vars added after heap_base).
     fn emit_branch_cleanup(&mut self, heap_base: usize) {
         if let Some(&free_ref) = self.ctx.get_func("__free") {
@@ -1154,11 +1166,7 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
 
                     self.ir.switch_to(then_block);
                     self.ir.seal(then_block);
-                    let saved_temps = self.temps.clone();
-                    let result = emit_fn(self, value_expr);
-                    self.claim_temp(result);
-                    self.flush_temps_inner();
-                    self.temps = saved_temps;
+                    let result = self.with_isolated_temps(|b| emit_fn(b, value_expr));
                     self.ir.jump_with(merge, result);
 
                     self.ir.switch_to(next_block);
@@ -1194,11 +1202,7 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
                         self.ctx.set_var_kind(binding.clone(), slot.0, types::F64, RocaType::Number);
                     }
 
-                    let saved_temps = self.temps.clone();
-                    let result = emit_fn(self, value_expr);
-                    self.claim_temp(result);
-                    self.flush_temps_inner();
-                    self.temps = saved_temps;
+                    let result = self.with_isolated_temps(|b| emit_fn(b, value_expr));
                     self.ir.jump_with(merge, result);
 
                     self.ir.switch_to(next_block);
@@ -1207,15 +1211,13 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
             }
         }
 
-        let saved_temps = self.temps.clone();
-        let default_val = if let Some(expr) = default_expr {
-            emit_fn(self, expr)
-        } else {
-            self.ir.default_for(&result_type)
-        };
-        self.claim_temp(default_val);
-        self.flush_temps_inner();
-        self.temps = saved_temps;
+        let default_val = self.with_isolated_temps(|b| {
+            if let Some(expr) = default_expr {
+                emit_fn(b, expr)
+            } else {
+                b.ir.default_for(&result_type)
+            }
+        });
         self.ir.jump_with(merge, default_val);
 
         self.ir.switch_to(merge);
