@@ -267,19 +267,17 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
 
     pub fn string_eq(&mut self, l: Value, r: Value) -> Value {
         if let Some(f) = self.ctx.get_func("__string_eq") {
-            let result = self.ir.call(*f, &[l, r]);
-            self.ir.extend_bool(result)
+            self.ir.call(*f, &[l, r])
         } else { self.ir.i_eq(l, r) }
     }
 
     pub fn string_neq(&mut self, l: Value, r: Value) -> Value {
         let eq = self.string_eq(l, r);
-        let one = self.ir.const_i64(1);
-        self.ir.isub(one, eq)
+        self.not(eq)
     }
 
     pub fn not(&mut self, val: Value) -> Value {
-        let zero = self.ir.null();
+        let zero = self.ir.const_bool(false);
         self.ir.i_eq(val, zero)
     }
 }

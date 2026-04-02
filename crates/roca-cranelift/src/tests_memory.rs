@@ -1651,3 +1651,249 @@ mem_test!(concat_returns_combined_string, {
     let (a, fr, _, _, _) = MEM.stats();
     assert_eq!(a, fr, "concat value: {} allocs, {} frees", a, fr);
 });
+
+// ─── Value correctness: booleans ────────────────────
+
+mem_test!(bool_true_returns_correctly, {
+    let (mut m, rt, mut c) = jit_module();
+    Function::new("test")
+        .returns(RocaType::Bool)
+        .build(&mut *m, &rt, &mut c, |body| {
+            let v = body.bool_val(true);
+            body.return_val(v);
+        })
+        .unwrap();
+
+    let f = unsafe { std::mem::transmute::<_, fn() -> u8>(finalize_and_get(&mut m, "test")) };
+    assert_ne!(f(), 0, "true should be non-zero");
+});
+
+mem_test!(bool_false_returns_correctly, {
+    let (mut m, rt, mut c) = jit_module();
+    Function::new("test")
+        .returns(RocaType::Bool)
+        .build(&mut *m, &rt, &mut c, |body| {
+            let v = body.bool_val(false);
+            body.return_val(v);
+        })
+        .unwrap();
+
+    let f = unsafe { std::mem::transmute::<_, fn() -> u8>(finalize_and_get(&mut m, "test")) };
+    assert_eq!(f(), 0, "false should be zero");
+});
+
+mem_test!(bool_from_comparison_returns_correctly, {
+    let (mut m, rt, mut c) = jit_module();
+    Function::new("test")
+        .param("n", RocaType::Number)
+        .returns(RocaType::Bool)
+        .build(&mut *m, &rt, &mut c, |body| {
+            let n = body.var("n");
+            let zero = body.number(0.0);
+            let result = body.gt(n, zero);
+            body.return_val(result);
+        })
+        .unwrap();
+
+    let f = unsafe { std::mem::transmute::<_, fn(f64) -> u8>(finalize_and_get(&mut m, "test")) };
+    assert_ne!(f(5.0), 0, "5 > 0 should be true");
+    assert_eq!(f(-5.0), 0, "-5 > 0 should be false");
+    assert_eq!(f(0.0), 0, "0 > 0 should be false");
+});
+
+mem_test!(bool_and_or_not_return_correctly, {
+    let (mut m, rt, mut c) = jit_module();
+    // returns: true AND false = false
+    Function::new("test_and")
+        .returns(RocaType::Bool)
+        .build(&mut *m, &rt, &mut c, |body| {
+            let t = body.bool_val(true);
+            let f = body.bool_val(false);
+            let r = body.and(t, f);
+            body.return_val(r);
+        })
+        .unwrap();
+
+    // returns: true OR false = true
+    Function::new("test_or")
+        .returns(RocaType::Bool)
+        .build(&mut *m, &rt, &mut c, |body| {
+            let t = body.bool_val(true);
+            let f = body.bool_val(false);
+            let r = body.or(t, f);
+            body.return_val(r);
+        })
+        .unwrap();
+
+    // returns: NOT true = false
+    Function::new("test_not")
+        .returns(RocaType::Bool)
+        .build(&mut *m, &rt, &mut c, |body| {
+            let t = body.bool_val(true);
+            let r = body.not(t);
+            body.return_val(r);
+        })
+        .unwrap();
+
+    let f = finalize_and_get(&mut m, "test_and");
+    let and_result = unsafe { std::mem::transmute::<_, fn() -> u8>(f) }();
+    assert_eq!(and_result, 0, "true AND false = false");
+
+    let f = m.get_function_ptr("test_or").unwrap();
+    let or_result = unsafe { std::mem::transmute::<_, fn() -> u8>(f) }();
+    assert_ne!(or_result, 0, "true OR false = true");
+
+    let f = m.get_function_ptr("test_not").unwrap();
+    let not_result = unsafe { std::mem::transmute::<_, fn() -> u8>(f) }();
+    assert_eq!(not_result, 0, "NOT true = false");
+});
+
+mem_test!(bool_const_var_no_heap_alloc, {
+    let (mut m, rt, mut c) = jit_module();
+    build_f64(&mut m, &rt, &mut c, "test", |body| {
+        let b = body.bool_val(true);
+        body.const_var("flag", b);
+        let r = body.number(1.0);
+        body.return_val(r);
+    });
+    MEM.reset();
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(finalize_and_get(&mut m, "test")) };
+    assert_eq!(f(), 1.0);
+    let (allocs, _, _, _, _) = MEM.stats();
+    assert_eq!(allocs, 0, "bools are not heap allocated");
+});
+
+// ─── Value correctness: arrays ──────────────────────
+
+mem_test!(array_element_access_returns_correct_value, {
+    let (mut m, rt, mut c) = jit_module();
+    build_f64(&mut m, &rt, &mut c, "test", |body| {
+        let v1 = body.number(10.0);
+        let v2 = body.number(20.0);
+        let v3 = body.number(30.0);
+        let arr = body.array(&[v1, v2, v3]);
+        body.const_var("arr", arr);
+        let arr_val = body.var("arr");
+        let idx = body.number(1.0); // index 1 = second element
+        let elem = body.index(arr_val, idx);
+        body.return_val(elem);
+    });
+    MEM.reset();
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(finalize_and_get(&mut m, "test")) };
+    assert_eq!(f(), 20.0, "arr[1] should be 20");
+    let (a, fr, _, _, _) = MEM.stats();
+    assert_eq!(a, fr, "array access: {} allocs, {} frees", a, fr);
+});
+
+mem_test!(array_push_then_access_returns_pushed_value, {
+    let (mut m, rt, mut c) = jit_module();
+    build_f64(&mut m, &rt, &mut c, "test", |body| {
+        let arr = body.array(&[]);
+        body.const_var("arr", arr);
+        let arr_val = body.var("arr");
+        let v = body.number(42.0);
+        body.array_push(arr_val, v);
+        let arr_val = body.var("arr");
+        let idx = body.number(0.0);
+        let elem = body.index(arr_val, idx);
+        body.return_val(elem);
+    });
+    MEM.reset();
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(finalize_and_get(&mut m, "test")) };
+    assert_eq!(f(), 42.0, "pushed value readable at index 0");
+    let (a, fr, _, _, _) = MEM.stats();
+    assert_eq!(a, fr, "array push: {} allocs, {} frees", a, fr);
+});
+
+mem_test!(array_built_in_loop_returns_correct_length, {
+    let (mut m, rt, mut c) = jit_module();
+    build_f64(&mut m, &rt, &mut c, "test", |body| {
+        let arr = body.array(&[]);
+        body.const_var("arr", arr);
+        let zero = body.number(0.0);
+        body.let_var_typed("i", zero, RocaType::Number);
+        body.while_loop(
+            |b| {
+                let i = b.var("i");
+                let limit = b.number(5.0);
+                b.lt(i, limit)
+            },
+            |b| {
+                let arr_val = b.var("arr");
+                let i = b.var("i");
+                b.array_push(arr_val, i);
+                let i = b.var("i");
+                let one = b.number(1.0);
+                let next = b.add(i, one);
+                b.assign_name("i", next);
+            },
+        );
+        let arr_val = body.var("arr");
+        let len = body.length_with_kind(arr_val, RocaType::Array(Box::new(RocaType::Number)));
+        body.return_val(len);
+    });
+    MEM.reset();
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(finalize_and_get(&mut m, "test")) };
+    assert_eq!(f(), 5.0, "array should have 5 elements");
+    let (a, fr, _, _, _) = MEM.stats();
+    assert_eq!(a, fr, "array loop: {} allocs, {} frees", a, fr);
+});
+
+mem_test!(array_returned_from_function_readable_by_caller, {
+    let (mut m, rt, mut c) = jit_module();
+
+    Function::new("make_arr")
+        .returns(RocaType::Array(Box::new(RocaType::Number)))
+        .build(&mut *m, &rt, &mut c, |body| {
+            let v1 = body.number(100.0);
+            let v2 = body.number(200.0);
+            let arr = body.array(&[v1, v2]);
+            body.return_val(arr);
+        })
+        .unwrap();
+
+    build_f64(&mut m, &rt, &mut c, "test", |body| {
+        let arr = body.call("make_arr", &[]);
+        body.const_var("arr", arr);
+        let arr_val = body.var("arr");
+        let idx = body.number(0.0);
+        let first = body.index(arr_val, idx);
+        body.return_val(first);
+    });
+
+    MEM.reset();
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(finalize_and_get(&mut m, "test")) };
+    assert_eq!(f(), 100.0, "first element of returned array");
+    let (a, fr, _, _, _) = MEM.stats();
+    assert_eq!(a, fr, "returned array: {} allocs, {} frees", a, fr);
+});
+
+mem_test!(for_each_iterates_correct_values, {
+    let (mut m, rt, mut c) = jit_module();
+    build_f64(&mut m, &rt, &mut c, "test", |body| {
+        let v1 = body.number(10.0);
+        let v2 = body.number(20.0);
+        let v3 = body.number(30.0);
+        let arr = body.array(&[v1, v2, v3]);
+        body.const_var("arr", arr);
+
+        let zero = body.number(0.0);
+        body.let_var_typed("sum", zero, RocaType::Number);
+
+        let arr_val = body.var("arr");
+        body.for_each("item", arr_val, |b| {
+            let item = b.var("item");
+            let sum = b.var("sum");
+            let next = b.add(sum, item);
+            b.assign_name("sum", next);
+        });
+
+        let sum = body.var("sum");
+        body.return_val(sum);
+    });
+    MEM.reset();
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(finalize_and_get(&mut m, "test")) };
+    assert_eq!(f(), 60.0, "10 + 20 + 30 = 60");
+    let (a, fr, _, _, _) = MEM.stats();
+    assert_eq!(a, fr, "for_each values: {} allocs, {} frees", a, fr);
+});

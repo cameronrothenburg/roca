@@ -3,16 +3,14 @@
 use cranelift_codegen::ir::{self, types, InstBuilder, Value, FuncRef, StackSlotData, StackSlotKind};
 use cranelift_frontend::FunctionBuilder;
 
-/// Compare two f64 values, return I64 (1 or 0)
+/// Compare two f64 values, return I8 boolean (1 or 0)
 pub fn fcmp_to_i64(b: &mut FunctionBuilder, cc: ir::condcodes::FloatCC, a: Value, bv: Value) -> Value {
-    let cmp = b.ins().fcmp(cc, a, bv);
-    b.ins().uextend(types::I64, cmp)
+    b.ins().fcmp(cc, a, bv)
 }
 
-/// Compare two integers, return I64 (1 or 0)
+/// Compare two integers, return I8 boolean (1 or 0)
 pub fn icmp_to_i64(b: &mut FunctionBuilder, cc: ir::condcodes::IntCC, a: Value, bv: Value) -> Value {
-    let cmp = b.ins().icmp(cc, a, bv);
-    b.ins().uextend(types::I64, cmp)
+    b.ins().icmp(cc, a, bv)
 }
 
 /// Call a function and return the first result value
@@ -38,22 +36,14 @@ pub fn load_slot(b: &mut FunctionBuilder, slot: ir::StackSlot, ty: ir::Type) -> 
     b.ins().stack_load(ty, slot, 0)
 }
 
-/// Boolean AND: both values must be non-zero, returns I64
+/// Boolean AND: both I8 values must be non-zero, returns I8
 pub fn bool_and(b: &mut FunctionBuilder, l: Value, r: Value) -> Value {
-    let zero = b.ins().iconst(types::I64, 0);
-    let lb = b.ins().icmp(ir::condcodes::IntCC::NotEqual, l, zero);
-    let rb = b.ins().icmp(ir::condcodes::IntCC::NotEqual, r, zero);
-    let result = b.ins().band(lb, rb);
-    b.ins().uextend(types::I64, result)
+    b.ins().band(l, r)
 }
 
-/// Boolean OR: either value must be non-zero, returns I64
+/// Boolean OR: either I8 value must be non-zero, returns I8
 pub fn bool_or(b: &mut FunctionBuilder, l: Value, r: Value) -> Value {
-    let zero = b.ins().iconst(types::I64, 0);
-    let lb = b.ins().icmp(ir::condcodes::IntCC::NotEqual, l, zero);
-    let rb = b.ins().icmp(ir::condcodes::IntCC::NotEqual, r, zero);
-    let result = b.ins().bor(lb, rb);
-    b.ins().uextend(types::I64, result)
+    b.ins().bor(l, r)
 }
 
 /// Convert f64 to i64 if needed, pass through i64 unchanged
