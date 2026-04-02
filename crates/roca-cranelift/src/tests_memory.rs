@@ -972,3 +972,109 @@ mem_test!(bound_value_not_flushed_as_temp, {
     assert_eq!(allocs, 1, "one string");
     assert_eq!(allocs, frees, "bound not flushed: {} allocs, {} frees", allocs, frees);
 });
+
+// ─── Runtime safety: edge cases ─────────────────────
+
+mem_test!(empty_array_cleaned, {
+    let (mut m, rt, mut c) = jit_module();
+    build_f64(&mut m, &rt, &mut c, "test", |body| {
+        let arr = body.array(&[]);
+        body.const_var("arr", arr);
+        let r = body.number(1.0);
+        body.return_val(r);
+    });
+    MEM.reset();
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(finalize_and_get(&mut m, "test")) };
+    assert_eq!(f(), 1.0);
+    let (allocs, frees, _, _, _) = MEM.stats();
+    assert_eq!(allocs, frees, "empty array: {} allocs, {} frees", allocs, frees);
+});
+
+mem_test!(empty_struct_cleaned, {
+    let (mut m, rt, mut c) = jit_module();
+    build_f64(&mut m, &rt, &mut c, "test", |body| {
+        let s = body.struct_lit("Empty", &[]);
+        body.const_var("e", s);
+        let r = body.number(1.0);
+        body.return_val(r);
+    });
+    MEM.reset();
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(finalize_and_get(&mut m, "test")) };
+    assert_eq!(f(), 1.0);
+    let (allocs, frees, _, _, _) = MEM.stats();
+    assert_eq!(allocs, frees, "empty struct: {} allocs, {} frees", allocs, frees);
+});
+
+mem_test!(double_free_is_safe, {
+    // roca_free called twice on same pointer — second call should be a noop
+    let ptr = roca_runtime::alloc_str("test");
+    assert_ne!(ptr, 0);
+    roca_runtime::roca_free(ptr);
+    roca_runtime::roca_free(ptr); // second free — tag already removed, should be noop
+    let (allocs, frees, _, _, _) = MEM.stats();
+    assert_eq!(allocs, 1, "one alloc");
+    assert_eq!(frees, 1, "one free (second was noop)");
+});
+
+mem_test!(param_not_freed_by_callee, {
+    let (mut m, rt, mut c) = jit_module();
+
+    // Callee receives a number param — should not free it
+    build_f64_param(&mut m, &rt, &mut c, "callee", "x", |body| {
+        let x = body.var("x");
+        body.return_val(x);
+    });
+
+    // Caller passes a value and uses it after the call
+    build_f64(&mut m, &rt, &mut c, "test", |body| {
+        let val = body.number(42.0);
+        let result = body.call("callee", &[val]);
+        body.return_val(result);
+    });
+
+    MEM.reset();
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(finalize_and_get(&mut m, "test")) };
+    assert_eq!(f(), 42.0);
+    let (allocs, frees, _, _, _) = MEM.stats();
+    assert_eq!(allocs, frees, "param safe: {} allocs, {} frees", allocs, frees);
+});
+
+mem_test!(multiple_temps_all_cleaned, {
+    let (mut m, rt, mut c) = jit_module();
+    build_f64(&mut m, &rt, &mut c, "test", |body| {
+        // Create 5 strings, store none
+        body.string("a");
+        body.string("b");
+        body.string("c");
+        body.string("d");
+        body.string("e");
+        body.flush_temps();
+        let r = body.number(1.0);
+        body.return_val(r);
+    });
+    MEM.reset();
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(finalize_and_get(&mut m, "test")) };
+    assert_eq!(f(), 1.0);
+    let (allocs, frees, _, _, _) = MEM.stats();
+    assert_eq!(allocs, 5, "5 temps");
+    assert_eq!(allocs, frees, "all temps cleaned: {} allocs, {} frees", allocs, frees);
+});
+
+mem_test!(mix_bound_and_unbound_cleaned, {
+    let (mut m, rt, mut c) = jit_module();
+    build_f64(&mut m, &rt, &mut c, "test", |body| {
+        let s1 = body.string("bound");
+        body.const_var("s", s1);      // claimed
+        body.string("orphan1");        // temp
+        body.string("orphan2");        // temp
+        body.flush_temps();            // free orphans
+        let r = body.number(1.0);
+        body.return_val(r);            // free "bound" at scope exit
+    });
+    MEM.reset();
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(finalize_and_get(&mut m, "test")) };
+    assert_eq!(f(), 1.0);
+    let (allocs, frees, _, _, _) = MEM.stats();
+    assert_eq!(allocs, 3, "1 bound + 2 temps");
+    assert_eq!(allocs, frees, "mix cleaned: {} allocs, {} frees", allocs, frees);
+});
