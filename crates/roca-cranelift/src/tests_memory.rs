@@ -585,3 +585,183 @@ mem_test!(return_cleans_non_returned_locals, {
     let (allocs, frees, _, _, _) = MEM.stats();
     assert_eq!(allocs, frees, "all cleaned: {} allocs, {} frees", allocs, frees);
 });
+
+// ─── Category 3: Struct field ownership ─────────────
+
+mem_test!(struct_owns_string_fields, {
+    let (mut m, rt, mut c) = jit_module();
+    build_f64(&mut m, &rt, &mut c, "test", |body| {
+        let name = body.string("alice");
+        let age = body.number(30.0);
+        let s = body.struct_lit("User", &[("name", name), ("age", age)]);
+        body.const_var("u", s);
+        let r = body.number(1.0);
+        body.return_val(r);
+    });
+    MEM.reset();
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(finalize_and_get(&mut m, "test")) };
+    assert_eq!(f(), 1.0);
+    let (allocs, frees, _, _, _) = MEM.stats();
+    // 1 string "alice" + 1 struct = 2 allocs, both freed
+    assert!(allocs >= 2, "string + struct allocated");
+    assert_eq!(allocs, frees, "struct owns fields: {} allocs, {} frees", allocs, frees);
+});
+
+mem_test!(struct_with_numbers_only_cleans_struct, {
+    let (mut m, rt, mut c) = jit_module();
+    build_f64(&mut m, &rt, &mut c, "test", |body| {
+        let x = body.number(1.0);
+        let y = body.number(2.0);
+        let s = body.struct_lit("Point", &[("x", x), ("y", y)]);
+        body.const_var("p", s);
+        let r = body.number(1.0);
+        body.return_val(r);
+    });
+    MEM.reset();
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(finalize_and_get(&mut m, "test")) };
+    assert_eq!(f(), 1.0);
+    let (allocs, frees, _, _, _) = MEM.stats();
+    // Only the struct itself — no string fields to free
+    assert_eq!(allocs, 1, "just the struct");
+    assert_eq!(allocs, frees, "numbers-only struct: {} allocs, {} frees", allocs, frees);
+});
+
+mem_test!(struct_owns_multiple_heap_fields, {
+    let (mut m, rt, mut c) = jit_module();
+    build_f64(&mut m, &rt, &mut c, "test", |body| {
+        let first = body.string("alice");
+        let last = body.string("smith");
+        let s = body.struct_lit("Name", &[("first", first), ("last", last)]);
+        body.const_var("n", s);
+        let r = body.number(1.0);
+        body.return_val(r);
+    });
+    MEM.reset();
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(finalize_and_get(&mut m, "test")) };
+    assert_eq!(f(), 1.0);
+    let (allocs, frees, _, _, _) = MEM.stats();
+    // 2 strings + 1 struct = 3 allocs
+    assert_eq!(allocs, 3, "2 strings + 1 struct");
+    assert_eq!(allocs, frees, "multiple heap fields: {} allocs, {} frees", allocs, frees);
+});
+
+mem_test!(enum_variant_owns_data_fields, {
+    let (mut m, rt, mut c) = jit_module();
+    build_f64(&mut m, &rt, &mut c, "test", |body| {
+        let msg = body.string("something went wrong");
+        let v = body.enum_variant("Result", "Error", &[msg]);
+        body.const_var("r", v);
+        let r = body.number(1.0);
+        body.return_val(r);
+    });
+    MEM.reset();
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(finalize_and_get(&mut m, "test")) };
+    assert_eq!(f(), 1.0);
+    let (allocs, frees, _, _, _) = MEM.stats();
+    // tag string "Error" + data string "something went wrong" + enum struct = 3
+    assert!(allocs >= 3, "tag + data + enum");
+    assert_eq!(allocs, frees, "enum owns data: {} allocs, {} frees", allocs, frees);
+});
+
+// ─── Category 6 (new): Cross-function cleanup ───────
+
+mem_test!(callee_cleans_own_locals, {
+    let (mut m, rt, mut c) = jit_module();
+
+    // Callee allocates a local string and returns a number
+    build_f64(&mut m, &rt, &mut c, "callee", |body| {
+        let s = body.string("callee_local");
+        body.const_var("s", s);
+        let r = body.number(99.0);
+        body.return_val(r);
+    });
+
+    // Caller calls callee
+    build_f64(&mut m, &rt, &mut c, "test", |body| {
+        let result = body.call("callee", &[]);
+        body.return_val(result);
+    });
+
+    MEM.reset();
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(finalize_and_get(&mut m, "test")) };
+    assert_eq!(f(), 99.0);
+    let (allocs, frees, _, _, _) = MEM.stats();
+    assert_eq!(allocs, frees, "callee cleans locals: {} allocs, {} frees", allocs, frees);
+});
+
+mem_test!(call_chain_cleans_each_scope, {
+    let (mut m, rt, mut c) = jit_module();
+
+    build_f64(&mut m, &rt, &mut c, "c_func", |body| {
+        let s = body.string("c_local");
+        body.const_var("s", s);
+        let r = body.number(1.0);
+        body.return_val(r);
+    });
+
+    build_f64(&mut m, &rt, &mut c, "b_func", |body| {
+        let s = body.string("b_local");
+        body.const_var("s", s);
+        let r = body.call("c_func", &[]);
+        body.return_val(r);
+    });
+
+    build_f64(&mut m, &rt, &mut c, "test", |body| {
+        let s = body.string("a_local");
+        body.const_var("s", s);
+        let r = body.call("b_func", &[]);
+        body.return_val(r);
+    });
+
+    MEM.reset();
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(finalize_and_get(&mut m, "test")) };
+    assert_eq!(f(), 1.0);
+    let (allocs, frees, _, _, _) = MEM.stats();
+    assert_eq!(allocs, 3, "3 locals across 3 functions");
+    assert_eq!(allocs, frees, "call chain: {} allocs, {} frees", allocs, frees);
+});
+
+// ─── Category 9: Reassignment edge cases ────────────
+
+mem_test!(reassign_same_literal_cleans_old, {
+    let (mut m, rt, mut c) = jit_module();
+    build_f64(&mut m, &rt, &mut c, "test", |body| {
+        let s1 = body.string("hello");
+        let var = body.let_var("s", s1);
+        let s2 = body.string("hello"); // same content, new allocation
+        body.assign(&var, s2);
+        let r = body.number(1.0);
+        body.return_val(r);
+    });
+    MEM.reset();
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(finalize_and_get(&mut m, "test")) };
+    assert_eq!(f(), 1.0);
+    let (allocs, frees, _, _, _) = MEM.stats();
+    assert_eq!(allocs, 2, "2 strings even though same content");
+    assert_eq!(allocs, frees, "reassign same literal: {} allocs, {} frees", allocs, frees);
+});
+
+// ─── Category 10: Null safety ───────────────────────
+
+mem_test!(free_null_is_noop, {
+    // Directly call roca_free(0) — should not crash or count
+    roca_runtime::roca_free(0);
+    let (allocs, frees, _, _, _) = MEM.stats();
+    assert_eq!(allocs, 0, "no allocs");
+    assert_eq!(frees, 0, "no frees");
+});
+
+mem_test!(default_return_is_clean, {
+    let (mut m, rt, mut c) = jit_module();
+    // Function with no explicit return — Body emits default return
+    build_f64(&mut m, &rt, &mut c, "test", |body| {
+        let s = body.string("local");
+        body.const_var("s", s);
+        // No return_val — Body's auto-default kicks in
+    });
+    MEM.reset();
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(finalize_and_get(&mut m, "test")) };
+    let _result = f();
+    let (allocs, frees, _, _, _) = MEM.stats();
+    assert_eq!(allocs, frees, "default return: {} allocs, {} frees", allocs, frees);
+});

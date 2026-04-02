@@ -400,7 +400,9 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
         if !self.ctx.struct_layouts.contains_key(&enum_layout_name) {
             let mut fields = vec![("__tag".to_string(), RocaType::String)];
             for (i, &arg) in args.iter().enumerate() {
-                let kind = if self.ir.is_number(arg) { RocaType::Number } else { RocaType::Unknown };
+                let kind = if self.ir.is_number(arg) { RocaType::Number }
+                else if self.ir.value_ir_type(arg) == types::I8 { RocaType::Bool }
+                else { RocaType::String }; // any I64 = heap
                 fields.push((format!("__arg{}", i), kind));
             }
             self.ctx.struct_layouts.insert(enum_layout_name.clone(), StructLayout { fields });
