@@ -13,7 +13,7 @@ mem_test!(mem_let_reassign_frees_old, {
         }
     "#);
     runtime::MEM.reset();
-    assert_eq!(unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "reassign", 0)) }(), 42.0);
+    assert_eq!(unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "reassign")) }(), 42.0);
     let (allocs, frees, _, _, _) = runtime::MEM.stats();
     assert_eq!(allocs, 3, "should allocate 3 strings");
     assert_eq!(allocs, frees, "all reassigned freed: {} allocs, {} frees", allocs, frees);
@@ -32,7 +32,7 @@ mem_test!(mem_break_cleans_up, {
         }
     "#);
     runtime::MEM.reset();
-    assert_eq!(unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "break_test", 0)) }(), 5.0);
+    assert_eq!(unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "break_test")) }(), 5.0);
     let (allocs, frees, _, _, _) = runtime::MEM.stats();
     assert_eq!(allocs, frees, "break cleans up: {} allocs, {} frees", allocs, frees);
 });
@@ -45,7 +45,7 @@ mem_test!(mem_array_freed_at_scope_exit, {
         }
     "#);
     runtime::MEM.reset();
-    assert_eq!(unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make_arr", 0)) }(), 3.0);
+    assert_eq!(unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make_arr")) }(), 3.0);
     let (allocs, frees, _, _, _) = runtime::MEM.stats();
     assert!(allocs >= 1, "should allocate array");
     assert_eq!(allocs, frees, "array freed: {} allocs, {} frees", allocs, frees);
@@ -68,7 +68,7 @@ mem_test!(mem_nested_if_scopes, {
         }
     "#);
     runtime::MEM.reset();
-    let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "branchy", 1)) };
+    let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "branchy")) };
     assert_eq!(f(5.0), 1.0);
     let (a1, f1, _, _, _) = runtime::MEM.stats();
     assert_eq!(a1, f1, "positive branch: {} allocs, {} frees", a1, f1);
@@ -91,7 +91,7 @@ mem_test!(mem_string_concat_intermediates, {
         }
     "#);
     runtime::MEM.reset();
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "concat_test", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "concat_test")) };
     assert_eq!(f(), 11.0); // "hello world"
     let (allocs, frees, _, _, _) = runtime::MEM.stats();
     assert_eq!(allocs, frees, "concat intermediates freed: {} allocs, {} frees", allocs, frees);
@@ -115,7 +115,7 @@ mem_test!(mem_multiple_returns_all_clean, {
         }
     "#);
     runtime::MEM.reset();
-    let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "early", 1)) };
+    let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "early")) };
 
     // Path 1: n=1
     runtime::MEM.reset();
@@ -150,7 +150,7 @@ mem_test!(mem_loop_with_string_reassign, {
         }
     "#);
     runtime::MEM.reset();
-    assert_eq!(unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "build", 0)) }(), 3.0);
+    assert_eq!(unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "build")) }(), 3.0);
     let (allocs, frees, _, _, _) = runtime::MEM.stats();
     // "start" + 3x "iter" = 4 allocs, all freed (3 on reassign + 1 at scope exit)
     assert_eq!(allocs, 4, "4 strings allocated");
@@ -167,10 +167,49 @@ mem_test!(mem_const_strings_freed, {
         }
     "#);
     runtime::MEM.reset();
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "const_test", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "const_test")) };
     assert_eq!(f(), 42.0);
     let (allocs, frees, _, _, _) = runtime::MEM.stats();
     assert_eq!(allocs, frees, "const strings freed: {} allocs, {} frees", allocs, frees);
+});
+
+// ─── Bug 4: let_result unknown type must still be freed ──
+
+mem_test!(mem_let_result_unknown_type_freed, {
+    let mut m = jit(r#"
+        pub fn make_greeting() -> String, err {
+            return "hello world"
+        }
+
+        pub fn use_greeting() -> Number {
+            let msg, failed = make_greeting()
+            if failed { return 0 }
+            return 1
+        }
+    "#);
+    runtime::MEM.reset();
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "use_greeting")) };
+    assert_eq!(f(), 1.0);
+    let (allocs, frees, _, _, _) = runtime::MEM.stats();
+    assert_eq!(allocs, frees, "let_result cleanup: {} allocs, {} frees", allocs, frees);
+});
+
+// ─── Bug 5: chained method intermediates must be freed ──
+
+mem_test!(mem_chained_method_intermediates_freed, {
+    let mut m = jit(r#"
+        pub fn chain() -> String {
+            const s = "a,b,c"
+            return s.split(",").join("-")
+        }
+    "#);
+    runtime::MEM.reset();
+    let f = unsafe { std::mem::transmute::<_, fn() -> *const u8>(call_f64(&mut m, "chain")) };
+    let result_ptr = f();
+    let result = read_native_str(result_ptr as i64);
+    assert_eq!(result, "a-b-c");
+    let (allocs, frees, _, _, _) = runtime::MEM.stats();
+    assert_eq!(allocs, frees, "chained intermediates: {} allocs, {} frees", allocs, frees);
 });
 
 // ─── Feature coverage: for loop ──────────────────
@@ -187,7 +226,7 @@ fn for_loop_over_array() {
             return total
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "sum_array", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "sum_array")) };
     assert_eq!(f(), 60.0);
 }
 
@@ -202,7 +241,7 @@ fn struct_field_mutation() {
             return p.x + p.y
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "mutate_field", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "mutate_field")) };
     assert_eq!(f(), 119.0); // 99 + 20
 }
 

@@ -1,9 +1,10 @@
-//! Cranelift IR builder API for the Roca compiler — maps Roca constructs to
-//! Cranelift IR and manages the runtime function registry.
+//! Generic Cranelift IR toolkit for building language compilers.
 //!
-//! Depends on [`roca_ast`], [`roca_types`], and [`roca_runtime`]. Consumed by
-//! `roca-native`, which uses this crate's builder API to compile functions,
-//! structs, and methods into Cranelift IR for JIT or AOT execution.
+//! Provides a high-level builder API (Function, Body) that maps language
+//! constructs to Cranelift IR — control flow, variables, memory management,
+//! pattern matching — without knowing anything about the source language.
+//!
+//! Depends on [`roca_types`] and [`roca_runtime`]. Consumed by `roca-native`.
 //!
 //! # Key exports
 //!
@@ -24,6 +25,8 @@ pub(crate) mod emit_helpers;
 pub(crate) mod registry;
 pub(crate) mod cranelift_type;
 pub(crate) mod builder;
+pub mod lang_type;
+pub mod module;
 pub mod api;
 
 // Public API
@@ -32,6 +35,14 @@ pub use api::{ConstRef, MutRef, VarRef, StringPart, MatchArm, MatchArmLazy, Lazy
 pub use context::{CompiledFuncs, EmitCtx, StructLayout};
 pub use registry::{RuntimeFuncs, register_symbols, declare_runtime};
 pub use cranelift_type::CraneliftType;
+pub use lang_type::LangType;
+pub use module::{JitModule, FnDecl, declare_functions};
+
+// Re-export cranelift module types for consuming crates
+pub use cranelift_module::{Module, FuncId};
+
+#[cfg(test)]
+mod tests_memory;
 
 // Re-export memory management from roca-runtime
 pub use roca_runtime::{MEM, MemTracker, reset_constraint_violated, constraint_violated};

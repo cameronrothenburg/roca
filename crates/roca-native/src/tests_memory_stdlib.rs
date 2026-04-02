@@ -19,7 +19,7 @@ mem_test!(mem_char_code_at_no_leak, {
         }
     "#);
     runtime::MEM.reset();
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "get_code", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "get_code")) };
     assert_eq!(f(), 104.0); // 'h' = 104
     let (a, fr, _, _, _) = runtime::MEM.stats();
     assert_eq!(a, fr, "charCodeAt: {} allocs, {} frees", a, fr);
@@ -39,7 +39,7 @@ mem_test!(mem_char_code_at_in_loop, {
         }
     "#);
     runtime::MEM.reset();
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "sum_codes", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "sum_codes")) };
     assert_eq!(f(), 294.0); // 97 + 98 + 99
     let (a, fr, _, _, _) = runtime::MEM.stats();
     assert_eq!(a, fr, "charCodeAt loop: {} allocs, {} frees", a, fr);
@@ -54,7 +54,7 @@ mem_test!(mem_string_chain_char_code, {
         }
     "#);
     runtime::MEM.reset();
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "upper_code", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "upper_code")) };
     assert_eq!(f(), 72.0); // 'H' = 72
     let (a, fr, _, _, _) = runtime::MEM.stats();
     assert_eq!(a, fr, "chain + charCodeAt: {} allocs, {} frees", a, fr);

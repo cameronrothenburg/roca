@@ -10,7 +10,7 @@ fn closure_as_value() {
             return double(5)
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "apply", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "apply")) };
     assert_eq!(f(), 10.0);
 }
 
@@ -23,7 +23,7 @@ fn closure_arithmetic() {
             return add_ten(sub_one(5))
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "compute", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "compute")) };
     assert_eq!(f(), 14.0); // (5-1)+10
 }
 
@@ -38,7 +38,7 @@ fn closure_passed_to_function() {
             return apply_fn(4, triple)
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "use_it", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "use_it")) };
     assert_eq!(f(), 12.0);
 }
 
@@ -57,7 +57,7 @@ fn enum_variant_unit() {
             }
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "test_unit", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "test_unit")) };
     assert_eq!(f(), 1.0);
 }
 
@@ -73,7 +73,7 @@ fn enum_variant_with_data() {
             }
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "test_data", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "test_data")) };
     assert_eq!(f(), 42.0);
 }
 
@@ -95,7 +95,7 @@ fn enum_variant_multiple_arms() {
             }
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "describe", 1)) };
+    let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "describe")) };
     assert_eq!(f(1.0), 25.0);
     assert_eq!(f(2.0), 12.0);
     assert_eq!(f(3.0), 0.0);
@@ -116,7 +116,7 @@ fn enum_variant_in_function_chain() {
             }
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "make_token", 1)) };
+    let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "make_token")) };
     assert_eq!(f(99.0), 99.0);
 }
 
@@ -135,7 +135,7 @@ fn struct_method_self_read() {
             return Counter.current(c)
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "test_method", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "test_method")) };
     assert_eq!(f(), 10.0);
 }
 
@@ -155,7 +155,7 @@ fn struct_method_self_write() {
             return Counter.increment(c)
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "test_write", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "test_write")) };
     assert_eq!(f(), 6.0);
 }
 
@@ -170,7 +170,7 @@ fn forward_reference_calls() {
             return n * 3
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "caller", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "caller")) };
     assert_eq!(f(), 15.0);
 }
 
@@ -188,7 +188,7 @@ fn forward_reference_chain() {
             return 100
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "step_a", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "step_a")) };
     assert_eq!(f(), 111.0); // 100 + 10 + 1
 }
 
@@ -205,8 +205,8 @@ fn mutual_recursion() {
             return is_even(n - 1)
         }
     "#);
-    let even = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "is_even", 1)) };
-    let odd = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "is_odd", 1)) };
+    let even = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "is_even")) };
+    let odd = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "is_odd")) };
     assert_eq!(even(4.0), 1.0);
     assert_eq!(even(3.0), 0.0);
     assert_eq!(odd(3.0), 1.0);
@@ -229,7 +229,7 @@ fn integration_validate_and_transform() {
             return doubled
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "process", 1)) };
+    let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "process")) };
     assert_eq!(f(5.0), 10.0);
     assert_eq!(f(-1.0), 0.0);
     assert_eq!(f(2000.0), 0.0);
@@ -250,7 +250,7 @@ fn integration_loop_with_early_return() {
             return i
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "find_threshold", 1)) };
+    let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "find_threshold")) };
     assert_eq!(f(10.0), 5.0); // 0+1+2+3+4+5=15 > 10 at i=5
     assert_eq!(f(100.0), 14.0); // 0+1+...+14=105 > 100 at i=14
 }
@@ -289,7 +289,7 @@ fn integration_closure_with_functions() {
             return a + b
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "run", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "run")) };
     assert_eq!(f(), 17.0); // apply_twice(3,inc)=5, apply_twice(3,dbl)=12, 5+12=17
 }
 
@@ -331,7 +331,7 @@ fn integration_match_with_computation() {
             return points * 2
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "score", 1)) };
+    let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "score")) };
     assert_eq!(f(1.0), 200.0);
     assert_eq!(f(2.0), 170.0);
     assert_eq!(f(99.0), 100.0);

@@ -1,13 +1,10 @@
 //! Deep property testing — auto-generates randomized inputs from type signatures
 //! and verifies invariants: no crash, correct return type, valid error discipline.
 
-use cranelift_codegen::ir::types;
-use cranelift_jit::JITModule;
-use cranelift_module::{Module, Linkage};
-
 use roca_ast as ast;
-use roca_cranelift::CraneliftType;
+use roca_cranelift::JitModule;
 use roca_ast::{Expr, TypeRef, Constraint};
+use roca_types::RocaType;
 use super::test_runner::*;
 
 
@@ -25,7 +22,7 @@ fn is_generable(ty: &TypeRef) -> bool {
 /// Run property tests for a single function.
 /// `struct_name` is Some for struct methods — the JIT name is "Struct.method".
 pub fn run_property_tests(
-    module: &mut JITModule,
+    module: &JitModule,
     func: &ast::FnDef,
     struct_name: Option<&str>,
     passed: &mut usize,
@@ -83,26 +80,16 @@ enum PropertyResult {
 
 /// Unified property test runner for both error-returning and plain functions.
 fn run_property(
-    module: &mut JITModule,
+    module: &JitModule,
     func: &ast::FnDef,
     jit_name: &str,
     is_method: bool,
     args: &[Expr],
 ) -> PropertyResult {
-    let mut sig = if func.returns_err {
-        build_sig_with_err(module, func)
-    } else {
-        build_sig(module, func)
+    let ptr = match module.get_function_ptr(jit_name) {
+        Some(p) => p,
+        None => return PropertyResult::Crashed(format!("function not found: {}", jit_name)),
     };
-    if is_method {
-        sig.params.insert(0, cranelift_codegen::ir::AbiParam::new(types::I64));
-    }
-
-    let id = match module.declare_function(jit_name, Linkage::Export, &sig) {
-        Ok(id) => id,
-        Err(e) => return PropertyResult::Crashed(format!("declare: {}", e)),
-    };
-    let ptr = module.get_finalized_function(id);
 
     let call_args: Vec<Expr> = if is_method {
         let mut v = vec![Expr::Number(0.0)];
@@ -126,13 +113,11 @@ fn run_property(
             let (_val, err_tag) = call_with_err(ptr, &arity_func, &call_args);
             err_tag != 0
         } else {
-            let ret_type = roca_types::RocaType::from(&func.return_type).to_cranelift();
-            if ret_type == types::F64 {
-                let _ = call_f64_fn(ptr, param_count, &call_args);
-            } else if ret_type == types::I64 {
-                let _ = call_str_fn(ptr, param_count, &call_args);
-            } else if ret_type == types::I8 {
-                let _ = call_bool_fn(ptr, param_count, &call_args);
+            let ret_type = RocaType::from(&func.return_type);
+            match ret_type {
+                RocaType::Number => { let _ = call_f64_fn(ptr, param_count, &call_args); }
+                RocaType::Bool => { let _ = call_bool_fn(ptr, param_count, &call_args); }
+                _ => { let _ = call_str_fn(ptr, param_count, &call_args); }
             }
             false
         }

@@ -28,7 +28,8 @@ mod test_helpers;
 mod tests_stdlib_integration;
 
 use roca_ast as ast;
-use cranelift_jit::{JITBuilder, JITModule};
+use roca_cranelift::JitModule;
+use roca_cranelift::Module;
 
 fn default_expr_for_type(ty: &ast::TypeRef) -> ast::Expr {
     match ty {
@@ -40,25 +41,16 @@ fn default_expr_for_type(ty: &ast::TypeRef) -> ast::Expr {
         _ => ast::Expr::Null,
     }
 }
-use cranelift_module::Module;
-use cranelift_object::{ObjectBuilder, ObjectModule};
 
 /// Create a JIT module with the Roca runtime functions registered.
-pub fn create_jit_module() -> JITModule {
-    let mut builder = JITBuilder::new(cranelift_module::default_libcall_names())
-        .expect("failed to create JIT builder");
-    runtime::register_symbols(&mut builder);
-    JITModule::new(builder)
+pub fn create_jit_module() -> JitModule {
+    JitModule::new(|builder| runtime::register_symbols(builder))
 }
 
 /// Look up a compiled function by name and return its native pointer.
 /// Returns None if the function wasn't compiled.
-pub fn get_function_ptr(module: &JITModule, name: &str) -> Option<*const u8> {
-    let id = match module.get_name(name) {
-        Some(cranelift_module::FuncOrDataId::Func(id)) => id,
-        _ => return None,
-    };
-    Some(module.get_finalized_function(id))
+pub fn get_function_ptr(module: &JitModule, name: &str) -> Option<*const u8> {
+    module.get_function_ptr(name)
 }
 
 /// Compile all functions in a source file into a module.
@@ -118,6 +110,8 @@ pub fn compile_all<M: Module>(
 /// Compile Roca source to an object file via Cranelift AOT (production).
 #[allow(dead_code)]
 pub fn compile_to_object(source: &roca_ast::SourceFile) -> Result<Vec<u8>, String> {
+    use cranelift_object::{ObjectBuilder, ObjectModule};
+
     let isa = cranelift_native::builder()
         .map_err(|e| format!("native ISA: {}", e))?
         .finish(cranelift_codegen::settings::Flags::new(cranelift_codegen::settings::builder()))

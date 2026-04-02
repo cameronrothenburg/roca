@@ -14,7 +14,7 @@ fn if_else() {
             return n
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "clamp", 1)) };
+    let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "clamp")) };
     assert_eq!(f(50.0), 50.0);
     assert_eq!(f(150.0), 100.0);
     assert_eq!(f(-10.0), 0.0);
@@ -34,7 +34,7 @@ fn nested_if_else() {
             }
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "classify", 1)) };
+    let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "classify")) };
     assert_eq!(f(50.0), 1.0);
     assert_eq!(f(200.0), 2.0);
     assert_eq!(f(-5.0), 0.0);
@@ -49,7 +49,7 @@ fn while_loop() {
             return i
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "count_to", 1)) };
+    let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "count_to")) };
     assert_eq!(f(5.0), 5.0);
     assert_eq!(f(100.0), 100.0);
 }
@@ -66,7 +66,7 @@ fn break_in_while() {
             return i
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "find_five", 1)) };
+    let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "find_five")) };
     assert_eq!(f(10.0), 5.0);
     assert_eq!(f(3.0), 3.0);
 }
@@ -85,7 +85,7 @@ fn continue_in_loop() {
             return total
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "sum_skip_three", 1)) };
+    let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "sum_skip_three")) };
     // 1 + 2 + 4 + 5 = 12
     assert_eq!(f(5.0), 12.0);
 }
@@ -102,7 +102,7 @@ fn match_expression() {
             return result
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "describe", 1)) };
+    let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "describe")) };
     assert_eq!(f(1.0), 10.0);
     assert_eq!(f(2.0), 20.0);
     assert_eq!(f(99.0), 0.0);
@@ -238,7 +238,7 @@ fn array_literal_and_index() {
             return arr[1]
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "second", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "second")) };
     assert_eq!(f(), 20.0);
 }
 
@@ -251,7 +251,7 @@ fn array_push_and_len() {
             return arr.length
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "build", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "build")) };
     assert_eq!(f(), 3.0);
 }
 
@@ -264,7 +264,7 @@ fn array_map() {
             return result[0] + result[1] + result[2]
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "doubled", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "doubled")) };
     assert_eq!(f(), 12.0); // 2 + 4 + 6
 }
 
@@ -277,7 +277,7 @@ fn array_filter() {
             return result.length
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "count_all", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "count_all")) };
     assert_eq!(f(), 3.0);
 }
 
@@ -289,7 +289,7 @@ fn struct_create_and_access() {
             return p.x + p.y
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "get_x", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "get_x")) };
     assert_eq!(f(), 30.0);
 }
 
@@ -308,7 +308,7 @@ fn error_return_and_destructure() {
             return result
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "safe_double", 1)) };
+    let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "safe_double")) };
     assert_eq!(f(5.0), 10.0);
     assert_eq!(f(-3.0), 0.0);
 }
@@ -326,7 +326,7 @@ fn crash_fallback() {
             risky -> fallback(0)
         }}
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "safe", 1)) };
+    let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "safe")) };
     assert_eq!(f(5.0), 10.0);
     assert_eq!(f(-3.0), 0.0);
 }
@@ -416,7 +416,7 @@ fn auto_stub_extern_fn() {
             return fetch_price()
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "get_price", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "get_price")) };
     assert_eq!(f(), 0.0); // auto-stub returns default Number
 }
 

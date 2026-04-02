@@ -1,6 +1,7 @@
 //! Roca AST → native code emission via roca-cranelift builders.
 
 pub mod compile;
+pub mod context;
 pub mod emit;
 
 pub use roca_cranelift::CompiledFuncs;

@@ -8,14 +8,14 @@ fn init() { drop(create_jit_module()); }
 #[test]
 fn return_constant() {
     let mut m = jit("pub fn answer() -> Number { return 42 }");
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "answer", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "answer")) };
     assert_eq!(f(), 42.0);
 }
 
 #[test]
 fn add() {
     let mut m = jit("pub fn add(a: Number, b: Number) -> Number { return a + b }");
-    let f = unsafe { std::mem::transmute::<_, fn(f64, f64) -> f64>(call_f64(&mut m, "add", 2)) };
+    let f = unsafe { std::mem::transmute::<_, fn(f64, f64) -> f64>(call_f64(&mut m, "add")) };
     assert_eq!(f(37.0, 5.0), 42.0);
     assert_eq!(f(-10.0, 10.0), 0.0);
 }
@@ -23,7 +23,7 @@ fn add() {
 #[test]
 fn multiply() {
     let mut m = jit("pub fn square(n: Number) -> Number { return n * n }");
-    let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "square", 1)) };
+    let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "square")) };
     assert_eq!(f(5.0), 25.0);
     assert_eq!(f(-3.0), 9.0);
 }
@@ -34,8 +34,8 @@ fn modulo_and_subtraction() {
         pub fn sub(a: Number, b: Number) -> Number { return a - b }
         pub fn div(a: Number, b: Number) -> Number { return a / b }
     "#);
-    let sub = unsafe { std::mem::transmute::<_, fn(f64, f64) -> f64>(call_f64(&mut m, "sub", 2)) };
-    let div = unsafe { std::mem::transmute::<_, fn(f64, f64) -> f64>(call_f64(&mut m, "div", 2)) };
+    let sub = unsafe { std::mem::transmute::<_, fn(f64, f64) -> f64>(call_f64(&mut m, "sub")) };
+    let div = unsafe { std::mem::transmute::<_, fn(f64, f64) -> f64>(call_f64(&mut m, "div")) };
     assert_eq!(sub(10.0, 3.0), 7.0);
     assert_eq!(div(10.0, 2.0), 5.0);
 }
@@ -48,7 +48,7 @@ fn const_binding() {
             return sum + sum
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn(f64, f64) -> f64>(call_f64(&mut m, "double_add", 2)) };
+    let f = unsafe { std::mem::transmute::<_, fn(f64, f64) -> f64>(call_f64(&mut m, "double_add")) };
     assert_eq!(f(3.0, 4.0), 14.0);
 }
 
@@ -60,7 +60,7 @@ fn not_operator() {
             return 0
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "negate", 1)) };
+    let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "negate")) };
     assert_eq!(f(-5.0), 1.0);
     assert_eq!(f(5.0), 0.0);
 }
@@ -73,7 +73,7 @@ fn and_or() {
             return 0
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn(f64, f64) -> f64>(call_f64(&mut m, "both", 2)) };
+    let f = unsafe { std::mem::transmute::<_, fn(f64, f64) -> f64>(call_f64(&mut m, "both")) };
     assert_eq!(f(1.0, 1.0), 1.0);
     assert_eq!(f(1.0, -1.0), 0.0);
 }
@@ -84,7 +84,7 @@ fn function_calls() {
         pub fn add(a: Number, b: Number) -> Number { return a + b }
         pub fn double(n: Number) -> Number { return add(n, n) }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "double", 1)) };
+    let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "double")) };
     assert_eq!(f(5.0), 10.0);
     assert_eq!(f(21.0), 42.0);
 }

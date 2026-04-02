@@ -17,7 +17,7 @@ fn constraint_empty_string_with_minlen_1() {
             return 1
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make")) };
     f();
     assert!(runtime::constraint_violated(), "empty string violates minLen: 1");
 }
@@ -34,7 +34,7 @@ fn constraint_contains_empty_needle() {
             return 1
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make")) };
     assert_eq!(f(), 1.0);
     assert!(!runtime::constraint_violated(), "contains empty string always passes");
 }
@@ -53,7 +53,7 @@ fn constraint_default_only_no_validation() {
             return s.timeout
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make")) };
     assert_eq!(f(), 999.0);
     assert!(!runtime::constraint_violated(), "default-only field has no validation");
 }
@@ -72,7 +72,7 @@ fn constraint_string_min_as_minlen() {
             return 1
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make")) };
     f();
     assert!(runtime::constraint_violated(), "min on String = minLen, 'ab' (len 2) < 4");
 }
@@ -89,7 +89,7 @@ fn constraint_string_max_as_maxlen() {
             return 1
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make")) };
     f();
     assert!(runtime::constraint_violated(), "max on String = maxLen, 'toolongvalue' (len 12) > 5");
 }
@@ -109,7 +109,7 @@ fn constraint_multiple_fields_all_valid() {
             return s.port
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make")) };
     assert_eq!(f(), 443.0);
     assert!(!runtime::constraint_violated(), "all fields valid");
 }
@@ -127,7 +127,7 @@ fn constraint_multiple_fields_second_violated() {
             return s.port
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make")) };
     f();
     assert!(runtime::constraint_violated(), "empty name violates minLen: 1");
 }
@@ -204,7 +204,7 @@ fn wait_single() {
             return result
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "test_wait", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "test_wait")) };
     assert_eq!(f(), 7.0);
 }
 
@@ -217,7 +217,7 @@ fn wait_expr_await() {
             return result
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "test_await", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "test_await")) };
     assert_eq!(f(), 42.0);
 }
 
@@ -290,7 +290,7 @@ mem_test!(mem_scope_frees_string_locals, {
         }
     "#);
     runtime::MEM.reset(); // reset after compilation
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "work", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "work")) };
     assert_eq!(f(), 42.0);
     let (allocs, frees, _, _, _) = runtime::MEM.stats();
     assert!(allocs >= 2, "should allocate >= 2 strings, got {}", allocs);
@@ -322,7 +322,7 @@ mem_test!(mem_struct_freed_at_scope_exit, {
             return p.x
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make_point", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make_point")) };
     runtime::MEM.reset();
     assert_eq!(f(), 10.0);
     let (allocs, frees, _, _, _) = runtime::MEM.stats();
@@ -341,7 +341,7 @@ mem_test!(mem_loop_no_leak, {
             return i
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "loop_count", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "loop_count")) };
     runtime::MEM.reset();
     assert_eq!(f(), 5.0);
     let (allocs, frees, _, _, _) = runtime::MEM.stats();
@@ -358,7 +358,7 @@ mem_test!(mem_wait_no_leak, {
         }
     "#);
     runtime::MEM.reset();
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "test_wait_mem", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "test_wait_mem")) };
     assert_eq!(f(), 7.0);
     let (allocs, frees, _, _, _) = runtime::MEM.stats();
     assert_eq!(allocs, frees, "wait no leak: {} allocs, {} frees", allocs, frees);
@@ -374,7 +374,7 @@ fn param_constraint_number_valid() {
             return n * 2
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "clamp", 1)) };
+    let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "clamp")) };
     assert_eq!(f(50.0), 100.0);
     assert!(!runtime::constraint_violated(), "50 is within 0..100");
 }
@@ -387,7 +387,7 @@ fn param_constraint_number_min_violated() {
             return n * 2
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "clamp", 1)) };
+    let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "clamp")) };
     f(-5.0);
     assert!(runtime::constraint_violated(), "-5 < min 0");
 }
@@ -400,7 +400,7 @@ fn param_constraint_number_max_violated() {
             return n * 2
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "clamp", 1)) };
+    let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "clamp")) };
     f(200.0);
     assert!(runtime::constraint_violated(), "200 > max 100");
 }
@@ -463,7 +463,7 @@ fn param_constraint_multiple_params() {
             return age + score
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn(f64, f64) -> f64>(call_f64(&mut m, "createUser", 2)) };
+    let f = unsafe { std::mem::transmute::<_, fn(f64, f64) -> f64>(call_f64(&mut m, "createUser")) };
 
     // Both valid
     runtime::reset_constraint_violated();

@@ -3,7 +3,6 @@
 use std::collections::HashMap;
 use cranelift_codegen::ir::{self, types, StackSlot, Type, FuncRef};
 
-use roca_ast::{self as roca, crash::CrashHandlerKind};
 use roca_types::RocaType;
 
 /// Tracks compiled functions for cross-function references
@@ -39,7 +38,9 @@ impl StructLayout {
     }
 }
 
-/// Everything needed during emission — avoids parameter sprawl
+/// Everything needed during emission — avoids parameter sprawl.
+/// Contains only generic compilation state. Language-specific metadata
+/// (crash handlers, enum variants, etc.) belongs in the consuming crate.
 pub struct EmitCtx {
     pub vars: HashMap<String, VarInfo>,
     pub func_refs: HashMap<String, FuncRef>,
@@ -47,13 +48,6 @@ pub struct EmitCtx {
     pub return_type: Type,
     pub struct_layouts: HashMap<String, StructLayout>,
     pub var_struct_type: HashMap<String, String>,
-    pub crash_handlers: HashMap<String, CrashHandlerKind>,
-    /// Function name → return type (for tracking what kind of value a call produces)
-    pub func_return_kinds: HashMap<String, RocaType>,
-    /// Enum name → set of variant names (for recognizing Token.Plus as enum construction)
-    pub enum_variants: HashMap<String, Vec<String>>,
-    /// Struct name → field definitions (for constraint validation)
-    pub struct_defs: HashMap<String, Vec<roca::Field>>,
     pub live_heap_vars: Vec<String>,
     pub loop_heap_base: usize,
     pub loop_exit: Option<ir::Block>,

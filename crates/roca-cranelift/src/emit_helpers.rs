@@ -3,87 +3,12 @@
 use std::sync::LazyLock;
 use cranelift_codegen::ir::{self, FuncRef, Value};
 
-use roca_ast::{Expr, BinOp};
 use roca_types::RocaType;
 use crate::context::EmitCtx;
 use crate::cranelift_type::{CleanupRegistry, emit_cleanup};
 use crate::builder::IrBuilder;
 
 static CLEANUP_REGISTRY: LazyLock<CleanupRegistry> = LazyLock::new(CleanupRegistry::new);
-
-/// Infer the RocaType of an expression from its AST structure and context.
-pub fn infer_kind(expr: &Expr, ctx: &EmitCtx) -> RocaType {
-    match expr {
-        Expr::Number(_) => RocaType::Number,
-        Expr::Bool(_) => RocaType::Bool,
-        Expr::String(_) | Expr::StringInterp(_) => RocaType::String,
-        Expr::Array(_) => RocaType::Array(Box::new(RocaType::Unknown)),
-        Expr::BinOp { op, left, .. } => match op {
-            BinOp::Add => {
-                let left_kind = infer_kind(left, ctx);
-                if left_kind == RocaType::String { RocaType::String } else { RocaType::Number }
-            }
-            BinOp::Sub | BinOp::Mul | BinOp::Div => RocaType::Number,
-            _ => RocaType::Unknown,
-        },
-        Expr::Call { target, .. } => {
-            if let Expr::Ident(name) = target.as_ref() {
-                if let Some(kind) = ctx.func_return_kinds.get(name) {
-                    return kind.clone();
-                }
-            }
-            if let Expr::FieldAccess { target: obj, field } = target.as_ref() {
-                if let Expr::Ident(name) = obj.as_ref() {
-                    if ctx.enum_variants.get(name).map_or(false, |vs| vs.contains(&field.to_string())) {
-                        return RocaType::Enum(name.clone());
-                    }
-                    match (name.as_str(), field.as_str()) {
-                        ("JSON", "parse") | ("JSON", "get") => return RocaType::Struct("Json".into()),
-                        ("JSON", "getArray") => return RocaType::Struct("JsonArray".into()),
-                        ("Url", "parse") => return RocaType::Struct("Url".into()),
-                        ("Http", "get") | ("Http", "post") | ("Http", "put")
-                        | ("Http", "patch") | ("Http", "delete") => return RocaType::Struct("HttpResponse".into()),
-                        ("Http", "json") => return RocaType::Struct("Json".into()),
-                        _ => {}
-                    }
-                }
-            }
-            if let Expr::FieldAccess { field, .. } = target.as_ref() {
-                return match field.as_str() {
-                    "map" | "filter" | "split" => RocaType::Array(Box::new(RocaType::Unknown)),
-                    "trim" | "toUpperCase" | "toLowerCase" | "slice"
-                    | "charAt" | "join" | "toString" | "concat" => RocaType::String,
-                    "indexOf" | "charCodeAt" | "length" | "len" => RocaType::Number,
-                    "includes" | "startsWith" | "endsWith" => RocaType::Bool,
-                    "push" | "pop" => RocaType::Unknown,
-                    _ => RocaType::Unknown,
-                };
-            }
-            RocaType::Unknown
-        }
-        Expr::StructLit { name, .. } => RocaType::Struct(name.clone()),
-        Expr::EnumVariant { enum_name, .. } => RocaType::Enum(enum_name.clone()),
-        Expr::Match { arms, .. } => {
-            for arm in arms {
-                if arm.pattern.is_some() {
-                    return infer_kind(&arm.value, ctx);
-                }
-            }
-            RocaType::Unknown
-        }
-        Expr::Ident(name) => ctx.get_var(name).map(|v| v.kind.clone()).unwrap_or(RocaType::Unknown),
-        Expr::FieldAccess { target, field } => {
-            if let Expr::Ident(name) = target.as_ref() {
-                if ctx.enum_variants.get(name).map_or(false, |vs| vs.contains(&field.to_string())) {
-                    return RocaType::Enum(name.clone());
-                }
-            }
-            RocaType::Unknown
-        }
-        Expr::Null => RocaType::Unknown,
-        _ => RocaType::Unknown,
-    }
-}
 
 pub struct FreeRefs {
     pub rc_release: Option<FuncRef>,

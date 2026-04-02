@@ -18,7 +18,7 @@ mem_test!(mem_cross_function_ownership, {
         }
     "#);
     runtime::MEM.reset();
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "use_it", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "use_it")) };
     assert_eq!(f(), 7.0); // "created".length
     let (allocs, frees, _, _, _) = runtime::MEM.stats();
     // make() allocates "discarded" (freed inside make) + "created" (returned, freed in use_it)
@@ -70,7 +70,7 @@ mem_test!(mem_closure_as_value_no_leak, {
         }
     "#);
     runtime::MEM.reset();
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "use_closure", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "use_closure")) };
     assert_eq!(f(), 10.0);
     let (allocs, frees, _, _, _) = runtime::MEM.stats();
     assert_eq!(allocs, frees, "closure value no leak: {} allocs, {} frees", allocs, frees);
@@ -89,7 +89,7 @@ mem_test!(mem_closure_passed_as_arg_no_leak, {
         }
     "#);
     runtime::MEM.reset();
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "caller", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "caller")) };
     assert_eq!(f(), 12.0);
     let (allocs, frees, _, _, _) = runtime::MEM.stats();
     assert_eq!(allocs, frees, "closure arg no leak: {} allocs, {} frees", allocs, frees);
@@ -112,7 +112,7 @@ mem_test!(mem_crash_fallback_frees, {
         }}
     "#);
     runtime::MEM.reset();
-    let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "safe", 1)) };
+    let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "safe")) };
 
     // OK path
     runtime::MEM.reset();
@@ -144,7 +144,7 @@ mem_test!(mem_error_return_frees, {
         }
     "#);
     runtime::MEM.reset();
-    let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "caller", 1)) };
+    let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "caller")) };
 
     // OK path
     runtime::MEM.reset();
@@ -197,7 +197,7 @@ mem_test!(mem_for_loop_no_leak, {
         }
     "#);
     runtime::MEM.reset();
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "for_sum", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "for_sum")) };
     assert_eq!(f(), 6.0);
     let (allocs, frees, _, _, _) = runtime::MEM.stats();
     assert_eq!(allocs, frees, "for loop: {} allocs, {} frees", allocs, frees);
@@ -219,7 +219,7 @@ mem_test!(mem_integration_validate_transform, {
         }
     "#);
     runtime::MEM.reset();
-    let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "process", 1)) };
+    let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "process")) };
     assert_eq!(f(5.0), 10.0);
     let (a1, f1, _, _, _) = runtime::MEM.stats();
     assert_eq!(a1, f1, "OK path: {} allocs, {} frees", a1, f1);
@@ -270,7 +270,7 @@ mem_test!(mem_integration_loop_early_return, {
         }
     "#);
     runtime::MEM.reset();
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "search", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "search")) };
     assert_eq!(f(), 3.0);
     let (allocs, frees, _, _, _) = runtime::MEM.stats();
     assert_eq!(allocs, frees, "early return from loop: {} allocs, {} frees", allocs, frees);
@@ -290,7 +290,7 @@ mem_test!(mem_integration_closures_strings, {
         }
     "#);
     runtime::MEM.reset();
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "run", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "run")) };
     assert_eq!(f(), 10.0);
     let (allocs, frees, _, _, _) = runtime::MEM.stats();
     assert_eq!(allocs, frees, "closures + strings: {} allocs, {} frees", allocs, frees);
@@ -308,7 +308,7 @@ mem_test!(mem_enum_variant_freed, {
         }
     "#);
     runtime::MEM.reset();
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "test_enum", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "test_enum")) };
     assert_eq!(f(), 42.0);
     let (allocs, frees, _, _, _) = runtime::MEM.stats();
     assert_eq!(allocs, frees, "enum variant freed: {} allocs, {} frees", allocs, frees);
@@ -329,7 +329,7 @@ mem_test!(mem_constraint_violation_no_leak, {
         }
     "#);
     runtime::MEM.reset();
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make")) };
     f();
     assert!(runtime::constraint_violated(), "should violate min: 1");
 });
@@ -349,7 +349,7 @@ mem_test!(mem_valid_string_constraint_no_leak, {
         }
     "#);
     runtime::MEM.reset();
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make")) };
     assert_eq!(f(), 1.0);
     assert!(!runtime::constraint_violated(), "valid string should pass");
     let (allocs, _, _, _, _) = runtime::MEM.stats();

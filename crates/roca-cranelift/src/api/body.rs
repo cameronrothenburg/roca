@@ -2,16 +2,14 @@
 //! Every Roca construct is a method. Zero IR concepts exposed.
 //! All block management, memory, cleanup is internal.
 
+use std::collections::HashMap;
 use cranelift_codegen::ir::{self, types, InstBuilder, Value};
-use roca_ast::{self as roca, BinOp};
-use roca_ast::crash::CrashHandlerKind;
 use roca_types::RocaType;
 use crate::builder::{IrBuilder, VarSlot};
 use crate::context::{EmitCtx, StructLayout};
-use crate::cranelift_type::CraneliftType;
+use crate::cranelift_type::{CleanupStrategy, CraneliftType};
 use crate::emit_helpers::{
     FreeRefs, emit_scope_cleanup, emit_free_by_kind, emit_loop_body_cleanup,
-    infer_kind as ast_infer_kind,
 };
 use crate::helpers::default_for_ir_type;
 
@@ -66,6 +64,9 @@ pub struct Body<'a, 'b: 'a, 'c> {
     pub(crate) ir: &'c mut IrBuilder<'a, 'b>,
     pub(crate) ctx: EmitCtx,
     pub(crate) returned: bool,
+    /// Tracks cleanup strategy for values created by Body methods.
+    /// When a value is stored in a variable, the strategy is transferred to VarInfo.
+    pub(crate) value_cleanups: HashMap<Value, CleanupStrategy>,
 }
 
 // ─── Literals ─────────────────────────────────────────
@@ -81,11 +82,13 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
 
     pub fn string(&mut self, s: &str) -> Value {
         let static_ptr = self.ir.leak_cstr(s);
-        if let Some(&f) = self.ctx.get_func("__string_new") {
+        let val = if let Some(&f) = self.ctx.get_func("__string_new") {
             self.ir.call(f, &[static_ptr])
         } else {
             static_ptr
-        }
+        };
+        self.value_cleanups.insert(val, CleanupStrategy::RcRelease);
+        val
     }
 
     pub fn null(&mut self) -> Value {
@@ -118,10 +121,11 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
         }
     }
 
-    /// Bind an immutable variable.
+    /// Bind an immutable variable. Cleanup strategy is auto-detected from how
+    /// the value was created (string, array, struct, etc.).
     pub fn const_var(&mut self, name: &str, val: Value) -> ConstRef {
-        let roca_type = self.infer_value_type(val);
-        let cl_type = roca_type.to_cranelift();
+        let roca_type = self.consume_type(val);
+        let cl_type = self.ir.value_ir_type(val);
         let slot = self.ir.alloc_var(val);
         self.ctx.set_var_kind(name.to_string(), slot.0, cl_type, roca_type.clone());
         ConstRef { name: name.to_string(), slot, roca_type }
@@ -131,14 +135,15 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
     pub fn const_var_typed(&mut self, name: &str, val: Value, roca_type: RocaType) -> ConstRef {
         let cl_type = self.ir.value_ir_type(val);
         let slot = self.ir.alloc_var(val);
+        self.value_cleanups.remove(&val);
         self.ctx.set_var_kind(name.to_string(), slot.0, cl_type, roca_type.clone());
         ConstRef { name: name.to_string(), slot, roca_type }
     }
 
-    /// Bind a mutable variable.
+    /// Bind a mutable variable. Cleanup strategy is auto-detected.
     pub fn let_var(&mut self, name: &str, val: Value) -> MutRef {
-        let roca_type = self.infer_value_type(val);
-        let cl_type = roca_type.to_cranelift();
+        let roca_type = self.consume_type(val);
+        let cl_type = self.ir.value_ir_type(val);
         let slot = self.ir.alloc_var(val);
         self.ctx.set_var_kind(name.to_string(), slot.0, cl_type, roca_type.clone());
         MutRef { name: name.to_string(), slot, roca_type }
@@ -148,6 +153,7 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
     pub fn let_var_typed(&mut self, name: &str, val: Value, roca_type: RocaType) -> MutRef {
         let cl_type = self.ir.value_ir_type(val);
         let slot = self.ir.alloc_var(val);
+        self.value_cleanups.remove(&val);
         self.ctx.set_var_kind(name.to_string(), slot.0, cl_type, roca_type.clone());
         MutRef { name: name.to_string(), slot, roca_type }
     }
@@ -191,8 +197,27 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
         self.ctx.var_struct_type.insert(var_name.to_string(), struct_name.to_string());
     }
 
-    /// Infer RocaType from an IR value's type.
-    fn infer_value_type(&self, val: Value) -> RocaType {
+    /// Get the RocaType of a named variable (for type inference in the emit layer).
+    pub fn var_kind(&self, name: &str) -> Option<RocaType> {
+        self.ctx.get_var(name).map(|v| v.kind.clone())
+    }
+
+    /// Consume the tracked type of a value (removing it from the map),
+    /// falling back to IR type inference if not tracked.
+    /// For untracked I64 values (heap pointers from function calls),
+    /// defaults to RcRelease as a safe conservative cleanup.
+    fn consume_type(&mut self, val: Value) -> RocaType {
+        if let Some(strategy) = self.value_cleanups.remove(&val) {
+            return match &strategy {
+                CleanupStrategy::RcRelease => RocaType::String,
+                CleanupStrategy::FreeArray => RocaType::Array(Box::new(RocaType::Unknown)),
+                CleanupStrategy::FreeStruct { .. } => RocaType::Struct("".into()),
+                CleanupStrategy::FreeEnum => RocaType::Enum("".into()),
+                CleanupStrategy::FreeMap => RocaType::Map(Box::new(RocaType::Unknown), Box::new(RocaType::Unknown)),
+                CleanupStrategy::BoxFree => RocaType::Struct("".into()),
+                CleanupStrategy::None => RocaType::Unknown,
+            };
+        }
         if self.ir.is_number(val) { RocaType::Number }
         else if self.ir.value_ir_type(val) == types::I8 { RocaType::Bool }
         else { RocaType::Unknown }
@@ -202,44 +227,40 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
 // ─── Operators ────────────────────────────────────────
 
 impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
-    /// Binary operation — dispatches based on operator and value types.
-    pub fn binop(&mut self, op: &BinOp, l: Value, r: Value) -> Value {
-        let is_float = self.ir.is_number(l);
-        match op {
-            BinOp::Add if is_float => self.ir.add(l, r),
-            BinOp::Add => {
-                if let Some(f) = self.ctx.get_func("__string_concat") { self.ir.call(*f, &[l, r]) }
-                else { self.ir.iadd(l, r) }
-            }
-            BinOp::Sub => self.ir.sub(l, r),
-            BinOp::Mul => self.ir.mul(l, r),
-            BinOp::Div => self.ir.div(l, r),
-            BinOp::Eq if is_float => self.ir.f_eq(l, r),
-            BinOp::Eq => {
-                if let Some(f) = self.ctx.get_func("__string_eq") {
-                    let result = self.ir.call(*f, &[l, r]);
-                    self.ir.extend_bool(result)
-                } else { self.ir.i_eq(l, r) }
-            }
-            BinOp::Neq if is_float => self.ir.f_ne(l, r),
-            BinOp::Neq => {
-                if let Some(f) = self.ctx.get_func("__string_eq") {
-                    let eq = self.ir.call(*f, &[l, r]);
-                    let ext = self.ir.extend_bool(eq);
-                    let one = self.ir.const_i64(1);
-                    self.ir.isub(one, ext)
-                } else { self.ir.i_ne(l, r) }
-            }
-            BinOp::Lt => self.ir.f_lt(l, r),
-            BinOp::Gt => self.ir.f_gt(l, r),
-            BinOp::Lte => self.ir.f_le(l, r),
-            BinOp::Gte => self.ir.f_ge(l, r),
-            BinOp::And => self.ir.bool_and(l, r),
-            BinOp::Or => self.ir.bool_or(l, r),
-        }
+    pub fn add(&mut self, l: Value, r: Value) -> Value { self.ir.add(l, r) }
+    pub fn sub(&mut self, l: Value, r: Value) -> Value { self.ir.sub(l, r) }
+    pub fn mul(&mut self, l: Value, r: Value) -> Value { self.ir.mul(l, r) }
+    pub fn div(&mut self, l: Value, r: Value) -> Value { self.ir.div(l, r) }
+    pub fn eq(&mut self, l: Value, r: Value) -> Value { self.ir.f_eq(l, r) }
+    pub fn neq(&mut self, l: Value, r: Value) -> Value { self.ir.f_ne(l, r) }
+    pub fn lt(&mut self, l: Value, r: Value) -> Value { self.ir.f_lt(l, r) }
+    pub fn gt(&mut self, l: Value, r: Value) -> Value { self.ir.f_gt(l, r) }
+    pub fn lte(&mut self, l: Value, r: Value) -> Value { self.ir.f_le(l, r) }
+    pub fn gte(&mut self, l: Value, r: Value) -> Value { self.ir.f_ge(l, r) }
+    pub fn and(&mut self, l: Value, r: Value) -> Value { self.ir.bool_and(l, r) }
+    pub fn or(&mut self, l: Value, r: Value) -> Value { self.ir.bool_or(l, r) }
+    pub fn int_eq(&mut self, l: Value, r: Value) -> Value { self.ir.i_eq(l, r) }
+
+    pub fn string_concat(&mut self, l: Value, r: Value) -> Value {
+        let val = if let Some(f) = self.ctx.get_func("__string_concat") { self.ir.call(*f, &[l, r]) }
+        else { return self.ir.null() };
+        self.value_cleanups.insert(val, CleanupStrategy::RcRelease);
+        val
     }
 
-    /// Boolean NOT.
+    pub fn string_eq(&mut self, l: Value, r: Value) -> Value {
+        if let Some(f) = self.ctx.get_func("__string_eq") {
+            let result = self.ir.call(*f, &[l, r]);
+            self.ir.extend_bool(result)
+        } else { self.ir.i_eq(l, r) }
+    }
+
+    pub fn string_neq(&mut self, l: Value, r: Value) -> Value {
+        let eq = self.string_eq(l, r);
+        let one = self.ir.const_i64(1);
+        self.ir.isub(one, eq)
+    }
+
     pub fn not(&mut self, val: Value) -> Value {
         let zero = self.ir.null();
         self.ir.i_eq(val, zero)
@@ -338,6 +359,7 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
         for &elem in elements {
             crate::emit_helpers::emit_array_push(self.ir, arr, elem, &mut self.ctx);
         }
+        self.value_cleanups.insert(arr, CleanupStrategy::FreeArray);
         arr
     }
 
@@ -364,7 +386,7 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
             let idx = self.ir.const_i64(i as i64);
             crate::emit_helpers::emit_struct_set(self.ir, ptr, idx, val, &mut self.ctx);
         }
-        // TODO: validate constraints on fields
+        self.value_cleanups.insert(ptr, CleanupStrategy::FreeStruct { heap_fields: 0 });
         ptr
     }
 
@@ -383,6 +405,7 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
             let idx = self.ir.const_i64((i + 1) as i64);
             crate::emit_helpers::emit_struct_set(self.ir, ptr, idx, arg, &mut self.ctx);
         }
+        self.value_cleanups.insert(ptr, CleanupStrategy::FreeEnum);
         ptr
     }
 
@@ -447,7 +470,6 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
         &mut self,
         name: &str,
         fields: &[(&str, Value)],
-        _field_defs: Option<&[roca::Field]>,
     ) -> Value {
         // Register layout if not present
         if !self.ctx.struct_layouts.contains_key(name) {
@@ -477,6 +499,7 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
             crate::emit_helpers::emit_struct_set(self.ir, ptr, idx_val, val, &mut self.ctx);
         }
 
+        self.value_cleanups.insert(ptr, CleanupStrategy::FreeStruct { heap_fields: 0 });
         ptr
     }
 
@@ -554,7 +577,9 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
                 }
             });
         }
-        result.unwrap_or_else(|| self.ir.null())
+        let val = result.unwrap_or_else(|| self.ir.null());
+        self.value_cleanups.insert(val, CleanupStrategy::RcRelease);
+        val
     }
 }
 
@@ -761,127 +786,16 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
         }
     }
 
-    /// Destructure: let {name, err_name} = call(fn_name, args).
-    pub fn let_result(&mut self, name: &str, err_name: &str, fn_name: &str, args: &[Value]) -> (Value, Value) {
-        if let Some(func_ref) = self.ctx.get_func(fn_name).copied() {
-            let results = self.ir.call_multi(func_ref, args);
-            if results.len() >= 2 {
-                let val = results[0];
-                let err = results[1];
-                let cl_type = self.ir.value_ir_type(val);
-                let val_slot = self.ir.alloc_var(val);
-                let kind = if self.ir.is_number(val) {
-                    RocaType::Number
-                } else if let Some(k) = self.ctx.func_return_kinds.get(fn_name) {
-                    k.clone()
-                } else {
-                    RocaType::Unknown
-                };
-                self.ctx.set_var_kind(name.to_string(), val_slot.0, cl_type, kind);
-                let err_slot = self.ir.alloc_var(err);
-                self.ctx.set_var_kind(err_name.to_string(), err_slot.0, types::I8, RocaType::Bool);
-                return (val, err);
-            }
-        }
-        (self.ir.null(), self.ir.const_bool(false))
-    }
+    // let_result (error tuple destructuring) moved to the consuming crate.
+    // Use call_multi() + const_var_typed() to implement it.
 
     pub fn has_returned(&self) -> bool { self.returned }
 }
 
-// ─── Type Inference ───────────────────────────────────
-
-impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
-    /// Infer the RocaType of an AST expression.
-    pub fn infer_type(&self, expr: &roca::Expr) -> RocaType {
-        ast_infer_kind(expr, &self.ctx)
-    }
-
-    /// Get struct field definitions (for constraint validation).
-    pub fn struct_defs(&self, name: &str) -> Option<Vec<roca::Field>> {
-        self.ctx.struct_defs.get(name).cloned()
-    }
-
-    /// Check if a name.variant is a known enum variant.
-    pub fn is_enum_variant(&self, type_name: &str, variant: &str) -> bool {
-        self.ctx.enum_variants.get(type_name)
-            .map_or(false, |vs| vs.contains(&variant.to_string()))
-    }
-}
-
-// ─── Async ────────────────────────────────────────────
-
-impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
-    /// Wait for a single async expression.
-    pub fn wait_single(&mut self, name: &str, val: Value) {
-        let cl_type = self.ir.value_ir_type(val);
-        let slot = self.ir.alloc_var(val);
-        self.ctx.set_var_kind(name.to_string(), slot.0, cl_type, RocaType::Unknown);
-    }
-
-    /// Wait for a single async expression with type hint.
-    pub fn wait_single_typed(&mut self, name: &str, val: Value, kind: RocaType) {
-        let cl_type = self.ir.value_ir_type(val);
-        let slot = self.ir.alloc_var(val);
-        self.ctx.set_var_kind(name.to_string(), slot.0, cl_type, kind);
-    }
-
-    /// Bind a failed_name variable to false (used for wait statements).
-    pub fn bind_failed(&mut self, failed_name: &str) {
-        let false_val = self.ir.const_bool(false);
-        let err_slot = self.ir.alloc_var(false_val);
-        self.ctx.set_var_kind(failed_name.to_string(), err_slot.0, types::I8, RocaType::Bool);
-    }
-
-    /// Build a function-pointer array from pre-compiled wait function names.
-    fn build_wait_fn_array(&mut self, fn_names: &[String]) -> (Value, Value) {
-        let arr = if let Some(&arr_new) = self.ctx.get_func("__array_new") {
-            self.ir.call(arr_new, &[])
-        } else {
-            self.ir.null()
-        };
-        for name in fn_names {
-            if let Some(&func_ref) = self.ctx.get_func(name) {
-                let ptr = self.ir.func_addr(func_ref);
-                if let Some(&push) = self.ctx.get_func("__array_push_str") {
-                    self.ir.call_void(push, &[arr, ptr]);
-                }
-            }
-        }
-        let count = self.ir.const_i64(fn_names.len() as i64);
-        (arr, count)
-    }
-
-    /// Wait for all async functions, bind results to names.
-    pub fn wait_all(&mut self, names: &[String], failed_name: &str, fn_names: &[String]) {
-        let (arr, count) = self.build_wait_fn_array(fn_names);
-        if let Some(&wait_all) = self.ctx.get_func("__wait_all") {
-            let results = self.ir.call(wait_all, &[arr, count]);
-            for (i, name) in names.iter().enumerate() {
-                if let Some(&get) = self.ctx.get_func("__array_get_f64") {
-                    let idx = self.ir.const_i64(i as i64);
-                    let val = self.ir.call(get, &[results, idx]);
-                    let slot = self.ir.alloc_var(val);
-                    self.ctx.set_var_kind(name.clone(), slot.0, types::F64, RocaType::Number);
-                }
-            }
-        }
-        self.bind_failed(failed_name);
-    }
-
-    /// Wait for the first async function to complete.
-    pub fn wait_first(&mut self, names: &[String], failed_name: &str, fn_names: &[String]) {
-        let (arr, count) = self.build_wait_fn_array(fn_names);
-        if let Some(&wait_first) = self.ctx.get_func("__wait_first") {
-            let val = self.ir.call(wait_first, &[arr, count]);
-            if !names.is_empty() {
-                let slot = self.ir.alloc_var(val);
-                self.ctx.set_var_kind(names[0].clone(), slot.0, types::F64, RocaType::Number);
-            }
-        }
-        self.bind_failed(failed_name);
-    }
-}
+// Type inference, enum variant checks, struct definitions, and async wait
+// methods are language-specific and belong in the consuming crate.
+// Use var_kind(), is_number(), is_bool() for generic type queries.
+// Use call(), let_var_typed(), closure_ref() for async dispatch.
 
 // ─── Slot Primitives (internal) ─────────────────────
 
@@ -966,14 +880,9 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
     }
 }
 
-// ─── Crash / Error Context ──────────────────────────
+// ─── Error / Return Context ─────────────────────────
 
 impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
-    /// Get crash handler for a function name (if registered).
-    pub fn get_crash_handler(&self, name: &str) -> Option<CrashHandlerKind> {
-        self.ctx.crash_handlers.get(name).cloned()
-    }
-
     /// Whether the current function returns an error tuple.
     pub fn returns_err(&self) -> bool {
         self.ctx.returns_err
@@ -1115,27 +1024,21 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
     /// Match expression with lazy result evaluation.
     /// Arms provide pattern data but result expressions are evaluated inside branches
     /// via the emit_fn callback, allowing bindings to be available.
-    pub fn match_lazy<Arm>(
+    /// `result_type` specifies the type of the match result (caller infers this).
+    /// `E` is the expression type used by the language (e.g., the AST expression node).
+    pub fn match_lazy<E, Arm, F>(
         &mut self,
         scrutinee: Value,
         arms: &[Arm],
-        default_expr: &Option<roca::Expr>,
-        emit_fn: fn(&mut Body, &roca::Expr) -> Value,
+        default_expr: &Option<E>,
+        emit_fn: F,
+        result_type: RocaType,
     ) -> Value
     where
-        Arm: MatchArmLazy,
+        Arm: MatchArmLazy<E>,
+        F: Fn(&mut Body, &E) -> Value,
     {
         let is_float = self.ir.is_number(scrutinee);
-
-        // Infer result type: check default arm first (always concrete), then first arm
-        let result_type = if let Some(def) = default_expr {
-            let kind = self.infer_type(def);
-            if kind == RocaType::Number { RocaType::Number } else { RocaType::Unknown }
-        } else if let Some(first) = arms.first() {
-            let kind = self.infer_type(first.kind().value_expr());
-            if kind == RocaType::Number { RocaType::Number } else { RocaType::Unknown }
-        } else if is_float { RocaType::Number }
-        else { RocaType::Unknown };
 
         let merge = self.ir.create_block();
         self.ir.append_block_param(merge, &result_type);
@@ -1218,15 +1121,15 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
     }
 }
 
-/// Kind of a lazy match arm.
-pub enum LazyArmKind<'a> {
-    Value { pattern: &'a Value, value_expr: &'a roca::Expr },
-    Variant { variant: &'a str, bindings: &'a [String], value_expr: &'a roca::Expr },
+/// Kind of a lazy match arm, generic over the expression type `E`.
+pub enum LazyArmKind<'a, E> {
+    Value { pattern: &'a Value, value_expr: &'a E },
+    Variant { variant: &'a str, bindings: &'a [String], value_expr: &'a E },
 }
 
-impl<'a> LazyArmKind<'a> {
+impl<'a, E> LazyArmKind<'a, E> {
     /// Get the value expression for type inference.
-    pub fn value_expr(&self) -> &'a roca::Expr {
+    pub fn value_expr(&self) -> &'a E {
         match self {
             LazyArmKind::Value { value_expr, .. } => value_expr,
             LazyArmKind::Variant { value_expr, .. } => value_expr,
@@ -1234,7 +1137,7 @@ impl<'a> LazyArmKind<'a> {
     }
 }
 
-/// Trait for accessing match arm data lazily.
-pub trait MatchArmLazy {
-    fn kind(&self) -> LazyArmKind<'_>;
+/// Trait for accessing match arm data lazily, generic over expression type `E`.
+pub trait MatchArmLazy<E> {
+    fn kind(&self) -> LazyArmKind<'_, E>;
 }

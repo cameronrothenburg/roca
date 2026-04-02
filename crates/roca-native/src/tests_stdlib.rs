@@ -85,7 +85,7 @@ fn constraint_number_valid() {
             return c.port
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make")) };
     assert_eq!(f(), 8080.0);
 }
 
@@ -100,7 +100,7 @@ fn constraint_string_minlen_valid() {
             return 1
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make")) };
     assert_eq!(f(), 1.0);
 }
 
@@ -115,7 +115,7 @@ fn constraint_contains_valid() {
             return 1
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make")) };
     assert_eq!(f(), 1.0);
 }
 
@@ -131,7 +131,7 @@ fn constraint_number_min_violated() {
             return c.port
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make")) };
     f();
     assert!(runtime::constraint_violated(),
         "port: 0 should violate min: 1");
@@ -149,7 +149,7 @@ fn constraint_number_max_violated() {
             return c.port
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make")) };
     f();
     assert!(runtime::constraint_violated(),
         "port: 99999 should violate max: 65535");
@@ -167,7 +167,7 @@ fn constraint_contains_violated() {
             return 1
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make")) };
     f();
     assert!(runtime::constraint_violated(),
         "value without @ should violate contains: @");
@@ -187,7 +187,7 @@ fn constraint_number_min_and_max_valid() {
             return r.value
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make")) };
     assert_eq!(f(), 50.0);
     assert!(!runtime::constraint_violated(), "50 is within [1, 100]");
 }
@@ -204,7 +204,7 @@ fn constraint_number_min_and_max_below() {
             return r.value
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make")) };
     f();
     assert!(runtime::constraint_violated(), "0 violates min: 1");
 }
@@ -221,7 +221,7 @@ fn constraint_number_min_and_max_above() {
             return r.value
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make")) };
     f();
     assert!(runtime::constraint_violated(), "200 violates max: 100");
 }
@@ -238,7 +238,7 @@ fn constraint_string_minlen_and_maxlen_valid() {
             return 1
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make")) };
     assert_eq!(f(), 1.0);
     assert!(!runtime::constraint_violated(), "'hello' (len 5) is within [3, 10]");
 }
@@ -255,7 +255,7 @@ fn constraint_string_minlen_violated() {
             return 1
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make")) };
     f();
     assert!(runtime::constraint_violated(), "'ab' (len 2) violates minLen: 3");
 }
@@ -272,7 +272,7 @@ fn constraint_string_maxlen_violated() {
             return 1
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make")) };
     f();
     assert!(runtime::constraint_violated(), "'this is way too long' violates maxLen: 10");
 }
@@ -291,7 +291,7 @@ fn constraint_number_at_exact_min() {
             return b.value
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make")) };
     assert_eq!(f(), 5.0);
     assert!(!runtime::constraint_violated(), "5 == min 5, should pass");
 }
@@ -308,7 +308,7 @@ fn constraint_number_at_exact_max() {
             return b.value
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make")) };
     assert_eq!(f(), 100.0);
     assert!(!runtime::constraint_violated(), "100 == max 100, should pass");
 }
@@ -325,7 +325,7 @@ fn constraint_number_just_below_min() {
             return b.value
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make")) };
     f();
     assert!(runtime::constraint_violated(), "4 < min 5, should fail");
 }
@@ -342,7 +342,7 @@ fn constraint_number_just_above_max() {
             return b.value
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make")) };
     f();
     assert!(runtime::constraint_violated(), "101 > max 100, should fail");
 }

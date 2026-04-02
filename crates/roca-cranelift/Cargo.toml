@@ -3,11 +3,10 @@ name = "roca-cranelift"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Cranelift IR toolkit, memory management, and emit context for the Roca compiler"
+description = "Generic Cranelift IR toolkit for building language compilers — function builders, control flow, memory management"
 repository.workspace = true
 
 [dependencies]
-roca-ast.workspace = true
 roca-types.workspace = true
 roca-runtime.workspace = true
 cranelift-codegen.workspace = true
