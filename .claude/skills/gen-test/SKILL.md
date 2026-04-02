@@ -18,6 +18,7 @@ disable-model-invocation: true
 - Error-returning functions need `crash {}` blocks for every fallible call
 - Use `self()` to call the function under test inside test blocks
 - Use `is Ok` and `is err.name` for assertions
+- Every declared error MUST be tested in the test block
 - Doc comments (`///`) required on all `pub` items
 - No null — use `-> Type, err` for failures, `Optional<T>` for absent values
 - Happy path only in function bodies — errors go in crash blocks
@@ -30,8 +31,8 @@ import { Dependency } from std::module
 /// Description of what this function does
 pub fn function_name(input: String) -> ResultType, err {
     err invalid_input = "input validation failed"
-    err operation_failed = "the operation failed"
 
+    if input == "" { return err.invalid_input }
     const result = wait Dependency.method(input)
     return result
 
@@ -49,10 +50,8 @@ pub fn function_name(input: String) -> ResultType, err {
 ## For structs with contracts
 
 ```roca
-pub contract ServiceContract {
-    process(input: String) -> String, err {
-        err failed = "processing failed"
-    }
+contract ServiceContract {
+    process(input: String) -> String, err
 }
 
 pub struct Service {
@@ -73,7 +72,14 @@ pub struct Service {
     }
 }
 
-Service satisfies ServiceContract
+Service satisfies ServiceContract {
+    /// Verify contract compliance
+    test {
+        const s = Service {}
+        s.process("hello") is Ok
+        s.process("") is err.failed
+    }
+}
 ```
 
 ## After generating

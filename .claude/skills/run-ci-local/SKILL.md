@@ -13,6 +13,8 @@ Run the same steps as `.github/workflows/ci.yml` to catch failures before pushin
 Run these sequentially — each step must pass before proceeding:
 
 ```bash
+set -e  # Exit on first failure
+
 # 1. Build release binary
 cargo build --release
 
