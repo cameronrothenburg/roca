@@ -216,15 +216,10 @@ pub fn run_repl_native() {
 }
 
 fn eval_expr_native(input: &str, defs: &[String]) {
-    use cranelift_module::Module;
-
     let def_src = defs.join("\n");
 
     // Try as Number first, then String
-    for (ret_type, ret_cranelift, is_string) in &[
-        ("Number", cranelift_codegen::ir::types::F64, false),
-        ("String", cranelift_codegen::ir::types::I64, true),
-    ] {
+    for (ret_type, is_string) in &[("Number", false), ("String", true)] {
         let expr_src = format!(
             "{}\npub fn __repl__() -> {} {{ return {} test {{ }} }}",
             def_src, ret_type, input
@@ -248,13 +243,10 @@ fn eval_expr_native(input: &str, defs: &[String]) {
             return;
         }
 
-        let mut sig = module.make_signature();
-        sig.returns.push(cranelift_codegen::ir::AbiParam::new(*ret_cranelift));
-        let id = match module.declare_function("__repl__", cranelift_module::Linkage::Export, &sig) {
-            Ok(id) => id,
-            Err(_) => continue,
+        let ptr = match roca_native::get_function_ptr(&module, "__repl__") {
+            Some(p) => p,
+            None => continue,
         };
-        let ptr = module.get_finalized_function(id);
 
         if *is_string {
             let f: fn() -> *const u8 = unsafe { std::mem::transmute(ptr) };

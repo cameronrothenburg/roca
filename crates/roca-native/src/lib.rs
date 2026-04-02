@@ -33,6 +33,16 @@ pub fn create_jit_module() -> JITModule {
     JITModule::new(builder)
 }
 
+/// Look up a compiled function by name and return its native pointer.
+/// Returns None if the function wasn't compiled.
+pub fn get_function_ptr(module: &JITModule, name: &str) -> Option<*const u8> {
+    let id = match module.get_name(name) {
+        Some(cranelift_module::FuncOrDataId::Func(id)) => id,
+        _ => return None,
+    };
+    Some(module.get_finalized_function(id))
+}
+
 /// Compile all functions in a source file into a module.
 pub fn compile_all<M: Module>(
     module: &mut M,

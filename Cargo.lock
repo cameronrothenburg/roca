@@ -1689,9 +1689,6 @@ dependencies = [
 name = "roca-cli"
 version = "0.3.0"
 dependencies = [
- "cranelift-codegen",
- "cranelift-jit",
- "cranelift-module",
  "oxc_allocator",
  "oxc_ast",
  "oxc_parser",
