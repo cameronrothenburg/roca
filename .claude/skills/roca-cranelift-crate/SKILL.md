@@ -1,17 +1,52 @@
 ---
 name: roca-cranelift-crate
-description: "Memory ownership model for roca-cranelift — the rules that govern every operation in the crate. ALWAYS use this skill when reading, writing, reviewing, or modifying any file in crates/roca-cranelift/ or crates/roca-native/src/emit/. This includes Body API changes, function compilation, control flow, variable binding, scope cleanup, tests, and any new features. The memory model (const=borrow, let=move, self=mutable-borrow, temporaries=immediate-free) is the foundation — every code change must respect it."
+description: "Cranelift IR toolkit and memory ownership model for roca-cranelift. ALWAYS use this skill when reading, writing, reviewing, or modifying any file in crates/roca-cranelift/. This includes the Body/Function/Struct builder API, memory lifecycle (const=borrow, let=move, self=mutable-borrow, temporaries=immediate-free), emit helpers, the runtime registry, and memory tests."
 ---
 
-# Cranelift Memory Model
+# roca-cranelift -- Cranelift IR Toolkit
+
+## Single Responsibility
+
+Provides a high-level builder API (Function, Body, Struct, etc.) that maps language constructs to Cranelift IR -- control flow, variables, memory management, pattern matching -- without knowing anything about the source language's AST or orchestration.
+
+## Boundaries
+
+### Depends On
+
+- **roca-types** -- `LangType` / `RocaType` for Roca-to-Cranelift type mapping
+- **roca-runtime** -- re-exports `MEM`, `MemTracker`, `constraint_violated`; the `registry.rs` module wires all `extern "C"` host functions into the JIT via `runtime_funcs!` macro
+- **cranelift-codegen, cranelift-frontend, cranelift-module, cranelift-jit** -- raw Cranelift IR generation (encapsulated behind the builder API)
+
+### Depended On By
+
+- **roca-native** -- the only consumer; calls the builder API to translate AST nodes into IR
+
+### MUST NOT
+
+- Import or reference `roca-ast`, `roca-parse`, `roca-check`, `roca-js`, or `roca-lsp` -- this crate is language-agnostic
+- Know about Roca AST nodes, crash handlers, test runners, or property testing -- that is `roca-native`'s domain
+- Implement stdlib functions -- that belongs in `roca-runtime`
+- Decide which functions to compile or in what order -- orchestration belongs in `roca-native`
+
+## Key Invariants
+
+1. **Domain split** -- this crate owns **WHEN** memory is freed (the lifecycle). `roca-runtime` owns **HOW** values are freed (tags, layouts, deallocation). Body emits `call __free(ptr)`. Runtime does the rest.
+
+2. **Builder API encapsulates all raw Cranelift IR** -- consumers (roca-native) call `Body`, `Function`, `Struct`, etc. They never touch `FunctionBuilder`, `ins.*`, or `cranelift_codegen` types directly.
+
+3. **Three IR types only** -- `F64` (numbers), `I8` (booleans), `I64` (heap pointers). Cranelift doesn't need to know if an I64 is a string, array, or struct -- only that it's a heap pointer needing free.
+
+4. **Runtime registry contract** -- `registry.rs` uses `runtime_funcs!` to declare every `extern "C"` function from `roca-runtime`. `register_symbols()` wires function pointers into the JIT linker. `declare_runtime()` tells Cranelift the signatures. `import_all()` makes them callable as `FuncRef`s keyed by `"__<key>"`. Signature mismatches cause silent runtime corruption.
+
+5. **Temp tracking** -- Body maintains `temps: Vec<Value>` of I64 values not yet bound to a variable. `const_var`/`let_var` removes from temps (ownership transferred). At scope exit, remaining temps are freed alongside named variables.
+
+## Ownership Model
 
 Every heap value is just a pointer with a size. One owner. When the owner goes away, the value is freed. No reference counting. No type dispatch. No garbage collection.
 
-## Ownership Rules
+### `const` -- immutable, scope-owned
 
-### `const` — immutable, scope-owned
-
-A `const` binding allocates a value and owns it until the scope exits. It cannot be reassigned. When passed to a function, the function **borrows** the pointer — the caller retains ownership. The value is freed exactly once: at scope exit.
+A `const` binding owns a value until scope exit. Cannot be reassigned. When passed to a function, the function **borrows** the pointer -- caller retains ownership. Freed exactly once at scope exit.
 
 ```
 const s = "hello"       → scope owns s
@@ -19,63 +54,35 @@ doSomething(s)           → borrows s, scope still owns it
 return 42                → scope exit, free s
 ```
 
-### `let` — mutable, move semantics
+### `let` -- mutable, move semantics
 
-A `let` binding owns a value. When the value is passed to a function, **ownership moves** — the caller's slot is cleaned up and the function now owns the value. If the function returns it, ownership passes to whoever binds the return value.
+A `let` binding owns a value. When passed to a function, **ownership moves** -- caller's slot is cleaned up, callee owns it. On reassignment, old value is freed before new one is stored.
 
 ```
 let x = "hello"         → scope owns x
 doSomething(x)           → ownership moves to doSomething
                          → scope cleans x's slot (x is gone)
-                         → doSomething owns it now
-
-let y = makeString()     → makeString created it, returned it
-                         → y now owns it
+let y = makeString()     → y now owns the returned value
 y = "other"              → old y freed, new value owned
 return y                 → ownership passes to caller
 ```
 
-On reassignment, the old value is freed before the new one is stored.
+### `self` -- mutable borrow
 
-### `self` — mutable borrow
+A method receives `self` as a mutable borrow. Can read/write fields, but does not own the struct. Caller retains ownership. `self` is never freed by the method.
 
-A method receives `self` as a mutable borrow. It can read and write fields (`self.x = 5`), but it does not own the struct. The caller retains ownership. `self` is never freed by the method.
+### Temporaries -- immediate cleanup
 
-### Temporaries — immediate cleanup
-
-Any expression result that is not bound to a `const` or `let` is a temporary. Temporaries have no owner and must be freed at the end of the statement that created them.
+Any expression result not bound to `const`/`let` is a temporary. Freed at end of the statement that created it.
 
 ```
 "a".split(",").join("-")
-│         │         └─ result: bound to variable or returned → has owner
-│         └─ intermediate array: temporary → freed after join completes
-└─ "," string arg: temporary → freed after split completes
+│         │         └─ result: bound or returned → has owner
+│         └─ intermediate array: temporary → freed after join
+└─ "," string arg: temporary → freed after split
 ```
 
-## The IR Model
-
-At the IR level, there are only three types:
-
-| IR Type | What | Heap? |
-|---------|------|-------|
-| `F64` | Numbers | No |
-| `I8` | Booleans | No |
-| `I64` | Heap pointer | Yes — needs free |
-
-Cranelift does not need to know if an I64 is a string, array, or struct. It only needs to know: **this is a heap pointer, and here is when to free it.**
-
-## Cleanup: One Function
-
-The runtime provides a single `free(ptr)` for all heap values. The allocator tags each allocation so `free` knows the layout. Cranelift emits one call: `free(ptr)`. No strategy dispatch, no type registry, no per-type free functions.
-
-Cranelift internally tracks heap values to handle temporaries:
-- Body maintains a `temps: Vec<Value>` of I64 values not yet bound to a variable
-- When a Body method creates a heap value (string, array, struct, enum), it's added to `temps`
-- When `const_var`/`let_var` binds a value, it's removed from `temps` (ownership transferred to variable)
-- At scope exit, remaining temps are freed alongside named variables
-- This tracking is **internal** — no other crate participates in memory management
-
-## When to Free
+### When to Free
 
 | Event | What gets freed |
 |-------|----------------|
@@ -86,38 +93,49 @@ Cranelift internally tracks heap values to handle temporaries:
 | Break / Continue | Loop-local variables before jumping |
 | Statement end | All temporaries from that statement |
 
-## How Body Tracks Ownership
+### How Body Tracks Ownership
 
 Body maintains:
-- `live_heap_vars: Vec<String>` — names of heap variables in scope, in order of creation
-- `loop_heap_base: usize` — index into live_heap_vars marking where loop-local vars start
+- `live_heap_vars: Vec<String>` -- names of heap variables in scope, in order of creation
+- `loop_heap_base: usize` -- index into live_heap_vars marking where loop-local vars start
 
-When a variable is created:
-1. Allocate a stack slot for the pointer
-2. Mark `is_heap = true` if the value is I64
-3. Add the name to `live_heap_vars`
+### Function Parameters
 
-When scope exits:
-1. Iterate `live_heap_vars`
-2. For each heap var, emit `free(ptr)` 
-3. Then emit the return
+- **`const` parameter**: Caller retains ownership. Callee borrows. `is_heap = false` in callee's VarInfo.
+- **`let` parameter**: Caller moves ownership. Caller cleans slot. `is_heap = true` in callee's VarInfo -- callee frees at scope exit.
 
-When a loop iteration ends:
-1. Iterate `live_heap_vars` from `loop_heap_base` onward
-2. Free those (loop-local) vars
-3. Jump back to header
+## YAGNI Rules
 
-## Function Parameters
+- **No AST awareness** -- don't import roca-ast or pattern-match on AST nodes; that's roca-native's translation layer
+- **No garbage collector or reference counting** -- single-owner model, period
+- **No type dispatch in free** -- one `free(ptr)` call; runtime handles tag-based dispatch
+- **No stdlib implementations** -- Body calls `__<key>` function refs; runtime provides them
+- **No optimization passes** -- emit straightforward IR; let Cranelift optimize
+- **No language-specific orchestration** -- don't decide compile order, don't walk source files
 
-Parameters follow the ownership rules:
+## Key Files
 
-- **`const` parameter**: Caller retains ownership. Callee borrows the pointer. Callee does NOT free it. The parameter's `is_heap` is `false` in the callee's VarInfo — it's borrowed.
+| File | Purpose |
+|------|---------|
+| `src/lib.rs` | Public API re-exports, module declarations, domain boundary docs |
+| `src/api/body.rs` | `Body` struct -- variable binding, scope cleanup, control flow, memory lifecycle |
+| `src/api/function.rs` | `Function`, `Method`, `Struct`, `Satisfies`, `RocaEnum`, `ExternFn`, `ExternContract` builders |
+| `src/api/mod.rs` | API module re-exports, `ConstRef`/`MutRef`/`VarRef`/`Value` types |
+| `src/context.rs` | `VarInfo`, `EmitCtx`, `CompiledFuncs`, `StructLayout`, `live_heap_vars` |
+| `src/emit_helpers.rs` | `emit_scope_cleanup`, `emit_loop_body_cleanup` -- IR emission for free sequences |
+| `src/registry.rs` | `runtime_funcs!` macro, `RuntimeFuncs`, `register_symbols`, `declare_runtime`, `import_all` |
+| `src/builder/compiler.rs` | Low-level Cranelift `FunctionBuilder` wrapper |
+| `src/builder/ir.rs` | IR instruction helpers (calls, loads, stores, branches) |
+| `src/cranelift_type.rs` | `CraneliftType` -- Roca-to-IR type mapping |
+| `src/lang_type.rs` | `LangType` -- language-level type abstraction |
+| `src/module.rs` | `JitModule`, `FnDecl`, `declare_functions` -- module-level function management |
+| `src/helpers.rs` | Shared utility functions |
+| `src/types.rs` | Internal type definitions |
+| `src/tests_memory.rs` | Memory lifecycle tests (allocs == frees invariant) |
 
-- **`let` parameter**: Caller moves ownership. Caller cleans its slot. Callee now owns it. The parameter's `is_heap` is `true` in the callee's VarInfo — callee frees at its scope exit.
+## Test Patterns
 
-## Writing Memory Tests
-
-Pattern for cranelift-level tests in `crates/roca-cranelift/src/tests_memory.rs`:
+Tests live in `src/tests_memory.rs` using the `mem_test!` macro:
 
 ```rust
 mem_test!(test_name, {
@@ -138,15 +156,6 @@ mem_test!(test_name, {
 
 Rules:
 - `MEM.reset()` before calling the JIT function, not before compile
-- Assert `allocs == frees` — the zero-leak invariant
+- Assert `allocs == frees` -- the zero-leak invariant
 - Every test should verify one ownership scenario (scope exit, reassignment, move, temporary)
-
-## Key Files
-
-| File | Purpose |
-|------|---------|
-| `crates/roca-cranelift/src/api/body.rs` | Body struct, variable binding, scope cleanup |
-| `crates/roca-cranelift/src/context.rs` | VarInfo, EmitCtx, live_heap_vars |
-| `crates/roca-cranelift/src/emit_helpers.rs` | emit_scope_cleanup, emit_loop_body_cleanup |
-| `crates/roca-cranelift/src/tests_memory.rs` | Generic memory tests |
-| `crates/roca-runtime/src/lib.rs` | MEM tracker, allocator, free functions |
+- End-to-end Roca compilation tests belong in `roca-native`, not here
