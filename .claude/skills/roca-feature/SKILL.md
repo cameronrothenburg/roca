@@ -241,20 +241,28 @@ cd tests/js && ROCA_BIN=../../target/release/roca bun test
 
 If tests fail after a wave, message the responsible teammate with the error output.
 
-### Phase 5: Integration Verification
+### Phase 5: Stress Test
+
+Spawn a `stress-tester` teammate to actively try to break the new feature. It receives:
+- What was just built (the feature spec + which crates changed)
+- The affected crate names and file paths
+
+The stress tester writes adversarial tests targeting boundary values, ownership edge cases, error paths, and feature combinations. Any failures it finds must be fixed before proceeding.
+
+### Phase 6: Integration Verification
 
 Run `/run-ci-local` to execute the full CI pipeline (build, workspace tests, smoke test, JS integration tests). This mirrors `.github/workflows/ci.yml` exactly.
 
-Confirm all originally-failing tests from Phase 3 now pass. Report any remaining failures.
+Confirm all originally-failing tests from Phase 3 now pass, plus any new stress tests. Report any remaining failures.
 
-### Phase 6: Documentation
+### Phase 7: Documentation
 
 1. **Compiler rules** (`docs/src/reference/compiler-rules.md`) — add any new error codes
 2. **Manual** (`src/manual.txt`) — add the new construct with syntax and examples
 3. **Patterns** (`src/patterns.txt`) — add a pattern if the feature introduces new coding idioms
 4. **Integration test** (`tests/integration/`) — add a `.roca` file demonstrating the feature in a realistic scenario
 
-### Phase 7: Clean Up and Review
+### Phase 8: Clean Up and Review
 
 1. Clean up the agent team.
 2. Run `/roca-review`. If blocking issues are found, fix them and re-review until PASS.

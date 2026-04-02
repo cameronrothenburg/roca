@@ -54,13 +54,17 @@ Wait for the team to work through the issue:
 - If the verifier confirms it's already fixed, it closes the issue. Clean up the team and stop.
 - If the fixer discovers the fix requires multiple crates, it messages the lead. Decide whether to expand scope or split into multiple tickets.
 
-### Step 4: Run tests
+### Step 4: Stress test
 
-After the fixer completes, run `/run-ci-local` to execute the full CI pipeline. This catches regressions across the entire workspace, not just the affected crate.
+After the fixer completes, spawn a `stress-tester` teammate to try to break the fix. It receives the issue context, the fix description, and the affected crate. Any failures must be fixed before proceeding.
+
+### Step 5: Run tests
+
+Run `/run-ci-local` to execute the full CI pipeline. This catches regressions across the entire workspace, not just the affected crate.
 
 If tests fail, message the fixer with the failures.
 
-### Step 5: Review
+### Step 6: Review
 
 Clean up the ticket team, then run `/roca-review` to validate:
 - Crate boundaries respected
@@ -71,7 +75,7 @@ Clean up the ticket team, then run `/roca-review` to validate:
 
 If review finds blocking issues, fix them and re-review.
 
-### Step 6: Create PR
+### Step 7: Create PR
 
 Create a pull request that:
 - References the issue: `Fixes #<number>`
