@@ -520,7 +520,8 @@ fn emit_stdlib_dispatch(body: &mut Body, obj: Value, method: &str, args: &[Value
             return body.length_with_kind(obj, kind);
         }
         _ => {
-            eprintln!("[roca-native] unknown stdlib method '{}' — returning object unchanged; add it to emit_stdlib_dispatch if intentional", method);
+            eprintln!("[roca-native] unknown stdlib method '{}' — returning null; add it to emit_stdlib_dispatch if intentional", method);
+            return body.null();
         }
     }
     obj

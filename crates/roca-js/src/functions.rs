@@ -161,7 +161,7 @@ pub(crate) fn emit_constraint_guards<'a>(
     }
 }
 
-fn expr_has_await(expr: &roca::Expr) -> bool {
+pub(crate) fn expr_has_await(expr: &roca::Expr) -> bool {
     match expr {
         roca::Expr::Await(_) => true,
         roca::Expr::Call { target, args } => expr_has_await(target) || args.iter().any(|a| expr_has_await(a)),

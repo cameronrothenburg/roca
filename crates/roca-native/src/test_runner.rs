@@ -55,7 +55,7 @@ fn run_tests_inner(source: &ast::SourceFile, with_property_tests: bool) -> Nativ
         match item {
             ast::Item::Function(f) => {
                 if let Some(test) = &f.test {
-                    run_fn_tests(&module, f, test, &mut passed, &mut failed, &mut output);
+                    run_fn_tests(&module, f, false, test, &mut passed, &mut failed, &mut output);
                 }
                 if with_property_tests && f.is_pub && super::property_tests::all_params_generable(f) {
                     super::property_tests::run_property_tests(&module, f, None, &mut passed, &mut failed, &mut output);
@@ -66,7 +66,7 @@ fn run_tests_inner(source: &ast::SourceFile, with_property_tests: bool) -> Nativ
                     if let Some(test) = &method.test {
                         let mut qualified = method.clone();
                         qualified.name = format!("{}.{}", s.name, method.name);
-                        run_fn_tests(&module, &qualified, test, &mut passed, &mut failed, &mut output);
+                        run_fn_tests(&module, &qualified, true, test, &mut passed, &mut failed, &mut output);
                     }
                     if with_property_tests && method.is_pub && super::property_tests::all_params_generable(method) {
                         super::property_tests::run_property_tests(&module, method, Some(&s.name), &mut passed, &mut failed, &mut output);
@@ -78,7 +78,7 @@ fn run_tests_inner(source: &ast::SourceFile, with_property_tests: bool) -> Nativ
                     if let Some(test) = &method.test {
                         let mut qualified = method.clone();
                         qualified.name = format!("{}.{}", sat.struct_name, method.name);
-                        run_fn_tests(&module, &qualified, test, &mut passed, &mut failed, &mut output);
+                        run_fn_tests(&module, &qualified, true, test, &mut passed, &mut failed, &mut output);
                     }
                     if with_property_tests && method.is_pub && super::property_tests::all_params_generable(method) {
                         super::property_tests::run_property_tests(&module, method, Some(&sat.struct_name), &mut passed, &mut failed, &mut output);
@@ -96,6 +96,7 @@ fn run_tests_inner(source: &ast::SourceFile, with_property_tests: bool) -> Nativ
 fn run_fn_tests(
     module: &JitModule,
     func: &ast::FnDef,
+    is_method: bool,
     test: &TestBlock,
     passed: &mut usize,
     failed: &mut usize,
@@ -113,13 +114,13 @@ fn run_fn_tests(
     for case in &test.cases {
         match case {
             TestCase::Equals { args, expected } => {
-                run_equals_test(ptr, func, args, expected, passed, failed, output);
+                run_equals_test(ptr, func, is_method, args, expected, passed, failed, output);
             }
             TestCase::IsOk { args } => {
-                run_ok_test(ptr, func, args, passed, failed, output);
+                run_ok_test(ptr, func, is_method, args, passed, failed, output);
             }
             TestCase::IsErr { args, err_name } => {
-                run_err_test(ptr, func, args, err_name, passed, failed, output);
+                run_err_test(ptr, func, is_method, args, err_name, passed, failed, output);
             }
         }
     }
@@ -128,6 +129,7 @@ fn run_fn_tests(
 fn run_equals_test(
     ptr: *const u8,
     func: &ast::FnDef,
+    is_method: bool,
     args: &[Expr],
     expected: &Expr,
     passed: &mut usize,
@@ -137,7 +139,7 @@ fn run_equals_test(
     let ret_type = RocaType::from(&func.return_type);
     let label = format_test_label(func, args);
 
-    let (result_bits, _err) = call_fn(ptr, func, false, args);
+    let (result_bits, _err) = call_fn(ptr, func, is_method, args);
 
     match ret_type {
         RocaType::Number => {
@@ -179,6 +181,7 @@ fn run_equals_test(
 fn run_ok_test(
     ptr: *const u8,
     func: &ast::FnDef,
+    is_method: bool,
     args: &[Expr],
     passed: &mut usize,
     failed: &mut usize,
@@ -187,7 +190,7 @@ fn run_ok_test(
     if !func.returns_err { return; }
     let label = format_test_label(func, args);
 
-    let (_val, err) = call_fn(ptr, func, false, args);
+    let (_val, err) = call_fn(ptr, func, is_method, args);
     if err == 0 {
         output.push_str(&format!("  ✓ {} is Ok\n", label));
         *passed += 1;
@@ -200,6 +203,7 @@ fn run_ok_test(
 fn run_err_test(
     ptr: *const u8,
     func: &ast::FnDef,
+    is_method: bool,
     args: &[Expr],
     _err_name: &str,
     passed: &mut usize,
@@ -209,7 +213,7 @@ fn run_err_test(
     if !func.returns_err { return; }
     let label = format_test_label(func, args);
 
-    let (_val, err) = call_fn(ptr, func, false, args);
+    let (_val, err) = call_fn(ptr, func, is_method, args);
     if err != 0 {
         output.push_str(&format!("  ✓ {} is err.{}\n", label, _err_name));
         *passed += 1;
@@ -254,8 +258,12 @@ pub(super) fn call_fn(
             RocaType::Number => packed.push(expr_to_f64(arg).to_bits()),
             RocaType::Bool   => packed.push(if expr_to_bool(arg) { 1 } else { 0 }),
             _ => {
-                let s = if let Expr::String(s) = arg { s.as_str() } else { "" };
-                let cstr = std::ffi::CString::new(s).unwrap_or_default();
+                let s = match arg {
+                    Expr::String(s) => s.as_str(),
+                    other => panic!("unsupported test arg type {:?} for param '{}' (expected String)", other, param.name),
+                };
+                let cstr = std::ffi::CString::new(s)
+                    .unwrap_or_else(|e| panic!("test arg for '{}' contains interior NUL: {}", param.name, e));
                 packed.push(cstr.as_ptr() as u64);
                 string_pool.push(cstr);
             }

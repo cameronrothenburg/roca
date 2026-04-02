@@ -328,6 +328,7 @@ fn build_variant_consequent<'a>(
     value: &Expr,
     bindings: &[String],
     arm_value: Expression<'a>,
+    is_async: bool,
 ) -> Expression<'a> {
     if bindings.is_empty() {
         return arm_value;
@@ -344,8 +345,9 @@ fn build_variant_consequent<'a>(
     let mut stmts = ast.vec();
     stmts.push(return_stmt(ast, arm_value));
     let body = function_body(ast, stmts);
-    let arrow = ast.expression_arrow_function(SPAN, false, false, NONE, params, NONE, body);
-    ast.expression_call(SPAN, arrow, NONE, call_args, false)
+    let arrow = ast.expression_arrow_function(SPAN, is_async, false, NONE, params, NONE, body);
+    let call = ast.expression_call(SPAN, arrow, NONE, call_args, false);
+    if is_async { ast.expression_await(SPAN, call) } else { call }
 }
 
 fn js_match_inner<'a>(ast: &AstBuilder<'a>, value: &Expr, arms: &[roca::MatchArm]) -> Expression<'a> {
@@ -372,7 +374,8 @@ fn js_match_inner<'a>(ast: &AstBuilder<'a>, value: &Expr, arms: &[roca::MatchArm
             Some(MatchPattern::Variant { enum_name, variant, bindings }) => {
                 let alternate = result.unwrap_or_else(|| ident(ast, "undefined"));
                 let test = build_variant_test(ast, value, enum_name, variant, bindings);
-                let consequent = build_variant_consequent(ast, value, bindings, arm_value);
+                let is_async = crate::functions::expr_has_await(&arm.value);
+                let consequent = build_variant_consequent(ast, value, bindings, arm_value, is_async);
                 result = Some(ast.expression_conditional(SPAN, test, consequent, alternate));
             }
         }
@@ -388,6 +391,7 @@ fn js_match_inner<'a>(ast: &AstBuilder<'a>, value: &Expr, arms: &[roca::MatchArm
 /// Emits: `(() => { if (v === p1) return arm1; if (v === p2) return arm2; ... return undefined; })()`
 fn js_match_as_iife<'a>(ast: &AstBuilder<'a>, value: &Expr, arms: &[roca::MatchArm]) -> Expression<'a> {
     let mixed = match_has_err_arms(arms);
+    let needs_async = arms.iter().any(|arm| crate::functions::expr_has_await(&arm.value));
     let mut stmts = ast.vec();
 
     let mut has_wildcard = false;
@@ -409,7 +413,8 @@ fn js_match_as_iife<'a>(ast: &AstBuilder<'a>, value: &Expr, arms: &[roca::MatchA
             }
             Some(MatchPattern::Variant { enum_name, variant, bindings }) => {
                 let test = build_variant_test(ast, value, enum_name, variant, bindings);
-                let consequent = build_variant_consequent(ast, value, bindings, arm_value);
+                let arm_async = crate::functions::expr_has_await(&arm.value);
+                let consequent = build_variant_consequent(ast, value, bindings, arm_value, arm_async);
                 let mut then_stmts = ast.vec();
                 then_stmts.push(return_stmt(ast, consequent));
                 stmts.push(if_stmt(ast, test, block(ast, then_stmts), None));
@@ -423,8 +428,9 @@ fn js_match_as_iife<'a>(ast: &AstBuilder<'a>, value: &Expr, arms: &[roca::MatchA
 
     let body = function_body(ast, stmts);
     let params = formal_params(ast, ast.vec());
-    let arrow = ast.expression_arrow_function(SPAN, false, false, NONE, params, NONE, body);
-    ast.expression_call(SPAN, arrow, NONE, ast.vec(), false)
+    let arrow = ast.expression_arrow_function(SPAN, needs_async, false, NONE, params, NONE, body);
+    let call = ast.expression_call(SPAN, arrow, NONE, ast.vec(), false);
+    if needs_async { ast.expression_await(SPAN, call) } else { call }
 }
 
 // ─── Shared helpers ───────────────────────────────────────
