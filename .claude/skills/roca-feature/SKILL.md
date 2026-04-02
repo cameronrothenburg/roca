@@ -253,13 +253,17 @@ All three work in parallel. Any failures from stress-tester or divergences from 
 
 ### Phase 6: Proof Verification
 
+**Do NOT shut down crate teammates yet.** They stay alive for this phase.
+
 Spawn a **proof-agent** teammate. It receives the original request (the feature spec from Phase 0/1) and the current branch. It:
 - Extracts every discrete requirement from the spec
-- Finds or writes a test that directly proves each one
+- Finds tests that directly prove each one
 - Disqualifies tests that pass by coincidence, use workarounds, or don't assert the specific claim
 - Reports PROVEN / WEAK / MISSING for each requirement
 
-Any MISSING requirements must have proof tests written before proceeding. WEAK tests must be strengthened or replaced.
+The proof-agent does NOT write tests — it judges them. When it finds gaps, it messages the responsible crate teammate directly with what needs proving. That teammate writes the test, and the proof-agent re-verifies.
+
+This loop repeats until the proof-agent reports ALL PROVEN. Only then can teammates shut down.
 
 ### Phase 7: Integration Verification
 

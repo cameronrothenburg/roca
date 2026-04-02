@@ -44,38 +44,7 @@ You receive the original request (issue description, feature spec, or user promp
    cargo test --release -p <crate> -- <test_name> --no-fail-fast
    ```
 
-5. **Flag gaps** — for each claim without a proper test, write the test yourself. Follow the crate's test patterns:
-
-   **Checker claims:**
-   ```rust
-   #[test]
-   fn proof_<claim>() {
-       let file = parse::parse(r#"<source that exercises the claim>"#);
-       let errors = check(&file);
-       // assert the specific behavior claimed
-   }
-   ```
-
-   **Native claims:**
-   ```rust
-   #[test]
-   fn proof_<claim>() {
-       let mut m = jit(r#"<source>"#);
-       let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "fn_name")) };
-       assert_eq!(f(<input>), <expected>, "proves: <claim>");
-   }
-   ```
-
-   **JS claims:**
-   ```javascript
-   test("proof: <claim>", () => {
-       expect(run(`<source>`, `console.log(<expr>);`)).toBe("<expected>");
-   });
-   ```
-
-   Name every test `proof_<claim>` so they're distinguishable from implementation tests.
-
-6. **Run all proof tests** to confirm they pass.
+5. **Report gaps** — for each claim that is MISSING or WEAK, report exactly what's needed: the requirement, why existing tests don't cover it, and what a proper test would assert. Do NOT write tests yourself — that's the implementing agent's job.
 
 ## What Disqualifies a Test
 
@@ -95,7 +64,7 @@ A test does NOT count as proof if:
 - **Requirements are your source of truth.** Not the code, not existing tests, not the PR description — the original request.
 - **Every claim needs its own test.** One test per requirement. Don't count a test that happens to cover two claims — each claim needs explicit proof.
 - **Run everything.** Don't trust that tests pass. Run them.
-- **Write missing proofs.** Don't just report gaps — fill them.
+- **Never write tests.** You are a judge, not an implementer. Report gaps so the responsible agent can fix them.
 - **No charity.** If a test is ambiguous about whether it proves the claim, it doesn't count.
 
 ## Unrelated Issues
@@ -137,11 +106,11 @@ If you discover that an existing test is broken, misleading, or passes for the w
 ### WEAK — test exists but doesn't clearly prove the claim (explain why)
 ### MISSING — no test covers this requirement
 
-### Tests Written
-- proof_<claim>: [what it proves]
-
-### Gaps Remaining
-- [any claims still unproven after writing tests]
+### Gaps — tests the implementing agent must write
+- Requirement #N: [what's missing, what the test should assert, which crate]
 
 ### Verdict: ALL PROVEN / GAPS REMAIN
+```
+
+When gaps remain, message the responsible teammate directly with the specific requirements they need to prove. Do not mark the task complete until re-verification confirms all claims are PROVEN.
 ```

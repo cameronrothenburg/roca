@@ -65,7 +65,11 @@ Any failures or divergences must be fixed before proceeding.
 
 ### Step 5: Proof verification
 
-Spawn a **proof-agent** teammate. It receives the original GitHub issue and the current branch. It extracts every claim from the issue (bug behavior, expected behavior, edge cases) and verifies each one has a direct, passing test. Any gaps get filled with `proof_` tests.
+**Do NOT shut down the fixer teammate yet.**
+
+Spawn a **proof-agent** teammate. It receives the original GitHub issue and the current branch. It extracts every claim from the issue (bug behavior, expected behavior, edge cases) and judges whether each has a direct, passing test.
+
+The proof-agent does NOT write tests. When it finds gaps, it messages the fixer teammate with what needs proving. The fixer writes the test, and the proof-agent re-verifies. This loops until ALL PROVEN.
 
 ### Step 6: Run tests
 
