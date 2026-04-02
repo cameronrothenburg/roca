@@ -186,6 +186,7 @@ impl<'a, 'b: 'a> IrBuilder<'a, 'b> {
         self.b.block_params(block.0)[idx]
     }
 
+    #[allow(dead_code)]
     pub fn block_params(&self, block: BlockId) -> Vec<Value> {
         self.b.block_params(block.0).to_vec()
     }

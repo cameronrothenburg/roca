@@ -5,7 +5,6 @@ use cranelift_codegen::ir::{self, types, StackSlot, Type, FuncRef};
 
 use roca_ast::{self as roca, crash::CrashHandlerKind};
 use roca_types::RocaType;
-use crate::cranelift_type::CraneliftType;
 
 /// Tracks compiled functions for cross-function references
 pub struct CompiledFuncs {
@@ -15,9 +14,6 @@ pub struct CompiledFuncs {
 impl CompiledFuncs {
     pub fn new() -> Self { Self { funcs: HashMap::new() } }
 }
-
-/// Deprecated — use RocaType directly. Kept as alias during migration.
-pub type ValKind = RocaType;
 
 #[derive(Clone)]
 pub struct VarInfo {

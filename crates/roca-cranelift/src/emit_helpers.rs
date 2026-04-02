@@ -1,19 +1,12 @@
 //! Value type inference, scope cleanup, and shared emit utilities.
 
-use cranelift_codegen::ir::{self, types, Value, FuncRef, InstBuilder};
-use cranelift_frontend::FunctionBuilder;
+use cranelift_codegen::ir::{self, FuncRef, Value};
 
-use roca_ast::{self as roca, Expr, BinOp};
+use roca_ast::{Expr, BinOp};
 use roca_types::RocaType;
-use crate::helpers::{call_rt, call_void, load_slot};
 use crate::context::EmitCtx;
-use crate::cranelift_type::{CraneliftType, CleanupRegistry, emit_cleanup};
+use crate::cranelift_type::{CleanupRegistry, emit_cleanup};
 use crate::builder::IrBuilder;
-
-/// Convert a TypeRef to a RocaType. Convenience wrapper.
-pub fn type_ref_to_kind(ty: &roca::TypeRef) -> RocaType {
-    RocaType::from(ty)
-}
 
 /// Infer the RocaType of an expression from its AST structure and context.
 pub fn infer_kind(expr: &Expr, ctx: &EmitCtx) -> RocaType {
@@ -92,7 +85,6 @@ pub fn infer_kind(expr: &Expr, ctx: &EmitCtx) -> RocaType {
 pub struct FreeRefs {
     pub rc_release: Option<FuncRef>,
     pub free_array: Option<FuncRef>,
-    pub free_json_array: Option<FuncRef>,
     pub free_struct: Option<FuncRef>,
     pub box_free: Option<FuncRef>,
 }
@@ -102,7 +94,6 @@ impl FreeRefs {
         Self {
             rc_release: ctx.func_refs.get("__rc_release").copied(),
             free_array: ctx.func_refs.get("__free_array").copied(),
-            free_json_array: ctx.func_refs.get("__free_json_array").copied(),
             free_struct: ctx.func_refs.get("__free_struct").copied(),
             box_free: ctx.func_refs.get("__box_free").copied(),
         }
@@ -147,21 +138,6 @@ pub fn emit_loop_body_cleanup(ir: &mut IrBuilder, ctx: &EmitCtx) {
             emit_cleanup(ir.b, var.slot, strategy, &refs);
         }
     }
-}
-
-pub fn target_kind(expr: &Expr, ctx: &mut EmitCtx) -> RocaType {
-    match expr {
-        Expr::Ident(name) => ctx.get_var(name).map(|v| v.kind.clone()).unwrap_or(RocaType::Unknown),
-        Expr::String(_) | Expr::StringInterp(_) => RocaType::String,
-        Expr::Array(_) => RocaType::Array(Box::new(RocaType::Unknown)),
-        Expr::StructLit { name, .. } => RocaType::Struct(name.clone()),
-        Expr::Number(_) => RocaType::Number,
-        _ => RocaType::Unknown,
-    }
-}
-
-pub fn first_arg_or_null(ir: &mut IrBuilder, first_val: Option<Value>) -> Value {
-    first_val.unwrap_or_else(|| ir.null())
 }
 
 pub fn emit_array_push(ir: &mut IrBuilder, arr: Value, val: Value, ctx: &mut EmitCtx) {

@@ -13,6 +13,7 @@ use super::ir::IrBuilder;
 
 /// Describes a parameter for function compilation.
 pub struct ParamSpec {
+    #[allow(dead_code)]
     pub name: String,
     pub roca_type: RocaType,
 }
@@ -25,36 +26,6 @@ pub struct FunctionSpec {
     pub self_param: bool,
     pub return_type: RocaType,
     pub returns_err: bool,
-}
-
-impl FunctionSpec {
-    /// Build a spec from a Roca function definition.
-    pub fn from_fn(name: &str, params: &[roca_ast::Param], return_type: &roca_ast::TypeRef, returns_err: bool) -> Self {
-        Self {
-            name: name.to_string(),
-            params: params.iter().map(|p| ParamSpec {
-                name: p.name.clone(),
-                roca_type: RocaType::from(&p.type_ref),
-            }).collect(),
-            self_param: false,
-            return_type: RocaType::from(return_type),
-            returns_err,
-        }
-    }
-
-    /// Build a spec for a struct method (adds self param).
-    pub fn from_method(struct_name: &str, func_name: &str, params: &[roca_ast::Param], return_type: &roca_ast::TypeRef, returns_err: bool) -> Self {
-        Self {
-            name: format!("{}.{}", struct_name, func_name),
-            params: params.iter().map(|p| ParamSpec {
-                name: p.name.clone(),
-                roca_type: RocaType::from(&p.type_ref),
-            }).collect(),
-            self_param: true,
-            return_type: RocaType::from(return_type),
-            returns_err,
-        }
-    }
 }
 
 /// Compiles a single Roca function. Handles all Cranelift boilerplate:

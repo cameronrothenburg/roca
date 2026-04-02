@@ -2,11 +2,11 @@
 //! Handles all boilerplate: signature, params, constraints, cleanup, default return.
 
 use std::collections::HashMap;
-use cranelift_codegen::ir::{types, Value};
+use cranelift_codegen::ir::types;
 use cranelift_module::{Module, FuncId};
 
 use roca_ast::crash::CrashHandlerKind;
-use roca_types::{self as rt, RocaType, Param, Field, CrashBlock, TestBlock};
+use roca_types::{self as rt, RocaType, Param, Field};
 use crate::builder::{FunctionCompiler, FunctionSpec, ParamSpec};
 use crate::context::{CompiledFuncs, EmitCtx, StructLayout, VarInfo};
 use crate::cranelift_type::CraneliftType;
@@ -419,7 +419,6 @@ impl ExternFn {
         compiled: &mut CompiledFuncs,
     ) -> Result<FuncId, String> {
         let return_type = self.return_type.clone();
-        let returns_err = self.returns_err;
 
         Function::new(&self.name)
             .params(&self.params)

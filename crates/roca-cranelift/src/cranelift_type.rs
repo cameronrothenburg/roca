@@ -53,6 +53,7 @@ impl CleanupRegistry {
     }
 
     /// Register a cleanup strategy for a named type (e.g., extern contract).
+    #[allow(dead_code)]
     pub fn register(&mut self, name: impl Into<String>, strategy: CleanupStrategy) {
         self.overrides.insert(name.into(), strategy);
     }

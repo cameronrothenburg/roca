@@ -4,8 +4,5 @@
 mod ir;
 mod compiler;
 
-pub use ir::{IrBuilder, BlockId, VarSlot};
+pub use ir::{IrBuilder, VarSlot};
 pub use compiler::{FunctionCompiler, FunctionSpec, ParamSpec};
-
-// Re-export Value and FuncRef — these are unavoidable SSA handles
-pub use cranelift_codegen::ir::{Value, FuncRef};

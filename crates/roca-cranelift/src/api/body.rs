@@ -355,7 +355,7 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
     }
 
     /// Struct literal construction.
-    pub fn struct_lit(&mut self, name: &str, fields: &[(&str, Value)]) -> Value {
+    pub fn struct_lit(&mut self, _name: &str, fields: &[(&str, Value)]) -> Value {
         let num_fields = self.ir.const_i64(fields.len() as i64);
         let ptr = if let Some(f) = self.ctx.get_func("__struct_alloc") {
             self.ir.call(*f, &[num_fields])
@@ -387,7 +387,7 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
     }
 
     /// Struct field access by name — resolves through struct layout.
-    pub fn field_access(&mut self, obj: Value, field: &str) -> Value {
+    pub fn field_access(&mut self, obj: Value, _field: &str) -> Value {
         // Fallback: generic access
         let idx = self.ir.const_i64(0);
         if let Some(f) = self.ctx.get_func("__struct_get_ptr") {
@@ -870,6 +870,7 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
 
 // ─── Slot Primitives (internal) ─────────────────────
 
+#[allow(dead_code)]
 impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
     /// Allocate a stack slot and store a value. Returns a handle for load/store.
     pub(crate) fn alloc_slot(&mut self, val: Value) -> VarSlot {
@@ -993,6 +994,7 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
     }
 
     /// Emit a trap (process abort). Internal — use `panic()` instead.
+    #[allow(dead_code)]
     pub(crate) fn trap(&mut self, code: u8) {
         self.ir.trap(code);
         self.returned = true;
