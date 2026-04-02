@@ -61,7 +61,7 @@ If you discover a separate bug while reproducing the target issue:
    ```bash
    gh issue create --repo cameronrothenburg/roca \
      --title "<type>(<scope>): <short description>" \
-     --label "<crate-name>" \
+     --label "triage,ai-generated" \
      --body "Discovered while verifying #<current-issue>. ..."
    ```
 4. Message the team lead with the issue number so it's tracked.

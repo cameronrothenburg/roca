@@ -112,7 +112,7 @@ If you discover a pre-existing memory safety problem that is **not** caused by t
    ```bash
    gh issue create --repo cameronrothenburg/roca \
      --title "fix(<scope>): <short description>" \
-     --label "<crate-name>,memory" \
+     --label "triage,ai-generated" \
      --body "Discovered during memory analysis of <branch/PR>. ..."
    ```
 4. Include the issue number in your report under "Pre-existing Issues Filed".

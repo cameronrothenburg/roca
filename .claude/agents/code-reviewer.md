@@ -88,7 +88,7 @@ If you discover a pre-existing bug or problem that is **not** caused by the chan
    ```bash
    gh issue create --repo cameronrothenburg/roca \
      --title "<type>(<scope>): <short description>" \
-     --label "<crate-name>" \
+     --label "triage,ai-generated" \
      --body "Discovered during review of <branch/PR>. ..."
    ```
 4. Mention the issue in your review report under a separate "Pre-existing Issues Filed" section.

@@ -91,7 +91,7 @@ If you discover a pre-existing spec divergence that is **not** caused by the cha
    ```bash
    gh issue create --repo cameronrothenburg/roca \
      --title "fix(<scope>): spec divergence — <short description>" \
-     --label "<crate-name>,spec" \
+     --label "triage,ai-generated" \
      --body "Discovered during spec review of <branch/PR>. ..."
    ```
 4. Include the issue number in your report under "Pre-existing Issues Filed".
