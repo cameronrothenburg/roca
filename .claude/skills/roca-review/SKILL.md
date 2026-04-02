@@ -15,18 +15,7 @@ Run `git diff master...HEAD --name-only` to identify which files changed. Map ea
 
 ### Step 1: Run tests
 
-Run the test suites for all affected crates. If tests fail, stop here — fix failures before reviewing.
-
-```bash
-# Rust tests for affected crates
-cargo test --release -p <crate-name>
-
-# If any .roca files changed or emitter/checker changed:
-cd tests/js && ROCA_BIN=../../target/release/roca bun test
-
-# If CLI changed:
-./target/release/roca check tests/js/projects/api
-```
+Run `/run-ci-local` to execute the full CI pipeline. If any step fails, stop here — fix failures before reviewing.
 
 ### Step 2: Create review team
 

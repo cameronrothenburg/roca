@@ -243,14 +243,7 @@ If tests fail after a wave, message the responsible teammate with the error outp
 
 ### Phase 5: Integration Verification
 
-Run the full suite:
-
-```bash
-cargo build --release
-cargo test --release
-cd tests/js && ROCA_BIN=../../target/release/roca bun test
-./target/release/roca check tests/js/projects/api
-```
+Run `/run-ci-local` to execute the full CI pipeline (build, workspace tests, smoke test, JS integration tests). This mirrors `.github/workflows/ci.yml` exactly.
 
 Confirm all originally-failing tests from Phase 3 now pass. Report any remaining failures.
 

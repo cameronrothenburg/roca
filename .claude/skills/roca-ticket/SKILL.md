@@ -56,16 +56,7 @@ Wait for the team to work through the issue:
 
 ### Step 4: Run tests
 
-After the fixer completes, run test suites for all affected crates:
-
-```bash
-cargo test --release -p <crate-name>
-```
-
-If emitter, checker, or .roca files were touched:
-```bash
-cd tests/js && ROCA_BIN=../../target/release/roca bun test
-```
+After the fixer completes, run `/run-ci-local` to execute the full CI pipeline. This catches regressions across the entire workspace, not just the affected crate.
 
 If tests fail, message the fixer with the failures.
 
