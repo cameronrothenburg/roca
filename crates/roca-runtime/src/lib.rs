@@ -1,27 +1,50 @@
 //! Host runtime for JIT-compiled Roca code — provides stdlib functions,
-//! reference-counted memory management, and the memory tracker.
+//! single-owner memory management, and the memory tracker.
 //!
-//! This crate has no internal Roca dependencies (only `uuid`, `url`, `sha2`,
-//! etc.). It is consumed by `roca-cranelift` (which registers these functions
-//! as Cranelift imports) and `roca-native` (which links them into the JIT).
+//! # Memory Model
+//!
+//! Every heap value has one owner. When the owner goes away, the value is freed
+//! via [`roca_free`]. No reference counting. No type dispatch at the IR level.
+//!
+//! The runtime tags each allocation so `roca_free` knows how to deallocate:
+//! - Strings (raw bytes with null terminator)
+//! - Arrays/Structs/Enums (`Vec<i64>` field slots)
+//! - Maps (`HashMap<String, i64>`)
+//! - Boxes (opaque extern types with drop trampolines)
 //!
 //! # Key exports
 //!
-//! - **RC memory** — [`roca_rc_alloc`], [`roca_rc_retain`], [`roca_rc_release`]
-//!   manage a reference-counted heap with an `[rc, size, payload]` layout.
+//! - [`roca_free`] — free any heap value (reads tag, dispatches internally)
 //! - **Struct ops** — [`roca_struct_alloc`], `roca_struct_get_*`, `roca_struct_set_*`
-//!   for field-indexed struct storage.
-//! - **String helpers** — [`alloc_str`], [`read_cstr`] for C-string interop.
-//! - [`MEM`] / [`MemTracker`] — thread-local allocation counters used by tests
-//!   to assert zero-leak invariants.
-//! - **stdlib** (re-exported from `stdlib` module) — `roca_string_*`,
-//!   `roca_array_*`, `roca_map_*`, `roca_math_*`, `roca_json_*`, etc.
+//! - **String helpers** — [`alloc_str`], [`read_cstr`]
+//! - [`MEM`] / [`MemTracker`] — thread-local allocation counters for tests
 
 pub mod stdlib;
 pub use stdlib::*;
 
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::ffi::CStr;
 use std::sync::atomic::{AtomicBool, Ordering};
+
+// ─── Allocation tags ─────────────────────────────────
+
+const TAG_STRING: u8 = 1;
+const TAG_VEC: u8 = 2;     // arrays, structs, enums — all Vec<i64>
+const TAG_MAP: u8 = 3;
+const TAG_BOX: u8 = 4;     // opaque extern types with drop trampoline
+
+thread_local! {
+    static ALLOC_TAGS: RefCell<HashMap<i64, (u8, i64)>> = RefCell::new(HashMap::new());
+}
+
+fn tag_alloc(ptr: i64, tag: u8, size: i64) {
+    ALLOC_TAGS.with(|t| t.borrow_mut().insert(ptr, (tag, size)));
+}
+
+fn untag_alloc(ptr: i64) -> Option<(u8, i64)> {
+    ALLOC_TAGS.with(|t| t.borrow_mut().remove(&ptr))
+}
 
 // ─── String helpers ─────────────────────────────────
 
@@ -32,11 +55,16 @@ pub fn read_cstr(ptr: i64) -> &'static str {
 
 pub fn alloc_str(s: &str) -> i64 {
     let bytes = format!("{}\0", s);
-    let ptr = roca_rc_alloc(bytes.len() as i64);
-    if ptr == 0 { return 0; }
+    let total = bytes.len() as i64;
+    let layout = std::alloc::Layout::from_size_align(bytes.len(), 8).unwrap();
+    let base = unsafe { std::alloc::alloc(layout) };
+    if base.is_null() { return 0; }
     unsafe {
-        std::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr as *mut u8, bytes.len());
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), base, bytes.len());
     }
+    let ptr = base as i64;
+    tag_alloc(ptr, TAG_STRING, total);
+    MEM.track_alloc(total);
     if MEM.is_debug() {
         eprintln!("  [mem] alloc_str \"{}\" -> {:#x}", s, ptr);
     }
@@ -44,12 +72,6 @@ pub fn alloc_str(s: &str) -> i64 {
 }
 
 // ─── Memory tracking ─────────────────────────────────
-//
-// RC heap layout:
-//   [refcount: i64][total_size: i64][payload bytes...]
-//   ^ptr points here
-//
-// Payload is accessed at ptr + 16.
 
 /// Thread-local memory tracker — each test thread has its own counters.
 /// This eliminates race conditions between parallel tests.
@@ -123,15 +145,7 @@ impl MemTracker {
     }
 }
 
-// RC layout: [refcount: i64][total_size: i64][payload...]
-// User code receives a pointer to PAYLOAD (header + 16).
-// RC functions back up 16 bytes to find the header.
-const RC_HEADER_SIZE: usize = 16;
-
-/// Get header pointer from payload pointer
-fn rc_header(payload_ptr: i64) -> *mut i64 {
-    unsafe { (payload_ptr as *mut u8).sub(RC_HEADER_SIZE) as *mut i64 }
-}
+// ─── Unified free ────────────────────────────────────
 
 // ─── Constraint validation ──────────────────────────
 
@@ -160,6 +174,7 @@ pub extern "C" fn roca_constraint_panic(msg: i64) {
 pub extern "C" fn roca_struct_alloc(num_fields: i64) -> i64 {
     let size = 24 + num_fields as i64 * 8;
     let ptr = Box::into_raw(Box::new(vec![0i64; num_fields as usize])) as i64;
+    tag_alloc(ptr, TAG_VEC, size);
     MEM.track_alloc(size);
     ptr
 }
@@ -196,89 +211,64 @@ pub extern "C" fn roca_f64_to_bool(n: f64) -> u8 {
 
 // ─── Memory management ──────────────────────────────
 
-/// Create an RC'd string from a static C string pointer.
+/// Create a heap string from a static C string pointer.
 pub extern "C" fn roca_string_new(static_ptr: i64) -> i64 {
     if static_ptr == 0 { return 0; }
     let s = read_cstr(static_ptr);
     alloc_str(s)
 }
 
-/// Allocate a block with RC header. Returns pointer to PAYLOAD.
-pub extern "C" fn roca_rc_alloc(payload_size: i64) -> i64 {
-    let total = RC_HEADER_SIZE + payload_size as usize;
-    let layout = std::alloc::Layout::from_size_align(total, 8).unwrap();
-    let base = unsafe { std::alloc::alloc_zeroed(layout) };
-    if base.is_null() { return 0; }
-    unsafe {
-        *(base as *mut i64) = 1;                      // refcount = 1
-        *((base as *mut i64).add(1)) = total as i64;  // total size
-    }
-    MEM.track_alloc(total as i64);
-    unsafe { base.add(RC_HEADER_SIZE) as i64 }
-}
-
-/// Increment refcount. Takes payload pointer.
-pub extern "C" fn roca_rc_retain(ptr: i64) {
+/// Free any heap value. Reads the tag from the allocation registry
+/// and dispatches to the appropriate deallocation path.
+pub extern "C" fn roca_free(ptr: i64) {
     if ptr == 0 { return; }
-    let header = rc_header(ptr);
-    unsafe { *header += 1; }
-    let new_rc = unsafe { *header };
-    MEM.track_retain();
-    if MEM.is_debug() {
-        let s = read_cstr(ptr);
-        eprintln!("  [mem] retain {:#x} rc={} \"{}\"", ptr, new_rc, s);
-    }
-}
-
-/// Free an array (Vec<i64>) and track it.
-pub extern "C" fn roca_free_array(ptr: i64) {
-    if ptr == 0 { return; }
-    if MEM.is_debug() { eprintln!("  [mem] free_array {:#x}", ptr); }
-    let v = unsafe { Box::from_raw(ptr as *mut Vec<i64>) };
-    drop(v);
-    MEM.track_free(32);
-}
-
-/// Free a struct (Vec<i64>). Releases the first n_heap_fields slots as RC pointers.
-pub extern "C" fn roca_free_struct(ptr: i64, n_heap_fields: i64) {
-    if ptr == 0 { return; }
-    if MEM.is_debug() { eprintln!("  [mem] free_struct {:#x} (heap_fields={})", ptr, n_heap_fields); }
-    let v = unsafe { &*(ptr as *const Vec<i64>) };
-    for i in 0..(n_heap_fields as usize).min(v.len()) {
-        let field_ptr = v[i];
-        if field_ptr != 0 {
-            roca_rc_release(field_ptr);
+    let (tag, size) = match untag_alloc(ptr) {
+        Some(t) => t,
+        None => {
+            if MEM.is_debug() {
+                eprintln!("  [mem] free {:#x} — untagged (already freed or static)", ptr);
+            }
+            return;
         }
+    };
+    if MEM.is_debug() {
+        eprintln!("  [mem] free {:#x} tag={} size={}", ptr, tag, size);
     }
-    let v = unsafe { Box::from_raw(ptr as *mut Vec<i64>) };
-    let size = 24 + v.len() as i64 * 8;
-    drop(v);
+    match tag {
+        TAG_STRING => {
+            let layout = std::alloc::Layout::from_size_align(size as usize, 8).unwrap();
+            unsafe { std::alloc::dealloc(ptr as *mut u8, layout); }
+        }
+        TAG_VEC => {
+            let v = unsafe { Box::from_raw(ptr as *mut Vec<i64>) };
+            drop(v);
+        }
+        TAG_MAP => {
+            let m = unsafe { Box::from_raw(ptr as *mut std::collections::HashMap<String, i64>) };
+            drop(m);
+        }
+        TAG_BOX => {
+            // Box header: [drop_fn: u64][total_size: u64] before payload
+            unsafe {
+                let base = (ptr as *mut u8).sub(BOX_HEADER);
+                let drop_fn = *(base as *const u64);
+                let total = *((base as *const u64).add(1)) as usize;
+                if drop_fn != 0 {
+                    let dropper: fn(*mut u8) = std::mem::transmute(drop_fn);
+                    dropper(ptr as *mut u8);
+                }
+                let layout = std::alloc::Layout::from_size_align_unchecked(total, BOX_ALIGN);
+                std::alloc::dealloc(base, layout);
+            }
+        }
+        _ => {}
+    }
     MEM.track_free(size);
 }
 
-/// Decrement refcount. Free if zero. Takes payload pointer.
-pub extern "C" fn roca_rc_release(ptr: i64) {
-    if ptr == 0 { return; }
-    MEM.track_release();
-    let header = rc_header(ptr);
-    let rc = unsafe { &mut *header };
-    *rc -= 1;
-    if MEM.is_debug() {
-        let s = read_cstr(ptr);
-        eprintln!("  [mem] release {:#x} rc={} \"{}\" {}", ptr, *rc, s, if *rc <= 0 { "→ FREE" } else { "" });
-    }
-    if *rc <= 0 {
-        let total_size = unsafe { *header.add(1) } as usize;
-        if total_size < RC_HEADER_SIZE {
-            MEM.track_free(0);
-            return;
-        }
-        MEM.track_free(total_size as i64);
-        let base = unsafe { (ptr as *mut u8).sub(RC_HEADER_SIZE) };
-        let layout = std::alloc::Layout::from_size_align(total_size, 8).unwrap();
-        unsafe { std::alloc::dealloc(base, layout); }
-    }
-}
+// Legacy aliases — these call roca_free internally.
+// Kept temporarily while cranelift migrates to __free.
 
-// roca_box_alloc, roca_box_free, and roca_free_json_array are in stdlib.rs
-// (they use the proper box header layout with drop trampolines)
+// Box header constants — used by TAG_BOX deallocation path
+pub(crate) const BOX_HEADER: usize = 16;
+pub(crate) const BOX_ALIGN: usize = 16;

@@ -236,50 +236,7 @@ fn time_now_epoch() {
     assert!(now > 1_700_000_000_000.0, "should be epoch ms, got {}", now);
 }
 
-// ─── Memory Tests (stdlib scope) ──────────────────────
-
-mem_test!(rc_alloc_and_release, {
-    let ptr = runtime::roca_rc_alloc(32);
-    assert_ne!(ptr, 0);
-    assert_eq!(runtime::MEM.stats().0, 1);
-    assert_eq!(runtime::MEM.stats().1, 0);
-
-    runtime::roca_rc_release(ptr);
-    assert_eq!(runtime::MEM.stats().1, 1);
-    assert_eq!(runtime::MEM.stats().4, 0);
-});
-
-mem_test!(rc_retain_delays_free, {
-    let ptr = runtime::roca_rc_alloc(16);
-    runtime::roca_rc_retain(ptr); // refcount 2
-
-    runtime::roca_rc_release(ptr); // refcount 1
-    assert_eq!(runtime::MEM.stats().1, 0);
-
-    runtime::roca_rc_release(ptr); // refcount 0, freed
-    assert_eq!(runtime::MEM.stats().1, 1);
-});
-
-mem_test!(rc_null_is_safe, {
-    runtime::roca_rc_retain(0);
-    runtime::roca_rc_release(0);
-    runtime::MEM.assert_clean();
-});
-
-mem_test!(rc_multiple_allocs_all_freed, {
-    let ptrs: Vec<i64> = (0..10).map(|_| runtime::roca_rc_alloc(24)).collect();
-    assert_eq!(runtime::MEM.stats().0, 10);
-    for ptr in ptrs { runtime::roca_rc_release(ptr); }
-    runtime::MEM.assert_clean();
-});
-
-mem_test!(rc_shared_const_pattern, {
-    let ptr = runtime::roca_rc_alloc(8);
-    runtime::roca_rc_retain(ptr); // refcount 2
-    runtime::roca_rc_release(ptr); // refcount 1
-    runtime::roca_rc_release(ptr); // refcount 0, freed
-    runtime::MEM.assert_clean();
-});
+// ─── Memory Tests (scope cleanup) ───────────────────
 
 mem_test!(mem_scope_frees_string_locals, {
     let mut m = jit(r#"
@@ -852,8 +809,8 @@ fn stdlib_mem_lifecycle_all_types() {
 
     // ── Free everything ──
     // RC strings from read operations
-    runtime::roca_rc_release(hostname);
-    runtime::roca_rc_release(name_val);
+    runtime::roca_free(hostname);
+    runtime::roca_free(name_val);
     // Boxed types
     runtime::roca_box_free(url);
     runtime::roca_free_json_array(arr);

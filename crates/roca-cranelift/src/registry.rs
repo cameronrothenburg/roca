@@ -206,15 +206,10 @@ runtime_funcs! {
     (http_header,       "roca_http_header",       roca_http_header,       [types::I64, types::I64],                    [types::I64]),
 
     // Memory management
+    (free,              "roca_free",              roca_free,              [types::I64],                                []),
     (box_alloc,         "roca_box_alloc",         roca_box_alloc,         [types::I64],                                [types::I64]),
-    (box_free,          "roca_box_free",          roca_box_free,          [types::I64],                                []),
     (string_new,        "roca_string_new",        roca_string_new,        [types::I64],                                [types::I64]),
-    (rc_alloc,          "roca_rc_alloc",          roca_rc_alloc,          [types::I64],                                [types::I64]),
-    (rc_retain,         "roca_rc_retain",         roca_rc_retain,         [types::I64],                                []),
-    (rc_release,        "roca_rc_release",        roca_rc_release,        [types::I64],                                []),
-    (free_array,        "roca_free_array",        roca_free_array,        [types::I64],                                []),
     (free_json_array,   "roca_free_json_array",   roca_free_json_array,   [types::I64],                                []),
-    (free_struct,       "roca_free_struct",       roca_free_struct,       [types::I64, types::I64],                    []),
 }
 
 /// Map internal runtime key (e.g. `__math_floor`) to Contract.method name (e.g. `Math.floor`).

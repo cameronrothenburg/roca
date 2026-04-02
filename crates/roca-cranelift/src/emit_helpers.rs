@@ -1,72 +1,60 @@
-//! Value type inference, scope cleanup, and shared emit utilities.
+//! Scope cleanup and shared emit utilities.
+//! Single-owner model: every heap var gets `__free(ptr)` at cleanup time.
 
-use std::sync::LazyLock;
-use cranelift_codegen::ir::{self, FuncRef, Value};
+use cranelift_codegen::ir::{self, InstBuilder, Value};
 
-use roca_types::RocaType;
 use crate::context::EmitCtx;
-use crate::cranelift_type::{CleanupRegistry, emit_cleanup};
 use crate::builder::IrBuilder;
+use crate::helpers::load_slot;
 
-static CLEANUP_REGISTRY: LazyLock<CleanupRegistry> = LazyLock::new(CleanupRegistry::new);
+/// Emit cleanup for a single variable — frees heap fields if it's a struct, then frees the value.
+fn emit_free_var(ir: &mut IrBuilder, ctx: &EmitCtx, var_name: &str, free_ref: ir::FuncRef) {
+    let var = match ctx.vars.get(var_name) {
+        Some(v) if v.is_heap => v,
+        _ => return,
+    };
+    let ptr = load_slot(ir.b, var.slot, ir::types::I64);
 
-pub struct FreeRefs {
-    pub rc_release: Option<FuncRef>,
-    pub free_array: Option<FuncRef>,
-    pub free_struct: Option<FuncRef>,
-    pub map_free: Option<FuncRef>,
-    pub box_free: Option<FuncRef>,
-}
-
-impl FreeRefs {
-    pub fn from_ctx(ctx: &EmitCtx) -> Self {
-        Self {
-            rc_release: ctx.func_refs.get("__rc_release").copied(),
-            free_array: ctx.func_refs.get("__free_array").copied(),
-            free_struct: ctx.func_refs.get("__free_struct").copied(),
-            map_free: ctx.func_refs.get("__map_free").copied(),
-            box_free: ctx.func_refs.get("__box_free").copied(),
+    // If this variable is a struct/enum, free its heap fields first
+    if let Some(struct_name) = ctx.var_struct_type.get(var_name) {
+        if let Some(layout) = ctx.struct_layouts.get(struct_name) {
+            let get_ptr = ctx.get_func("__struct_get_ptr").copied();
+            if let Some(get_fn) = get_ptr {
+                for (i, (_, kind)) in layout.fields.iter().enumerate() {
+                    if kind.is_heap() {
+                        let idx = ir.b.ins().iconst(ir::types::I64, i as i64);
+                        let field_ptr = ir.call(get_fn, &[ptr, idx]);
+                        ir.call_void(free_ref, &[field_ptr]);
+                    }
+                }
+            }
         }
     }
+
+    // Free the value itself
+    crate::helpers::call_void(ir.b, free_ref, &[ptr]);
 }
 
 /// Release all live heap variables except `skip_name` (the return value).
 pub fn emit_scope_cleanup(ir: &mut IrBuilder, ctx: &EmitCtx, skip_name: Option<&str>) {
-    let refs = FreeRefs::from_ctx(ctx);
-    let registry = &*CLEANUP_REGISTRY;
+    let free_ref = match ctx.get_func("__free") {
+        Some(&f) => f,
+        None => return,
+    };
     for var_name in &ctx.live_heap_vars {
         if skip_name == Some(var_name.as_str()) { continue; }
-        if let Some(var) = ctx.vars.get(var_name) {
-            if !var.is_heap { continue; }
-            let strategy = registry.strategy_for(&var.kind);
-            emit_cleanup(ir.b, var.slot, strategy, &refs);
-        }
+        emit_free_var(ir, ctx, var_name, free_ref);
     }
-}
-
-/// Emit free for a specific variable by its kind.
-pub fn emit_free_by_kind(
-    ir: &mut IrBuilder,
-    slot: ir::StackSlot,
-    _cl_type: ir::Type,
-    kind: RocaType,
-    refs: &FreeRefs,
-) {
-    let registry = &*CLEANUP_REGISTRY;
-    let strategy = registry.strategy_for(&kind);
-    emit_cleanup(ir.b, slot, strategy, refs);
 }
 
 /// Release only the loop-body locals (vars declared after loop_heap_base).
 pub fn emit_loop_body_cleanup(ir: &mut IrBuilder, ctx: &EmitCtx) {
-    let refs = FreeRefs::from_ctx(ctx);
-    let registry = &*CLEANUP_REGISTRY;
+    let free_ref = match ctx.get_func("__free") {
+        Some(&f) => f,
+        None => return,
+    };
     for var_name in ctx.live_heap_vars.iter().skip(ctx.loop_heap_base) {
-        if let Some(var) = ctx.vars.get(var_name) {
-            if !var.is_heap { continue; }
-            let strategy = registry.strategy_for(&var.kind);
-            emit_cleanup(ir.b, var.slot, strategy, &refs);
-        }
+        emit_free_var(ir, ctx, var_name, free_ref);
     }
 }
 
@@ -86,8 +74,8 @@ pub fn emit_struct_set(ir: &mut IrBuilder, ptr: Value, idx: Value, val: Value, c
     }
 }
 
-pub fn emit_length(ir: &mut IrBuilder, obj: Value, kind: RocaType, ctx: &mut EmitCtx) -> Value {
-    let is_array = matches!(kind, RocaType::Array(_));
+pub fn emit_length(ir: &mut IrBuilder, obj: Value, kind: roca_types::RocaType, ctx: &mut EmitCtx) -> Value {
+    let is_array = matches!(kind, roca_types::RocaType::Array(_));
     let len_func = if is_array {
         ctx.get_func("__array_len").copied()
     } else {

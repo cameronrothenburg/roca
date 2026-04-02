@@ -121,7 +121,7 @@ pub fn emit_expr(body: &mut Body, nctx: &NativeCtx, expr: &Expr) -> Value {
                 BinOp::And => body.and(l, r),
                 BinOp::Or => body.or(l, r),
             };
-            if l_is_temp_string { body.release_rc(l); }
+            if l_is_temp_string { body.free(l); }
             result
         }
         Expr::Not(inner) => {
@@ -232,12 +232,7 @@ fn emit_method_call(body: &mut Body, nctx: &NativeCtx, target: &Expr, method: &s
     let arg_vals: Vec<Value> = args.iter().map(|a| emit_expr(body, nctx, a)).collect();
     let result = emit_stdlib_dispatch(body, obj, method, &arg_vals);
 
-    if target_is_temp_heap {
-        match target_type.as_ref() {
-            Some(RocaType::Array(_)) => { body.call_void("__free_array", &[obj]); }
-            _ => { body.release_rc(obj); }
-        }
-    }
+    if target_is_temp_heap { body.free(obj); }
     result
 }
 

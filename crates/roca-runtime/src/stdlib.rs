@@ -2,7 +2,7 @@
 //! path, process, timing/async, and file I/O.
 
 use std::ffi::CStr;
-use super::{read_cstr, alloc_str, roca_free_array, MEM};
+use super::{read_cstr, alloc_str, roca_free, MEM};
 
 // ─── I/O ─────────────────────────────────────────────
 
@@ -124,14 +124,13 @@ type RocaMap = std::collections::HashMap<String, i64>;
 
 pub extern "C" fn roca_map_new() -> i64 {
     let ptr = Box::into_raw(Box::new(RocaMap::new())) as i64;
+    super::tag_alloc(ptr, super::TAG_MAP, 64);
     MEM.track_alloc(64);
     ptr
 }
 
 pub extern "C" fn roca_map_free(map_ptr: i64) {
-    if map_ptr == 0 { return; }
-    unsafe { drop(Box::from_raw(map_ptr as *mut RocaMap)); }
-    MEM.track_free(64);
+    super::roca_free(map_ptr);
 }
 
 pub extern "C" fn roca_map_set(map_ptr: i64, key: i64, value: i64) -> i64 {
@@ -187,6 +186,7 @@ pub extern "C" fn roca_map_values(map_ptr: i64) -> i64 {
 
 pub extern "C" fn roca_array_new() -> i64 {
     let ptr = Box::into_raw(Box::new(Vec::<i64>::new())) as i64;
+    super::tag_alloc(ptr, super::TAG_VEC, 32);
     MEM.track_alloc(32);
     ptr
 }
@@ -447,23 +447,18 @@ pub extern "C" fn roca_url_parse(raw: i64) -> (i64, u8) {
 // roca_box_alloc returns pointer to payload (header is 16 bytes behind it).
 // roca_box_free calls drop_fn (if set) then deallocates.
 
-const BOX_HEADER: usize = 16;
-
-/// Alignment for all box allocations. 16 ensures the payload (at BOX_HEADER offset)
-/// is correctly aligned for any type up to 16-byte alignment (covers all stdlib types).
-const BOX_ALIGN: usize = 16;
-
 fn box_alloc_inner(size: usize) -> i64 {
     if size == 0 { return 0; }
-    let total = BOX_HEADER + size;
-    let layout = std::alloc::Layout::from_size_align(total, BOX_ALIGN).unwrap();
+    let total = super::BOX_HEADER + size;
+    let layout = std::alloc::Layout::from_size_align(total, super::BOX_ALIGN).unwrap();
     unsafe {
         let base = std::alloc::alloc(layout);
         if base.is_null() { return 0; }
         *(base as *mut u64) = 0;
         *((base as *mut u64).add(1)) = total as u64;
+        super::tag_alloc(base.add(super::BOX_HEADER) as i64, super::TAG_BOX, total as i64);
         MEM.track_alloc(total as i64);
-        base.add(BOX_HEADER) as i64
+        base.add(super::BOX_HEADER) as i64
     }
 }
 
@@ -473,19 +468,7 @@ pub extern "C" fn roca_box_alloc(size: i64) -> i64 {
 }
 
 pub extern "C" fn roca_box_free(ptr: i64) {
-    if ptr == 0 { return; }
-    unsafe {
-        let base = (ptr as *mut u8).sub(BOX_HEADER);
-        let drop_fn = *(base as *const u64);
-        let total = *((base as *const u64).add(1)) as usize;
-        if drop_fn != 0 {
-            let dropper: fn(*mut u8) = std::mem::transmute(drop_fn);
-            dropper(ptr as *mut u8);
-        }
-        let layout = std::alloc::Layout::from_size_align_unchecked(total, BOX_ALIGN);
-        MEM.track_free(total as i64);
-        std::alloc::dealloc(base, layout);
-    }
+    super::roca_free(ptr);
 }
 
 fn drop_trampoline<T>(ptr: *mut u8) {
@@ -493,11 +476,11 @@ fn drop_trampoline<T>(ptr: *mut u8) {
 }
 
 pub fn box_value<T>(value: T) -> i64 {
-    assert!(std::mem::align_of::<T>() <= BOX_ALIGN, "box_value: type alignment exceeds BOX_ALIGN");
+    assert!(std::mem::align_of::<T>() <= super::BOX_ALIGN, "box_value: type alignment exceeds BOX_ALIGN");
     let ptr = box_alloc_inner(std::mem::size_of::<T>());
     if ptr == 0 { return 0; }
     unsafe {
-        let base = (ptr as *mut u8).sub(BOX_HEADER);
+        let base = (ptr as *mut u8).sub(super::BOX_HEADER);
         *(base as *mut u64) = drop_trampoline::<T> as *const () as u64;
         std::ptr::write(ptr as *mut T, value);
     }
@@ -673,7 +656,7 @@ pub extern "C" fn roca_free_json_array(ptr: i64) {
     for &elem in v.iter() {
         roca_box_free(elem);
     }
-    roca_free_array(ptr);
+    roca_free(ptr);
 }
 
 pub extern "C" fn roca_json_to_string(json: i64) -> i64 {

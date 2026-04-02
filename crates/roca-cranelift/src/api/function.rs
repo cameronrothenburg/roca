@@ -132,6 +132,7 @@ impl Function {
                 loop_heap_base: 0,
                 loop_exit: None,
                 loop_header: None,
+                pending_struct_type: None,
             };
 
             // Store params automatically
@@ -157,7 +158,7 @@ impl Function {
 
             // TODO: emit_param_constraints
 
-            let mut body = Body { ir: &mut *ir, ctx, returned: false, value_cleanups: HashMap::new() };
+            let mut body = Body { ir: &mut *ir, ctx, returned: false };
             body_fn(&mut body);
 
             // Auto default return

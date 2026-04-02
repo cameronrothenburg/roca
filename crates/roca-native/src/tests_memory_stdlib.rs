@@ -81,8 +81,8 @@ fn map_lifecycle_no_leak() {
     runtime::roca_map_delete(map, key);
     assert_eq!(runtime::roca_map_has(map, key), 0);
 
-    runtime::roca_rc_release(key);
-    runtime::roca_rc_release(val);
+    runtime::roca_free(key);
+    runtime::roca_free(val);
     runtime::roca_map_free(map);
 
     let (a, fr, _, _, _) = runtime::MEM.stats();
@@ -102,8 +102,8 @@ fn map_keys_returns_array() {
     let keys = runtime::roca_map_keys(map);
     assert!(keys != 0);
 
-    runtime::roca_rc_release(k1);
-    runtime::roca_rc_release(k2);
+    runtime::roca_free(k1);
+    runtime::roca_free(k2);
     runtime::roca_map_free(map);
 }
 
@@ -125,7 +125,7 @@ fn number_parse_valid() {
     let s = test_str("42");
     let result = runtime::roca_number_parse(s);
     assert_eq!(result, 42.0);
-    runtime::roca_rc_release(s);
+    runtime::roca_free(s);
 }
 
 #[test]
@@ -133,7 +133,7 @@ fn number_parse_invalid_returns_nan() {
     let s = test_str("abc");
     let result = runtime::roca_number_parse(s);
     assert!(result.is_nan());
-    runtime::roca_rc_release(s);
+    runtime::roca_free(s);
 }
 
 #[test]
@@ -141,7 +141,7 @@ fn number_parse_float() {
     let s = test_str("3.14");
     let result = runtime::roca_number_parse(s);
     assert!((result - 3.14).abs() < 0.001);
-    runtime::roca_rc_release(s);
+    runtime::roca_free(s);
 }
 
 // ─── Char classification ────────────────────────
@@ -150,33 +150,33 @@ fn number_parse_float() {
 fn char_is_digit() {
     let d = test_str("5");
     assert_eq!(runtime::roca_char_is_digit(d), 1);
-    runtime::roca_rc_release(d);
+    runtime::roca_free(d);
 
     let a = test_str("a");
     assert_eq!(runtime::roca_char_is_digit(a), 0);
-    runtime::roca_rc_release(a);
+    runtime::roca_free(a);
 }
 
 #[test]
 fn char_is_letter() {
     let z = test_str("Z");
     assert_eq!(runtime::roca_char_is_letter(z), 1);
-    runtime::roca_rc_release(z);
+    runtime::roca_free(z);
 
     let n = test_str("9");
     assert_eq!(runtime::roca_char_is_letter(n), 0);
-    runtime::roca_rc_release(n);
+    runtime::roca_free(n);
 }
 
 #[test]
 fn char_is_whitespace() {
     let sp = test_str(" ");
     assert_eq!(runtime::roca_char_is_whitespace(sp), 1);
-    runtime::roca_rc_release(sp);
+    runtime::roca_free(sp);
 
     let x = test_str("x");
     assert_eq!(runtime::roca_char_is_whitespace(x), 0);
-    runtime::roca_rc_release(x);
+    runtime::roca_free(x);
 }
 
 #[test]
@@ -184,7 +184,7 @@ fn char_from_code() {
     let result = runtime::roca_char_from_code(65.0);
     let s = unsafe { std::ffi::CStr::from_ptr(result as *const i8) }.to_str().unwrap();
     assert_eq!(s, "A");
-    runtime::roca_rc_release(result);
+    runtime::roca_free(result);
 }
 
 #[test]
@@ -194,5 +194,5 @@ fn char_code_at() {
     assert_eq!(runtime::roca_string_char_code_at(s, 1), 66.0);
     assert_eq!(runtime::roca_string_char_code_at(s, 2), 67.0);
     assert!(runtime::roca_string_char_code_at(s, 99).is_nan());
-    runtime::roca_rc_release(s);
+    runtime::roca_free(s);
 }

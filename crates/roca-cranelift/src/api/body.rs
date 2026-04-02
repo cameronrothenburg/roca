@@ -2,15 +2,12 @@
 //! Every Roca construct is a method. Zero IR concepts exposed.
 //! All block management, memory, cleanup is internal.
 
-use std::collections::HashMap;
 use cranelift_codegen::ir::{self, types, InstBuilder, Value};
 use roca_types::RocaType;
 use crate::builder::{IrBuilder, VarSlot};
 use crate::context::{EmitCtx, StructLayout};
-use crate::cranelift_type::{CleanupStrategy, CraneliftType};
-use crate::emit_helpers::{
-    FreeRefs, emit_scope_cleanup, emit_free_by_kind, emit_loop_body_cleanup,
-};
+use crate::cranelift_type::CraneliftType;
+use crate::emit_helpers::{emit_scope_cleanup, emit_loop_body_cleanup};
 use crate::helpers::default_for_ir_type;
 
 // ─── Variable References ──────────────────────────────
@@ -64,9 +61,6 @@ pub struct Body<'a, 'b: 'a, 'c> {
     pub(crate) ir: &'c mut IrBuilder<'a, 'b>,
     pub(crate) ctx: EmitCtx,
     pub(crate) returned: bool,
-    /// Tracks cleanup strategy for values created by Body methods.
-    /// When a value is stored in a variable, the strategy is transferred to VarInfo.
-    pub(crate) value_cleanups: HashMap<Value, CleanupStrategy>,
 }
 
 // ─── Literals ─────────────────────────────────────────
@@ -82,13 +76,11 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
 
     pub fn string(&mut self, s: &str) -> Value {
         let static_ptr = self.ir.leak_cstr(s);
-        let val = if let Some(&f) = self.ctx.get_func("__string_new") {
+        if let Some(&f) = self.ctx.get_func("__string_new") {
             self.ir.call(f, &[static_ptr])
         } else {
             static_ptr
-        };
-        self.value_cleanups.insert(val, CleanupStrategy::RcRelease);
-        val
+        }
     }
 
     pub fn null(&mut self) -> Value {
@@ -121,52 +113,59 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
         }
     }
 
-    /// Bind an immutable variable. Cleanup strategy is auto-detected from how
-    /// the value was created (string, array, struct, etc.).
+    /// Bind an immutable variable. Heap tracking is automatic — any I64 value
+    /// is marked as heap and will be freed at scope exit via `__free(ptr)`.
     pub fn const_var(&mut self, name: &str, val: Value) -> ConstRef {
-        let roca_type = self.consume_type(val);
         let cl_type = self.ir.value_ir_type(val);
         let slot = self.ir.alloc_var(val);
-        self.ctx.set_var_kind(name.to_string(), slot.0, cl_type, roca_type.clone());
-        ConstRef { name: name.to_string(), slot, roca_type }
+        self.ctx.set_var(name.to_string(), slot.0, cl_type);
+        if let Some(struct_type) = self.ctx.pending_struct_type.take() {
+            self.ctx.var_struct_type.insert(name.to_string(), struct_type);
+        }
+        ConstRef { name: name.to_string(), slot, roca_type: RocaType::Unknown }
     }
 
-    /// Bind an immutable variable with an explicit type hint.
+    /// Bind an immutable variable with an explicit type hint (for field access tracking).
     pub fn const_var_typed(&mut self, name: &str, val: Value, roca_type: RocaType) -> ConstRef {
         let cl_type = self.ir.value_ir_type(val);
         let slot = self.ir.alloc_var(val);
-        self.value_cleanups.remove(&val);
         self.ctx.set_var_kind(name.to_string(), slot.0, cl_type, roca_type.clone());
+        if let Some(struct_type) = self.ctx.pending_struct_type.take() {
+            self.ctx.var_struct_type.insert(name.to_string(), struct_type);
+        }
         ConstRef { name: name.to_string(), slot, roca_type }
     }
 
-    /// Bind a mutable variable. Cleanup strategy is auto-detected.
+    /// Bind a mutable variable. Heap tracking is automatic.
     pub fn let_var(&mut self, name: &str, val: Value) -> MutRef {
-        let roca_type = self.consume_type(val);
         let cl_type = self.ir.value_ir_type(val);
         let slot = self.ir.alloc_var(val);
-        self.ctx.set_var_kind(name.to_string(), slot.0, cl_type, roca_type.clone());
-        MutRef { name: name.to_string(), slot, roca_type }
+        self.ctx.set_var(name.to_string(), slot.0, cl_type);
+        if let Some(struct_type) = self.ctx.pending_struct_type.take() {
+            self.ctx.var_struct_type.insert(name.to_string(), struct_type);
+        }
+        MutRef { name: name.to_string(), slot, roca_type: RocaType::Unknown }
     }
 
     /// Bind a mutable variable with an explicit type hint.
     pub fn let_var_typed(&mut self, name: &str, val: Value, roca_type: RocaType) -> MutRef {
         let cl_type = self.ir.value_ir_type(val);
         let slot = self.ir.alloc_var(val);
-        self.value_cleanups.remove(&val);
         self.ctx.set_var_kind(name.to_string(), slot.0, cl_type, roca_type.clone());
+        if let Some(struct_type) = self.ctx.pending_struct_type.take() {
+            self.ctx.var_struct_type.insert(name.to_string(), struct_type);
+        }
         MutRef { name: name.to_string(), slot, roca_type }
     }
 
-    /// Reassign a mutable variable. Frees the old heap value automatically.
+    /// Reassign a mutable variable. Frees the old heap value via `__free`.
     pub fn assign(&mut self, var: &MutRef, val: Value) {
         if let Some(old) = self.ctx.get_var(&var.name) {
             if old.is_heap {
-                let slot = old.slot;
-                let cl_type = old.cranelift_type;
-                let kind = old.kind.clone();
-                let refs = FreeRefs::from_ctx(&self.ctx);
-                emit_free_by_kind(self.ir, slot, cl_type, kind, &refs);
+                if let Some(&free_ref) = self.ctx.get_func("__free") {
+                    let old_ptr = self.ir.raw().ins().stack_load(types::I64, old.slot, 0);
+                    self.ir.call_void(free_ref, &[old_ptr]);
+                }
             }
         }
         self.ir.store_var(var.slot, val);
@@ -177,11 +176,11 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
         if let Some(var) = self.ctx.get_var(name) {
             let slot = var.slot;
             let is_heap = var.is_heap;
-            let cl_type = var.cranelift_type;
-            let kind = var.kind.clone();
             if is_heap {
-                let refs = FreeRefs::from_ctx(&self.ctx);
-                emit_free_by_kind(self.ir, slot, cl_type, kind, &refs);
+                if let Some(&free_ref) = self.ctx.get_func("__free") {
+                    let old_ptr = self.ir.raw().ins().stack_load(types::I64, slot, 0);
+                    self.ir.call_void(free_ref, &[old_ptr]);
+                }
             }
             self.ir.raw().ins().stack_store(val, slot, 0);
         }
@@ -202,26 +201,6 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
         self.ctx.get_var(name).map(|v| v.kind.clone())
     }
 
-    /// Consume the tracked type of a value (removing it from the map),
-    /// falling back to IR type inference if not tracked.
-    /// For untracked I64 values (heap pointers from function calls),
-    /// defaults to RcRelease as a safe conservative cleanup.
-    fn consume_type(&mut self, val: Value) -> RocaType {
-        if let Some(strategy) = self.value_cleanups.remove(&val) {
-            return match &strategy {
-                CleanupStrategy::RcRelease => RocaType::String,
-                CleanupStrategy::FreeArray => RocaType::Array(Box::new(RocaType::Unknown)),
-                CleanupStrategy::FreeStruct { .. } => RocaType::Struct("".into()),
-                CleanupStrategy::FreeEnum => RocaType::Enum("".into()),
-                CleanupStrategy::FreeMap => RocaType::Map(Box::new(RocaType::Unknown), Box::new(RocaType::Unknown)),
-                CleanupStrategy::BoxFree => RocaType::Struct("".into()),
-                CleanupStrategy::None => RocaType::Unknown,
-            };
-        }
-        if self.ir.is_number(val) { RocaType::Number }
-        else if self.ir.value_ir_type(val) == types::I8 { RocaType::Bool }
-        else { RocaType::Unknown }
-    }
 }
 
 // ─── Operators ────────────────────────────────────────
@@ -244,7 +223,6 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
     pub fn string_concat(&mut self, l: Value, r: Value) -> Value {
         let val = if let Some(f) = self.ctx.get_func("__string_concat") { self.ir.call(*f, &[l, r]) }
         else { return self.ir.null() };
-        self.value_cleanups.insert(val, CleanupStrategy::RcRelease);
         val
     }
 
@@ -359,7 +337,6 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
         for &elem in elements {
             crate::emit_helpers::emit_array_push(self.ir, arr, elem, &mut self.ctx);
         }
-        self.value_cleanups.insert(arr, CleanupStrategy::FreeArray);
         arr
     }
 
@@ -376,21 +353,34 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
         crate::emit_helpers::emit_array_push(self.ir, arr, val, &mut self.ctx);
     }
 
-    /// Struct literal construction.
-    pub fn struct_lit(&mut self, _name: &str, fields: &[(&str, Value)]) -> Value {
+    /// Struct literal construction. Registers layout so scope cleanup
+    /// knows which fields are heap-allocated and need freeing.
+    pub fn struct_lit(&mut self, name: &str, fields: &[(&str, Value)]) -> Value {
         let num_fields = self.ir.const_i64(fields.len() as i64);
         let ptr = if let Some(f) = self.ctx.get_func("__struct_alloc") {
             self.ir.call(*f, &[num_fields])
         } else { return self.ir.null(); };
+        // Build layout from field values
+        let layout_fields: Vec<(String, RocaType)> = fields.iter()
+            .map(|(n, v)| {
+                let kind = if self.ir.is_number(*v) { RocaType::Number }
+                else if self.ir.value_ir_type(*v) == types::I8 { RocaType::Bool }
+                else { RocaType::String }; // any I64 = heap
+                (n.to_string(), kind)
+            })
+            .collect();
+        let layout_name = if name.is_empty() { format!("__anon_{}", fields.len()) } else { name.to_string() };
+        self.ctx.struct_layouts.insert(layout_name.clone(), StructLayout { fields: layout_fields });
+        self.ctx.pending_struct_type = Some(layout_name);
         for (i, &(_, val)) in fields.iter().enumerate() {
             let idx = self.ir.const_i64(i as i64);
             crate::emit_helpers::emit_struct_set(self.ir, ptr, idx, val, &mut self.ctx);
         }
-        self.value_cleanups.insert(ptr, CleanupStrategy::FreeStruct { heap_fields: 0 });
         ptr
     }
 
-    /// Enum variant construction.
+    /// Enum variant construction. The tag string (slot 0) is owned by the enum.
+    /// Registers a layout so scope cleanup knows to free heap fields.
     pub fn enum_variant(&mut self, _enum_name: &str, variant: &str, args: &[Value]) -> Value {
         let num_fields = self.ir.const_i64((1 + args.len()) as i64);
         let ptr = if let Some(f) = self.ctx.get_func("__struct_alloc") {
@@ -405,7 +395,18 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
             let idx = self.ir.const_i64((i + 1) as i64);
             crate::emit_helpers::emit_struct_set(self.ir, ptr, idx, arg, &mut self.ctx);
         }
-        self.value_cleanups.insert(ptr, CleanupStrategy::FreeEnum);
+        // Register layout: slot 0 = tag string (heap), remaining slots = args
+        let enum_layout_name = format!("__enum_{}", variant);
+        if !self.ctx.struct_layouts.contains_key(&enum_layout_name) {
+            let mut fields = vec![("__tag".to_string(), RocaType::String)];
+            for (i, &arg) in args.iter().enumerate() {
+                let kind = if self.ir.is_number(arg) { RocaType::Number } else { RocaType::Unknown };
+                fields.push((format!("__arg{}", i), kind));
+            }
+            self.ctx.struct_layouts.insert(enum_layout_name.clone(), StructLayout { fields });
+        }
+        // Track this value as having that layout (will be set on var binding)
+        self.ctx.pending_struct_type = Some(enum_layout_name);
         ptr
     }
 
@@ -499,7 +500,6 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
             crate::emit_helpers::emit_struct_set(self.ir, ptr, idx_val, val, &mut self.ctx);
         }
 
-        self.value_cleanups.insert(ptr, CleanupStrategy::FreeStruct { heap_fields: 0 });
         ptr
     }
 
@@ -516,11 +516,16 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
         self.ir.const_number(0.0)
     }
 
-    /// Release a reference-counted value (for temp string cleanup).
-    pub fn release_rc(&mut self, val: Value) {
-        if let Some(&f) = self.ctx.get_func("__rc_release") {
+    /// Free a heap value immediately (for temporary cleanup).
+    pub fn free(&mut self, val: Value) {
+        if let Some(&f) = self.ctx.get_func("__free") {
             self.ir.call_void(f, &[val]);
         }
+    }
+
+    /// Legacy alias for free().
+    pub fn release_rc(&mut self, val: Value) {
+        self.free(val);
     }
 
     /// Check if a value is a number type.
@@ -568,9 +573,9 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
                 Some(acc) => {
                     if let Some(f) = concat {
                         let new_val = self.ir.call(f, &[acc, val]);
-                        // Release the old intermediate string
-                        if let Some(&release) = self.ctx.get_func("__rc_release") {
-                            self.ir.call_void(release, &[acc]);
+                        // Free the old intermediate string
+                        if let Some(&free_fn) = self.ctx.get_func("__free") {
+                            self.ir.call_void(free_fn, &[acc]);
                         }
                         new_val
                     } else { val }
@@ -578,7 +583,6 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
             });
         }
         let val = result.unwrap_or_else(|| self.ir.null());
-        self.value_cleanups.insert(val, CleanupStrategy::RcRelease);
         val
     }
 }
@@ -762,9 +766,13 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
 // ─── Returns ──────────────────────────────────────────
 
 impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
-    /// Return a value.
+    /// Return a value. If the value came from a variable, pass `skip` to
+    /// prevent scope cleanup from freeing it — ownership transfers to caller.
     pub fn return_val(&mut self, val: Value) {
-        emit_scope_cleanup(self.ir, &self.ctx, None);
+        // Find which variable (if any) this value was loaded from.
+        // Check if val is a stack_load from a known heap variable's slot.
+        let skip = self.find_var_for_value(val);
+        emit_scope_cleanup(self.ir, &self.ctx, skip.as_deref());
         if self.ctx.returns_err {
             let no_err = self.ir.const_bool(false);
             self.ir.ret_with_err(val, no_err);
@@ -772,6 +780,24 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
             self.ir.ret(val);
         }
         self.returned = true;
+    }
+
+    /// Find which heap variable holds the given value, if any.
+    /// Returns the variable name so scope cleanup can skip freeing it.
+    fn find_var_for_value(&mut self, val: Value) -> Option<String> {
+        if self.ir.value_ir_type(val) != types::I64 { return None; }
+        let dfg = &self.ir.raw().func.dfg;
+        if let Some(inst) = dfg.value_def(val).inst() {
+            let data = &dfg.insts[inst];
+            if let ir::InstructionData::StackLoad { stack_slot, .. } = data {
+                for (name, var) in &self.ctx.vars {
+                    if var.slot == *stack_slot && var.is_heap {
+                        return Some(name.clone());
+                    }
+                }
+            }
+        }
+        None
     }
 
     /// Return an error by name.

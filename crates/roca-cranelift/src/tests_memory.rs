@@ -63,7 +63,7 @@ macro_rules! mem_test {
 
 // ─── Scope cleanup ──────────────────────────────────
 
-mem_test!(scope_cleanup_on_return, {
+mem_test!(let_string_cleaned_at_scope_exit, {
     let (mut m, rt, mut c) = jit_module();
     build_f64(&mut m, &rt, &mut c, "test", |body| {
         let s = body.string("hello");
@@ -79,7 +79,7 @@ mem_test!(scope_cleanup_on_return, {
     assert_eq!(allocs, frees, "scope cleanup: {} allocs, {} frees", allocs, frees);
 });
 
-mem_test!(const_string_freed, {
+mem_test!(const_string_cleaned_at_scope_exit, {
     let (mut m, rt, mut c) = jit_module();
     build_f64(&mut m, &rt, &mut c, "test", |body| {
         let s = body.string("constant");
@@ -97,7 +97,7 @@ mem_test!(const_string_freed, {
 
 // ─── Reassignment ───────────────────────────────────
 
-mem_test!(reassign_frees_old, {
+mem_test!(let_reassign_cleans_old_value, {
     let (mut m, rt, mut c) = jit_module();
     build_f64(&mut m, &rt, &mut c, "test", |body| {
         let s1 = body.string("first");
@@ -119,7 +119,7 @@ mem_test!(reassign_frees_old, {
 
 // ─── If/else branch cleanup ─────────────────────────
 
-mem_test!(if_else_branch_cleanup, {
+mem_test!(if_else_cleans_branch_locals, {
     let (mut m, rt, mut c) = jit_module();
     build_f64_param(&mut m, &rt, &mut c, "test", "n", |body| {
         let a = body.string("always");
@@ -155,7 +155,7 @@ mem_test!(if_else_branch_cleanup, {
     assert_eq!(a2, f2, "negative branch: {} allocs, {} frees", a2, f2);
 });
 
-mem_test!(multiple_returns_clean, {
+mem_test!(early_return_cleans_scope, {
     let (mut m, rt, mut c) = jit_module();
     build_f64_param(&mut m, &rt, &mut c, "test", "n", |body| {
         let s = body.string("local");
@@ -187,7 +187,7 @@ mem_test!(multiple_returns_clean, {
     assert_eq!(a2, f2, "else return: {} allocs, {} frees", a2, f2);
 });
 
-mem_test!(nested_scope_cleanup, {
+mem_test!(nested_branches_clean_inner_vars, {
     let (mut m, rt, mut c) = jit_module();
     build_f64_param(&mut m, &rt, &mut c, "test", "n", |body| {
         let s = body.string("outer");
@@ -220,7 +220,7 @@ mem_test!(nested_scope_cleanup, {
 
 // ─── While loop cleanup ─────────────────────────────
 
-mem_test!(while_loop_body_cleanup, {
+mem_test!(while_loop_cleans_body_each_iteration, {
     let (mut m, rt, mut c) = jit_module();
     build_f64(&mut m, &rt, &mut c, "test", |body| {
         let zero = body.number(0.0);
@@ -251,7 +251,7 @@ mem_test!(while_loop_body_cleanup, {
     assert_eq!(allocs, frees, "loop cleanup: {} allocs, {} frees", allocs, frees);
 });
 
-mem_test!(break_cleans_up, {
+mem_test!(break_cleans_loop_locals, {
     let (mut m, rt, mut c) = jit_module();
     build_f64(&mut m, &rt, &mut c, "test", |body| {
         let zero = body.number(0.0);
@@ -285,7 +285,7 @@ mem_test!(break_cleans_up, {
     assert_eq!(allocs, frees, "break cleanup: {} allocs, {} frees", allocs, frees);
 });
 
-mem_test!(while_loop_reassign, {
+mem_test!(loop_reassign_cleans_old_each_iteration, {
     let (mut m, rt, mut c) = jit_module();
     build_f64(&mut m, &rt, &mut c, "test", |body| {
         let s = body.string("init");
@@ -322,7 +322,7 @@ mem_test!(while_loop_reassign, {
 
 // ─── For-each cleanup ───────────────────────────────
 
-mem_test!(for_each_body_cleanup, {
+mem_test!(for_each_cleans_body_each_iteration, {
     let (mut m, rt, mut c) = jit_module();
     build_f64(&mut m, &rt, &mut c, "test", |body| {
         let v1 = body.number(1.0);
@@ -349,7 +349,7 @@ mem_test!(for_each_body_cleanup, {
 
 // ─── Collection cleanup ─────────────────────────────
 
-mem_test!(array_freed_at_scope_exit, {
+mem_test!(array_cleaned_at_scope_exit, {
     let (mut m, rt, mut c) = jit_module();
     build_f64(&mut m, &rt, &mut c, "test", |body| {
         let v1 = body.number(1.0);
@@ -367,7 +367,7 @@ mem_test!(array_freed_at_scope_exit, {
     assert_eq!(allocs, frees, "array freed: {} allocs, {} frees", allocs, frees);
 });
 
-mem_test!(struct_freed_at_scope_exit, {
+mem_test!(struct_cleaned_at_scope_exit, {
     let (mut m, rt, mut c) = jit_module();
     build_f64(&mut m, &rt, &mut c, "test", |body| {
         let x = body.number(10.0);
@@ -385,7 +385,7 @@ mem_test!(struct_freed_at_scope_exit, {
     assert_eq!(allocs, frees, "struct freed: {} allocs, {} frees", allocs, frees);
 });
 
-mem_test!(enum_variant_freed, {
+mem_test!(enum_variant_cleaned_at_scope_exit, {
     let (mut m, rt, mut c) = jit_module();
     build_f64(&mut m, &rt, &mut c, "test", |body| {
         let v = body.enum_variant("Color", "Red", &[]);
@@ -403,7 +403,7 @@ mem_test!(enum_variant_freed, {
 
 // ─── String concat intermediates ────────────────────
 
-mem_test!(concat_result_freed, {
+mem_test!(concat_result_cleaned_at_scope_exit, {
     let (mut m, rt, mut c) = jit_module();
     build_f64(&mut m, &rt, &mut c, "test", |body| {
         let a = body.string("hello");
@@ -428,7 +428,7 @@ mem_test!(concat_result_freed, {
 
 // ─── Error return cleanup ───────────────────────────
 
-mem_test!(error_return_frees, {
+mem_test!(error_return_cleans_all_locals, {
     let (mut m, rt, mut c) = jit_module();
     Function::new("test")
         .param("n", RocaType::Number)
@@ -466,7 +466,7 @@ mem_test!(error_return_frees, {
 
 // ─── Cross-function ownership ───────────────────────
 
-mem_test!(cross_function_ownership, {
+mem_test!(caller_owns_callee_return_value, {
     let (mut m, rt, mut c) = jit_module();
 
     // Function that returns a string
@@ -495,7 +495,7 @@ mem_test!(cross_function_ownership, {
 
 // ─── Bug 4: call_multi result bound with correct type is freed ────────
 
-mem_test!(call_multi_result_freed, {
+mem_test!(error_tuple_result_cleaned_by_caller, {
     let (mut m, rt, mut c) = jit_module();
 
     // Function that returns a string + error flag
@@ -524,4 +524,64 @@ mem_test!(call_multi_result_freed, {
     let (allocs, frees, _, _, _) = MEM.stats();
     assert!(allocs >= 1, "should allocate string");
     assert_eq!(allocs, frees, "call_multi result: {} allocs, {} frees", allocs, frees);
+});
+
+// ─── Category 2: Return value ownership ─────────────
+
+mem_test!(return_transfers_string_ownership, {
+    let (mut m, rt, mut c) = jit_module();
+
+    // Function returns a string — caller must receive a valid pointer
+    Function::new("make")
+        .returns(RocaType::String)
+        .build(&mut *m, &rt, &mut c, |body| {
+            let s = body.string("owned_by_caller");
+            body.return_val(s);
+        })
+        .unwrap();
+
+    MEM.reset();
+    let f = unsafe { std::mem::transmute::<_, fn() -> i64>(finalize_and_get(&mut m, "make")) };
+    let ptr = f();
+    // The returned string should be ALIVE — not freed by callee
+    assert_ne!(ptr, 0, "return value should be a valid pointer");
+    let result = unsafe { std::ffi::CStr::from_ptr(ptr as *const i8) }.to_str().unwrap();
+    assert_eq!(result, "owned_by_caller");
+    // Caller frees it
+    roca_runtime::roca_free(ptr);
+    let (allocs, frees, _, _, _) = MEM.stats();
+    assert_eq!(allocs, frees, "return ownership: {} allocs, {} frees", allocs, frees);
+});
+
+mem_test!(return_cleans_non_returned_locals, {
+    let (mut m, rt, mut c) = jit_module();
+
+    // Function has locals AND returns a string stored in a variable
+    // The local should be freed, but the return value (also a local) should survive
+    Function::new("make")
+        .returns(RocaType::String)
+        .build(&mut *m, &rt, &mut c, |body| {
+            let local = body.string("will_be_freed");
+            body.const_var("local", local);
+            let result = body.string("returned");
+            body.const_var("result", result);
+            let r = body.var("result");
+            body.return_val(r);
+        })
+        .unwrap();
+
+    MEM.reset();
+    let f = unsafe { std::mem::transmute::<_, fn() -> i64>(finalize_and_get(&mut m, "make")) };
+    let ptr = f();
+    assert_ne!(ptr, 0);
+    let result = unsafe { std::ffi::CStr::from_ptr(ptr as *const i8) }.to_str().unwrap();
+    assert_eq!(result, "returned");
+    // At this point: 2 allocs, 1 free (local cleaned, return survived)
+    let (allocs, frees, _, _, _) = MEM.stats();
+    assert_eq!(allocs, 2, "2 strings allocated");
+    assert_eq!(frees, 1, "1 local freed by callee");
+    // Caller frees the return value
+    roca_runtime::roca_free(ptr);
+    let (allocs, frees, _, _, _) = MEM.stats();
+    assert_eq!(allocs, frees, "all cleaned: {} allocs, {} frees", allocs, frees);
 });

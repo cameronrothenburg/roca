@@ -52,6 +52,8 @@ pub struct EmitCtx {
     pub loop_heap_base: usize,
     pub loop_exit: Option<ir::Block>,
     pub loop_header: Option<ir::Block>,
+    /// Set by struct_lit/enum_variant, consumed by const_var/let_var to auto-register var_struct_type
+    pub pending_struct_type: Option<String>,
 }
 
 impl EmitCtx {
