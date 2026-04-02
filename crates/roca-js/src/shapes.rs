@@ -377,11 +377,13 @@ fn js_match_as_iife<'a>(ast: &AstBuilder<'a>, value: &Expr, arms: &[roca::MatchA
     let mixed = match_has_err_arms(arms);
     let mut stmts = ast.vec();
 
+    let mut has_wildcard = false;
     for arm in arms.iter() {
         let arm_value = build_match_arm_value(ast, &arm.value, mixed);
         match &arm.pattern {
             None => {
                 stmts.push(return_stmt(ast, arm_value));
+                has_wildcard = true;
                 break; // wildcard is the default; nothing after it is reachable
             }
             Some(MatchPattern::Value(pattern)) => {
@@ -431,7 +433,9 @@ fn js_match_as_iife<'a>(ast: &AstBuilder<'a>, value: &Expr, arms: &[roca::MatchA
         }
     }
 
-    stmts.push(return_stmt(ast, ident(ast, "undefined")));
+    if !has_wildcard {
+        stmts.push(return_stmt(ast, ident(ast, "undefined")));
+    }
 
     let body = function_body(ast, stmts);
     let params = formal_params(ast, ast.vec());

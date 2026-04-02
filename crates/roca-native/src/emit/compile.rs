@@ -349,9 +349,9 @@ pub fn compile_extern_fn_stub<M: Module>(
 
 /// Compile a test shim for a function.
 ///
-/// The shim has a fixed 2-param calling convention: `fn(args_ptr: i64, args_len: i64) -> i64`
+/// The shim has a fixed 1-param calling convention: `fn(args_ptr: i64) -> i64`
 /// (or `-> (i64, i8)` for error-returning functions). The test runner packs all args into a
-/// `Vec<u64>` and passes a pointer + length — one code path for any param count and any type mix.
+/// `Vec<u64>` and passes a pointer — one code path for any param count and any type mix.
 ///
 /// The shim unpacks each arg from the array (loading 8 bytes at each slot), converts to the
 /// real param type (bitcast for f64, narrow for bool, identity for string/struct), then calls
@@ -367,7 +367,7 @@ pub fn compile_test_shim<M: Module>(
         Some(sn) => format!("{}.{}", sn, func.name),
         None => func.name.clone(),
     };
-    let shim_name = format!("{}__shim", real_name);
+    let shim_name = crate::test_runner::shim_name(&real_name);
     if compiled.has(&shim_name) { return Ok(()); }
 
     let param_types: Vec<RocaType> = func.params.iter()

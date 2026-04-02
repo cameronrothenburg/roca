@@ -85,7 +85,7 @@ fn run_property(
     is_method: bool,
     args: &[Expr],
 ) -> PropertyResult {
-    let shim_name = format!("{}__shim", jit_name);
+    let shim_name = crate::test_runner::shim_name(jit_name);
     let ptr = match module.get_function_ptr(&shim_name) {
         Some(p) => p,
         None => return PropertyResult::Crashed(format!("shim not found: {}", shim_name)),

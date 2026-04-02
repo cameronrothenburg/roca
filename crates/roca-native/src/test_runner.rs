@@ -8,6 +8,11 @@ use roca_types::RocaType;
 use roca_ast::{Expr, test_block::{TestBlock, TestCase}};
 
 
+/// Build the shim function name for a given base name.
+pub(crate) fn shim_name(base: &str) -> String {
+    format!("{}__shim", base)
+}
+
 /// Result of running native proof tests
 pub struct NativeTestResult {
     pub passed: usize,
@@ -81,23 +86,32 @@ fn run_fn_tests(
     failed: &mut usize,
     output: &mut String,
 ) {
+    let name = shim_name(&func.name);
+    let ptr = match module.get_function_ptr(&name) {
+        Some(p) => p,
+        None => {
+            output.push_str(&format!("  ✗ {} (shim not found)\n", func.name));
+            *failed += test.cases.len();
+            return;
+        }
+    };
     for case in &test.cases {
         match case {
             TestCase::Equals { args, expected } => {
-                run_equals_test(module, func, args, expected, passed, failed, output);
+                run_equals_test(ptr, func, args, expected, passed, failed, output);
             }
             TestCase::IsOk { args } => {
-                run_ok_test(module, func, args, passed, failed, output);
+                run_ok_test(ptr, func, args, passed, failed, output);
             }
             TestCase::IsErr { args, err_name } => {
-                run_err_test(module, func, args, err_name, passed, failed, output);
+                run_err_test(ptr, func, args, err_name, passed, failed, output);
             }
         }
     }
 }
 
 fn run_equals_test(
-    module: &JitModule,
+    ptr: *const u8,
     func: &ast::FnDef,
     args: &[Expr],
     expected: &Expr,
@@ -107,15 +121,6 @@ fn run_equals_test(
 ) {
     let ret_type = RocaType::from(&func.return_type);
     let label = format_test_label(func, args);
-    let shim_name = format!("{}__shim", func.name);
-    let ptr = match module.get_function_ptr(&shim_name) {
-        Some(p) => p,
-        None => {
-            output.push_str(&format!("  ✗ {} (shim not found)\n", label));
-            *failed += 1;
-            return;
-        }
-    };
 
     let (result_bits, _err) = call_fn(ptr, func, false, args);
 
@@ -143,7 +148,7 @@ fn run_equals_test(
             }
         }
         _ => {
-            let result = read_cstr_safe(result_bits as i64 as *const u8);
+            let result = read_cstr_safe(result_bits as usize as *const u8);
             let exp = expr_to_string(expected);
             if result == exp {
                 output.push_str(&format!("  ✓ {} == \"{}\"\n", label, exp));
@@ -157,7 +162,7 @@ fn run_equals_test(
 }
 
 fn run_ok_test(
-    module: &JitModule,
+    ptr: *const u8,
     func: &ast::FnDef,
     args: &[Expr],
     passed: &mut usize,
@@ -166,15 +171,6 @@ fn run_ok_test(
 ) {
     if !func.returns_err { return; }
     let label = format_test_label(func, args);
-    let shim_name = format!("{}__shim", func.name);
-    let ptr = match module.get_function_ptr(&shim_name) {
-        Some(p) => p,
-        None => {
-            output.push_str(&format!("  ✗ {} (shim not found)\n", label));
-            *failed += 1;
-            return;
-        }
-    };
 
     let (_val, err) = call_fn(ptr, func, false, args);
     if err == 0 {
@@ -187,7 +183,7 @@ fn run_ok_test(
 }
 
 fn run_err_test(
-    module: &JitModule,
+    ptr: *const u8,
     func: &ast::FnDef,
     args: &[Expr],
     _err_name: &str,
@@ -197,15 +193,6 @@ fn run_err_test(
 ) {
     if !func.returns_err { return; }
     let label = format_test_label(func, args);
-    let shim_name = format!("{}__shim", func.name);
-    let ptr = match module.get_function_ptr(&shim_name) {
-        Some(p) => p,
-        None => {
-            output.push_str(&format!("  ✗ {} (shim not found)\n", label));
-            *failed += 1;
-            return;
-        }
-    };
 
     let (_val, err) = call_fn(ptr, func, false, args);
     if err != 0 {
@@ -250,7 +237,7 @@ pub(super) fn call_fn(
         let rtype = RocaType::from(&param.type_ref);
         match rtype {
             RocaType::Number => packed.push(expr_to_f64(arg).to_bits()),
-            RocaType::Bool   => packed.push(if expr_to_bool_raw(arg) { 1 } else { 0 }),
+            RocaType::Bool   => packed.push(if expr_to_bool(arg) { 1 } else { 0 }),
             _ => {
                 let s = if let Expr::String(s) = arg { s.as_str() } else { "" };
                 let cstr = std::ffi::CString::new(s).unwrap_or_default();
@@ -315,10 +302,6 @@ fn expr_to_bool(expr: &Expr) -> bool {
     }
 }
 
-/// Bool conversion for packing into the args array (used by call_fn).
-pub(super) fn expr_to_bool_raw(expr: &Expr) -> bool {
-    expr_to_bool(expr)
-}
 
 fn read_cstr_safe(ptr: *const u8) -> String {
     if ptr.is_null() { return String::new(); }
