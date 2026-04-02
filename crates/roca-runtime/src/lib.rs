@@ -1,6 +1,32 @@
 //! Host runtime for JIT-compiled Roca code — provides stdlib functions,
 //! single-owner memory management, and the memory tracker.
 //!
+//! # Domain Boundary
+//!
+//! This crate owns **HOW** memory is freed — the implementation:
+//! - Allocation tagging (`ALLOC_TAGS`): every heap value gets a tag on creation
+//! - `roca_free`: reads the tag, dispatches by type, deallocates with correct
+//!   layout, recursively frees children (e.g. strings inside arrays)
+//! - `MemTracker`: thread-local alloc/free counters for leak detection in tests
+//!
+//! It does NOT own **WHEN** values are freed — that belongs in `roca-cranelift`.
+//! Cranelift's Body decides scope exit, reassignment, temp flush timing.
+//! This crate just provides `roca_free(ptr)` as a callable host function.
+//!
+//! Stdlib functions (string ops, array ops, JSON, HTTP, etc.) allocate
+//! internally and tag their allocations. This is why the allocator lives
+//! here — stdlib functions must allocate, and moving the allocator elsewhere
+//! would create circular dependencies.
+//!
+//! This crate does NOT know about:
+//! - Cranelift IR, function compilation, or module building
+//! - Roca AST nodes, type checking, or language semantics
+//! - Test orchestration or test runner logic (roca-native's domain)
+//!
+//! Tests here should verify individual stdlib functions and roca_free
+//! correctness. Memory lifecycle tests (allocs == frees after running
+//! compiled code) belong in roca-cranelift.
+//!
 //! # Memory Model
 //!
 //! Every heap value has one owner. When the owner goes away, the value is freed
@@ -240,6 +266,15 @@ pub extern "C" fn roca_free(ptr: i64) {
             unsafe { std::alloc::dealloc(ptr as *mut u8, layout); }
         }
         TAG_VEC => {
+            let v = unsafe { &*(ptr as *const Vec<i64>) };
+            for &elem in v.iter() {
+                if elem != 0 {
+                    let is_tracked = ALLOC_TAGS.with(|t| t.borrow().contains_key(&elem));
+                    if is_tracked {
+                        roca_free(elem);
+                    }
+                }
+            }
             let v = unsafe { Box::from_raw(ptr as *mut Vec<i64>) };
             drop(v);
         }

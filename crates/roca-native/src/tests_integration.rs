@@ -57,19 +57,6 @@ fn error_pipeline_over_transform_limit() {
     assert_eq!(f(600.0), 600.0); // transform fails, returns raw
 }
 
-mem_test!(error_pipeline_no_leak, {
-    let mut m = jit(ERROR_HANDLING);
-    let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "pipeline")) };
-    runtime::MEM.reset();
-    f(5.0);
-    let (a, fr, _, _, _) = runtime::MEM.stats();
-    assert_eq!(a, fr, "ok path: {} allocs, {} frees", a, fr);
-    runtime::MEM.reset();
-    f(-1.0);
-    let (a2, f2, _, _, _) = runtime::MEM.stats();
-    assert_eq!(a2, f2, "error path: {} allocs, {} frees", a2, f2);
-});
-
 // ─── Enum AST integration ───────────────────────────
 
 const ENUM_AST: &str = r#"
@@ -94,15 +81,6 @@ fn enum_ast_run() {
     let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "run")) };
     assert_eq!(f(), 15.0);
 }
-
-mem_test!(enum_ast_no_leak, {
-    let mut m = jit(ENUM_AST);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "run")) };
-    runtime::MEM.reset();
-    f();
-    let (a, fr, _, _, _) = runtime::MEM.stats();
-    assert_eq!(a, fr, "enum ast: {} allocs, {} frees", a, fr);
-});
 
 // ─── Closures + HOF integration ─────────────────────
 

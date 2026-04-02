@@ -316,8 +316,8 @@ impl Satisfies {
 
 /// Roca enum builder — registers variants. No code emission (metadata only).
 pub struct RocaEnum {
-    pub name: String,
-    pub variants: Vec<(String, Vec<RocaType>)>,
+    pub(crate) name: String,
+    pub(crate) variants: Vec<(String, Vec<RocaType>)>,
 }
 
 impl RocaEnum {

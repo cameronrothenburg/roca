@@ -5,6 +5,28 @@
 //! and [`roca_runtime`] (host functions). Consumed by `roca-cli` to execute
 //! inline `test {}` blocks before emitting JavaScript.
 //!
+//! # Domain Boundary
+//!
+//! This crate is the **AST walker** — it translates Roca AST into
+//! `roca-cranelift` Body method calls. It owns Roca-specific semantics:
+//! - Stdlib dispatch (routing method calls to runtime functions)
+//! - Crash handling (retry, halt, fallback, log, panic)
+//! - Constraint validation (min/max/contains on params and struct fields)
+//! - Error tuple destructuring (let {val, err} = call())
+//! - Inline map/filter expansion
+//! - NativeCtx (crash handlers, enum variants, return types, struct defs)
+//! - Test runner and property test execution
+//!
+//! It does NOT own:
+//! - IR generation — that's roca-cranelift's Body (this crate calls Body methods)
+//! - Memory management — cranelift decides WHEN to free, runtime decides HOW
+//! - Host function implementations — roca-runtime provides those
+//! - Raw Cranelift APIs — this crate never imports cranelift_codegen/frontend/module
+//!
+//! Tests here verify **logic correctness**: parse Roca source, JIT compile,
+//! call function, assert return value. No memory tests (allocs/frees) — those
+//! belong in roca-cranelift.
+//!
 //! # Key exports
 //!
 //! - [`compile_all()`] — compile every function, struct method, and satisfies
@@ -19,7 +41,7 @@
 //!   constraints.
 
 pub mod runtime;
-pub mod emit;
+pub(crate) mod emit;
 pub mod test_runner;
 pub mod property_tests;
 #[cfg(test)]
@@ -138,7 +160,4 @@ pub fn compile_to_object(source: &roca_ast::SourceFile) -> Result<Vec<u8>, Strin
 #[cfg(test)] mod tests_features;
 #[cfg(test)] mod tests_stdlib;
 #[cfg(test)] mod tests_stdlib_ext;
-#[cfg(test)] mod tests_memory;
-#[cfg(test)] mod tests_memory_complex;
 #[cfg(test)] mod tests_integration;
-#[cfg(test)] mod tests_memory_stdlib;

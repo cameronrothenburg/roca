@@ -119,11 +119,7 @@ fn multiple_match_types() {
             }
         }
     "#);
-    let mut sig = m.make_signature();
-    sig.params.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I64));
-    sig.returns.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I64));
-    let id = m.declare_function("label", cranelift_module::Linkage::Export, &sig).unwrap();
-    let f = unsafe { std::mem::transmute::<_, fn(*const u8) -> *const u8>(m.get_finalized_function(id)) };
+    let f = unsafe { std::mem::transmute::<_, fn(*const u8) -> *const u8>(get_function_ptr(&m, "label").unwrap()) };
     assert_eq!(unsafe { std::ffi::CStr::from_ptr(f(b"a\0".as_ptr()) as *const i8) }.to_str().unwrap(), "alpha");
     assert_eq!(unsafe { std::ffi::CStr::from_ptr(f(b"b\0".as_ptr()) as *const i8) }.to_str().unwrap(), "beta");
     assert_eq!(unsafe { std::ffi::CStr::from_ptr(f(b"x\0".as_ptr()) as *const i8) }.to_str().unwrap(), "unknown");
@@ -138,11 +134,7 @@ fn string_length() {
             return s.length
         }
     "#);
-    let mut sig = m.make_signature();
-    sig.params.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I64));
-    sig.returns.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::F64));
-    let id = m.declare_function("len", cranelift_module::Linkage::Export, &sig).unwrap();
-    let f = unsafe { std::mem::transmute::<_, fn(*const u8) -> f64>(m.get_finalized_function(id)) };
+    let f = unsafe { std::mem::transmute::<_, fn(*const u8) -> f64>(get_function_ptr(&m, "len").unwrap()) };
     assert_eq!(f(b"hello\0".as_ptr()), 5.0);
     assert_eq!(f(b"\0".as_ptr()), 0.0);
 }
@@ -155,11 +147,7 @@ fn string_includes() {
             return 0
         }
     "#);
-    let mut sig = m.make_signature();
-    sig.params.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I64));
-    sig.returns.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::F64));
-    let id = m.declare_function("has_world", cranelift_module::Linkage::Export, &sig).unwrap();
-    let f = unsafe { std::mem::transmute::<_, fn(*const u8) -> f64>(m.get_finalized_function(id)) };
+    let f = unsafe { std::mem::transmute::<_, fn(*const u8) -> f64>(get_function_ptr(&m, "has_world").unwrap()) };
     assert_eq!(f(b"hello world\0".as_ptr()), 1.0);
     assert_eq!(f(b"hello\0".as_ptr()), 0.0);
 }
@@ -171,11 +159,7 @@ fn string_trim_upper_lower() {
             return s.trim().toUpperCase()
         }
     "#);
-    let mut sig = m.make_signature();
-    sig.params.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I64));
-    sig.returns.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I64));
-    let id = m.declare_function("clean", cranelift_module::Linkage::Export, &sig).unwrap();
-    let f = unsafe { std::mem::transmute::<_, fn(*const u8) -> *const u8>(m.get_finalized_function(id)) };
+    let f = unsafe { std::mem::transmute::<_, fn(*const u8) -> *const u8>(get_function_ptr(&m, "clean").unwrap()) };
     let result = f(b"  hello  \0".as_ptr());
     assert_eq!(unsafe { std::ffi::CStr::from_ptr(result as *const i8) }.to_str().unwrap(), "HELLO");
 }
@@ -187,11 +171,7 @@ fn string_slice() {
             return s.slice(0, 3)
         }
     "#);
-    let mut sig = m.make_signature();
-    sig.params.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I64));
-    sig.returns.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I64));
-    let id = m.declare_function("first_three", cranelift_module::Linkage::Export, &sig).unwrap();
-    let f = unsafe { std::mem::transmute::<_, fn(*const u8) -> *const u8>(m.get_finalized_function(id)) };
+    let f = unsafe { std::mem::transmute::<_, fn(*const u8) -> *const u8>(get_function_ptr(&m, "first_three").unwrap()) };
     let result = f(b"abcdef\0".as_ptr());
     assert_eq!(unsafe { std::ffi::CStr::from_ptr(result as *const i8) }.to_str().unwrap(), "abc");
 }
@@ -203,11 +183,7 @@ fn string_index_of() {
             return s.indexOf("world")
         }
     "#);
-    let mut sig = m.make_signature();
-    sig.params.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I64));
-    sig.returns.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::F64));
-    let id = m.declare_function("find_pos", cranelift_module::Linkage::Export, &sig).unwrap();
-    let f = unsafe { std::mem::transmute::<_, fn(*const u8) -> f64>(m.get_finalized_function(id)) };
+    let f = unsafe { std::mem::transmute::<_, fn(*const u8) -> f64>(get_function_ptr(&m, "find_pos").unwrap()) };
     assert_eq!(f(b"hello world\0".as_ptr()), 6.0);
     assert_eq!(f(b"hello\0".as_ptr()), -1.0);
 }
@@ -219,11 +195,7 @@ fn chained_string_methods() {
             return s.trim().toLowerCase()
         }
     "#);
-    let mut sig = m.make_signature();
-    sig.params.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I64));
-    sig.returns.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I64));
-    let id = m.declare_function("process", cranelift_module::Linkage::Export, &sig).unwrap();
-    let f = unsafe { std::mem::transmute::<_, fn(*const u8) -> *const u8>(m.get_finalized_function(id)) };
+    let f = unsafe { std::mem::transmute::<_, fn(*const u8) -> *const u8>(get_function_ptr(&m, "process").unwrap()) };
     let result = f(b"  HELLO WORLD  \0".as_ptr());
     assert_eq!(unsafe { std::ffi::CStr::from_ptr(result as *const i8) }.to_str().unwrap(), "hello world");
 }
@@ -345,12 +317,7 @@ fn crash_halt_propagates() {
         }}
     "#);
     // Call outer with error — should propagate
-    let mut sig = m.make_signature();
-    sig.params.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::F64));
-    sig.returns.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::F64));
-    sig.returns.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I8));
-    let id = m.declare_function("outer", cranelift_module::Linkage::Export, &sig).unwrap();
-    let f = unsafe { std::mem::transmute::<_, fn(f64) -> (f64, u8)>(m.get_finalized_function(id)) };
+    let f = unsafe { std::mem::transmute::<_, fn(f64) -> (f64, u8)>(get_function_ptr(&m, "outer").unwrap()) };
     let (val, err) = f(5.0);
     assert_eq!(val, 20.0);
     assert_eq!(err, 0);

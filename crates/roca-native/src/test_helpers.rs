@@ -28,14 +28,4 @@ mod helpers {
             .unwrap_or("")
     }
 
-    macro_rules! mem_test {
-        ($name:ident, $body:block) => {
-            #[test]
-            fn $name() {
-                crate::runtime::MEM.reset();
-                $body
-            }
-        };
-    }
-    pub(crate) use mem_test;
 }

@@ -21,13 +21,21 @@ pub fn emit_body(body: &mut Body, nctx: &NativeCtx, stmts: &[Stmt]) {
 
 fn emit_stmt(body: &mut Body, nctx: &NativeCtx, stmt: &Stmt) {
     match stmt {
-        Stmt::Const { name, value, .. } | Stmt::Let { name, value, .. } => {
+        Stmt::Const { name, value, .. } => {
             if let Expr::StructLit { name: struct_name, .. } = value {
                 body.set_struct_type(name, struct_name);
             }
             let kind = nctx.infer_type(value, body);
             let val = emit_expr(body, nctx, value);
             body.const_var_typed(name, val, kind);
+        }
+        Stmt::Let { name, value, .. } => {
+            if let Expr::StructLit { name: struct_name, .. } = value {
+                body.set_struct_type(name, struct_name);
+            }
+            let kind = nctx.infer_type(value, body);
+            let val = emit_expr(body, nctx, value);
+            body.let_var_typed(name, val, kind);
         }
         Stmt::Return(expr) => {
             let val = emit_expr(body, nctx, expr);
@@ -87,6 +95,7 @@ fn emit_stmt(body: &mut Body, nctx: &NativeCtx, stmt: &Stmt) {
             emit_wait(body, nctx, names, failed_name, kind);
         }
     }
+    body.flush_temps();
 }
 
 pub fn emit_expr(body: &mut Body, nctx: &NativeCtx, expr: &Expr) -> Value {
@@ -98,13 +107,10 @@ pub fn emit_expr(body: &mut Body, nctx: &NativeCtx, expr: &Expr) -> Value {
         Expr::SelfRef => body.self_ref(),
         Expr::Ident(name) => body.var(name),
         Expr::BinOp { left, op, right } => {
-            let l_is_temp_string = matches!(op, BinOp::Add)
-                && !matches!(left.as_ref(), Expr::Ident(_) | Expr::Number(_) | Expr::Bool(_) | Expr::Null)
-                && nctx.infer_type(left, body) == RocaType::String;
             let l = emit_expr(body, nctx, left);
             let r = emit_expr(body, nctx, right);
             let is_float = body.is_number(l);
-            let result = match op {
+            match op {
                 BinOp::Add if is_float => body.add(l, r),
                 BinOp::Add => body.string_concat(l, r),
                 BinOp::Sub => body.sub(l, r),
@@ -120,9 +126,7 @@ pub fn emit_expr(body: &mut Body, nctx: &NativeCtx, expr: &Expr) -> Value {
                 BinOp::Gte => body.gte(l, r),
                 BinOp::And => body.and(l, r),
                 BinOp::Or => body.or(l, r),
-            };
-            if l_is_temp_string { body.free(l); }
-            result
+            }
         }
         Expr::Not(inner) => {
             let val = emit_expr(body, nctx, inner);
@@ -221,19 +225,9 @@ fn emit_method_call(body: &mut Body, nctx: &NativeCtx, target: &Expr, method: &s
         }
     }
 
-    // Track temp heap values for chained method calls (strings and arrays)
-    let target_type = if !matches!(target, Expr::Ident(_) | Expr::String(_)) {
-        Some(nctx.infer_type(target, body))
-    } else { None };
-    let target_is_temp_heap = target_type.as_ref()
-        .map_or(false, |t| matches!(t, RocaType::String | RocaType::Array(_)));
-
     let obj = emit_expr(body, nctx, target);
     let arg_vals: Vec<Value> = args.iter().map(|a| emit_expr(body, nctx, a)).collect();
-    let result = emit_stdlib_dispatch(body, obj, method, &arg_vals);
-
-    if target_is_temp_heap { body.free(obj); }
-    result
+    emit_stdlib_dispatch(body, obj, method, &arg_vals)
 }
 
 fn emit_field_access(body: &mut Body, nctx: &NativeCtx, target: &Expr, field: &str) -> Value {
@@ -670,8 +664,7 @@ fn emit_crash_call(
                     let counter = b.var("__crash_counter");
                     let has_more = b.int_lt(counter, max);
                     let err = b.var("__crash_err");
-                    let err_ext = b.extend_bool(err);
-                    b.and(has_more, err_ext)
+                    b.and(has_more, err)
                 },
                 move |b| {
                     if delay_ms > 0 {

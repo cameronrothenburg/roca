@@ -351,7 +351,7 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
     }
 
     /// Get the IR type of a value (for dispatch decisions in the emit layer).
-    pub fn value_type(&self, val: Value) -> cranelift_codegen::ir::Type {
+    pub(crate) fn value_type(&self, val: Value) -> cranelift_codegen::ir::Type {
         self.ir.value_ir_type(val)
     }
 
@@ -1154,7 +1154,11 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
 
                     self.ir.switch_to(then_block);
                     self.ir.seal(then_block);
+                    let saved_temps = self.temps.clone();
                     let result = emit_fn(self, value_expr);
+                    self.claim_temp(result);
+                    self.flush_temps_inner();
+                    self.temps = saved_temps;
                     self.ir.jump_with(merge, result);
 
                     self.ir.switch_to(next_block);
@@ -1190,7 +1194,11 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
                         self.ctx.set_var_kind(binding.clone(), slot.0, types::F64, RocaType::Number);
                     }
 
+                    let saved_temps = self.temps.clone();
                     let result = emit_fn(self, value_expr);
+                    self.claim_temp(result);
+                    self.flush_temps_inner();
+                    self.temps = saved_temps;
                     self.ir.jump_with(merge, result);
 
                     self.ir.switch_to(next_block);
@@ -1199,11 +1207,15 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
             }
         }
 
+        let saved_temps = self.temps.clone();
         let default_val = if let Some(expr) = default_expr {
             emit_fn(self, expr)
         } else {
             self.ir.default_for(&result_type)
         };
+        self.claim_temp(default_val);
+        self.flush_temps_inner();
+        self.temps = saved_temps;
         self.ir.jump_with(merge, default_val);
 
         self.ir.switch_to(merge);

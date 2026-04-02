@@ -265,12 +265,8 @@ fn integration_string_processing_pipeline() {
             return upper
         }
     "#);
-    let mut sig = m.make_signature();
-    sig.params.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I64));
-    sig.returns.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I64));
-    let id = m.declare_function("process_name", cranelift_module::Linkage::Export, &sig).unwrap();
-    let f = unsafe { std::mem::transmute::<_, fn(*const u8) -> *const u8>(m.get_finalized_function(id)) };
-    let result = f(b"  hello  \0".as_ptr());
+    let f = unsafe { std::mem::transmute::<_, fn(i64) -> i64>(get_function_ptr(&m, "process_name").unwrap()) };
+    let result = f(b"  hello  \0".as_ptr() as i64) as *const u8;
     assert_eq!(unsafe { std::ffi::CStr::from_ptr(result as *const i8) }.to_str().unwrap(), "HELLO");
 }
 
@@ -308,12 +304,8 @@ fn integration_multi_function_with_strings() {
             return shout(greeting)
         }
     "#);
-    let mut sig = m.make_signature();
-    sig.params.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I64));
-    sig.returns.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I64));
-    let id = m.declare_function("pipeline", cranelift_module::Linkage::Export, &sig).unwrap();
-    let f = unsafe { std::mem::transmute::<_, fn(*const u8) -> *const u8>(m.get_finalized_function(id)) };
-    let result = f(b"world\0".as_ptr());
+    let f = unsafe { std::mem::transmute::<_, fn(i64) -> i64>(get_function_ptr(&m, "pipeline").unwrap()) };
+    let result = f(b"world\0".as_ptr() as i64) as *const u8;
     assert_eq!(unsafe { std::ffi::CStr::from_ptr(result as *const i8) }.to_str().unwrap(), "HELLO WORLD");
 }
 

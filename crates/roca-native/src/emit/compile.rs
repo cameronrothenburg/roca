@@ -114,7 +114,7 @@ pub fn compile_closures<M: Module>(
     }
     for (params, closure_body) in closures {
         let name = format!("__closure_{}_{}", params.len(), closure_hash(&params, &closure_body));
-        if compiled.funcs.contains_key(&name) { continue; }
+        if compiled.has(&name) { continue; }
 
         let mut func = Function::new(&name);
         for p in &params {
@@ -195,7 +195,7 @@ pub fn compile_wait_exprs<M: Module>(
         ..Default::default()
     };
     for (name, expr) in wait_exprs {
-        if compiled.funcs.contains_key(&name) { continue; }
+        if compiled.has(&name) { continue; }
         Function::new(&name)
             .returns(RocaType::Number)
             .build(module, rt, compiled, |body| {
@@ -315,7 +315,7 @@ pub fn compile_struct_method<M: Module>(
     }
     f = f.returns(RocaType::from(&func.return_type))
         .returns_err_if(func.returns_err)
-        .with_struct_layout(struct_name, roca_cranelift::StructLayout { fields: field_info })
+        .with_struct_layout(struct_name, roca_cranelift::StructLayout::new(field_info))
         .with_self_struct_type(struct_name);
 
     let nctx = build_native_ctx(func.crash.as_ref(), func_return_kinds, enum_variants, struct_defs);
@@ -359,7 +359,7 @@ pub fn compile_contract_stubs<M: Module>(
 ) -> Result<(), String> {
     for sig_def in &contract.functions {
         let qualified = format!("{}.{}", contract.name, sig_def.name);
-        if compiled.funcs.contains_key(&qualified) { continue; }
+        if compiled.has(&qualified) { continue; }
 
         let ret_type = RocaType::from(&sig_def.return_type);
         let returns_err = sig_def.returns_err;

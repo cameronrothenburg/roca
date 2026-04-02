@@ -6,6 +6,28 @@
 //!
 //! Depends on [`roca_types`] and [`roca_runtime`]. Consumed by `roca-native`.
 //!
+//! # Domain Boundary
+//!
+//! This crate owns **WHEN** memory is freed — the lifecycle:
+//! - Scope exit: free all `const` and remaining `let` bindings
+//! - Reassignment: free the old value before storing the new one
+//! - Temp flush: free unclaimed heap temporaries at statement boundaries
+//! - Loop iteration: free loop-local variables before jumping back
+//! - Match arms: free arm-local temporaries before jumping to merge
+//!
+//! It does NOT own **HOW** values are freed — that belongs in `roca-runtime`.
+//! Body emits `call __free(ptr)`. Runtime decides the deallocation strategy
+//! (tags, layouts, recursive child freeing).
+//!
+//! This crate does NOT know about:
+//! - Roca AST nodes or source parsing
+//! - Crash handlers, test runners, property testing (roca-native's domain)
+//! - Stdlib function implementations (roca-runtime's domain)
+//! - Language-specific orchestration (which functions to compile, ordering)
+//!
+//! Tests here verify Body/Function API correctness and memory lifecycle
+//! (allocs == frees). End-to-end Roca compilation tests belong in roca-native.
+//!
 //! # Key exports
 //!
 //! - **Builder API** ([`api`] module) — [`Function`], [`Method`], [`Struct`],

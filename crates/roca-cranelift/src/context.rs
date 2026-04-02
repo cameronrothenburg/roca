@@ -7,25 +7,37 @@ use roca_types::RocaType;
 
 /// Tracks compiled functions for cross-function references
 pub struct CompiledFuncs {
-    pub funcs: HashMap<String, cranelift_module::FuncId>,
+    pub(crate) funcs: HashMap<String, cranelift_module::FuncId>,
 }
 
 impl CompiledFuncs {
     pub fn new() -> Self { Self { funcs: HashMap::new() } }
+
+    /// Check if a function has been compiled.
+    pub fn has(&self, name: &str) -> bool {
+        self.funcs.contains_key(name)
+    }
 }
 
 #[derive(Clone)]
 pub struct VarInfo {
-    pub slot: StackSlot,
-    pub cranelift_type: Type,
-    pub kind: RocaType,
-    pub is_heap: bool,
+    pub(crate) slot: StackSlot,
+    pub(crate) cranelift_type: Type,
+    pub(crate) kind: RocaType,
+    pub(crate) is_heap: bool,
 }
 
 /// Tracks struct field layouts for field access by index and type.
 #[derive(Clone)]
 pub struct StructLayout {
-    pub fields: Vec<(std::string::String, RocaType)>,
+    pub(crate) fields: Vec<(std::string::String, RocaType)>,
+}
+
+impl StructLayout {
+    /// Create a new struct layout from field definitions.
+    pub fn new(fields: Vec<(String, RocaType)>) -> Self {
+        Self { fields }
+    }
 }
 
 impl StructLayout {
@@ -42,18 +54,18 @@ impl StructLayout {
 /// Contains only generic compilation state. Language-specific metadata
 /// (crash handlers, enum variants, etc.) belongs in the consuming crate.
 pub struct EmitCtx {
-    pub vars: HashMap<String, VarInfo>,
-    pub func_refs: HashMap<String, FuncRef>,
-    pub returns_err: bool,
-    pub return_type: Type,
-    pub struct_layouts: HashMap<String, StructLayout>,
-    pub var_struct_type: HashMap<String, String>,
-    pub live_heap_vars: Vec<String>,
-    pub loop_heap_base: usize,
-    pub loop_exit: Option<ir::Block>,
-    pub loop_header: Option<ir::Block>,
+    pub(crate) vars: HashMap<String, VarInfo>,
+    pub(crate) func_refs: HashMap<String, FuncRef>,
+    pub(crate) returns_err: bool,
+    pub(crate) return_type: Type,
+    pub(crate) struct_layouts: HashMap<String, StructLayout>,
+    pub(crate) var_struct_type: HashMap<String, String>,
+    pub(crate) live_heap_vars: Vec<String>,
+    pub(crate) loop_heap_base: usize,
+    pub(crate) loop_exit: Option<ir::Block>,
+    pub(crate) loop_header: Option<ir::Block>,
     /// Set by struct_lit/enum_variant, consumed by const_var/let_var to auto-register var_struct_type
-    pub pending_struct_type: Option<String>,
+    pub(crate) pending_struct_type: Option<String>,
 }
 
 impl EmitCtx {
