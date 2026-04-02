@@ -4,6 +4,31 @@
 //! Depends only on [`roca_ast`] (and OXC for AST building / codegen).
 //! Consumed by `roca-cli` during `roca build`.
 //!
+//! # Domain Boundary
+//!
+//! This crate is the **JS AST walker** — the JS counterpart to roca-native.
+//! It translates Roca AST into OXC `AstBuilder` calls, just as roca-native
+//! translates Roca AST into roca-cranelift `Body` calls.
+//!
+//! It owns Roca→JS semantic mapping:
+//! - Error tuple protocol ({value, err} returns)
+//! - Crash block → try/catch/retry JS patterns
+//! - Structs → ES classes with constructor validation
+//! - Contracts → runtime validator objects
+//! - Enums → const objects with tagged variants
+//! - .d.ts generation for TypeScript consumers
+//! - Stdlib import detection (@rocalang/runtime)
+//!
+//! It does NOT own:
+//! - The OXC AST builder itself (that's oxc's domain)
+//! - Roca AST parsing or type checking (roca-parse, roca-check)
+//! - Native compilation or JIT (roca-native, roca-cranelift)
+//! - Runtime function implementations (roca-runtime, @rocalang/runtime)
+//!
+//! Tests here verify **JS output correctness**: parse Roca source, emit JS,
+//! assert the output string contains expected constructs. Integration tests
+//! that actually run the emitted JS belong in tests/js/.
+//!
 //! # Key exports
 //!
 //! - [`emit()`] — takes a [`roca_ast::SourceFile`] and returns the generated

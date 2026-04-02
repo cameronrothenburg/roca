@@ -251,9 +251,9 @@ fn eval_expr_native(input: &str, defs: &[String]) {
         if !real.is_empty() { continue; }
 
         let mut module = roca_native::create_jit_module();
-        if roca_native::compile_all(&mut module, &file).is_err() { continue; }
-        if module.finalize_definitions().is_err() {
-            println!("  jit error (try running with execmem permissions)");
+        if roca_native::compile_all(&mut *module, &file).is_err() { continue; }
+        if let Err(e) = module.finalize() {
+            println!("  jit error: {}", e);
             return;
         }
 

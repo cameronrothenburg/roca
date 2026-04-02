@@ -24,7 +24,7 @@ thread_local! {
 }
 
 /// Register stdlib contract names for `roca.` prefixing in JS output.
-pub fn set_stdlib_contracts(names: HashSet<String>) {
+pub(crate) fn set_stdlib_contracts(names: HashSet<String>) {
     STDLIB_CONTRACTS.with(|c| *c.borrow_mut() = names);
 }
 

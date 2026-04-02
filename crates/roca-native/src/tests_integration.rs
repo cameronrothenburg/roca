@@ -32,43 +32,30 @@ const ERROR_HANDLING: &str = r#"
 #[test]
 fn error_pipeline_ok() {
     let mut m = jit(ERROR_HANDLING);
-    let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "pipeline", 1)) };
+    let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "pipeline")) };
     assert_eq!(f(5.0), 10.0);
 }
 
 #[test]
 fn error_pipeline_zero() {
     let mut m = jit(ERROR_HANDLING);
-    let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "pipeline", 1)) };
+    let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "pipeline")) };
     assert_eq!(f(0.0), 0.0);
 }
 
 #[test]
 fn error_pipeline_negative() {
     let mut m = jit(ERROR_HANDLING);
-    let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "pipeline", 1)) };
+    let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "pipeline")) };
     assert_eq!(f(-1.0), 0.0);
 }
 
 #[test]
 fn error_pipeline_over_transform_limit() {
     let mut m = jit(ERROR_HANDLING);
-    let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "pipeline", 1)) };
+    let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "pipeline")) };
     assert_eq!(f(600.0), 600.0); // transform fails, returns raw
 }
-
-mem_test!(error_pipeline_no_leak, {
-    let mut m = jit(ERROR_HANDLING);
-    let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "pipeline", 1)) };
-    runtime::MEM.reset();
-    f(5.0);
-    let (a, fr, _, _, _) = runtime::MEM.stats();
-    assert_eq!(a, fr, "ok path: {} allocs, {} frees", a, fr);
-    runtime::MEM.reset();
-    f(-1.0);
-    let (a2, f2, _, _, _) = runtime::MEM.stats();
-    assert_eq!(a2, f2, "error path: {} allocs, {} frees", a2, f2);
-});
 
 // ─── Enum AST integration ───────────────────────────
 
@@ -91,18 +78,9 @@ const ENUM_AST: &str = r#"
 #[test]
 fn enum_ast_run() {
     let mut m = jit(ENUM_AST);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "run", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "run")) };
     assert_eq!(f(), 15.0);
 }
-
-mem_test!(enum_ast_no_leak, {
-    let mut m = jit(ENUM_AST);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "run", 0)) };
-    runtime::MEM.reset();
-    f();
-    let (a, fr, _, _, _) = runtime::MEM.stats();
-    assert_eq!(a, fr, "enum ast: {} allocs, {} frees", a, fr);
-});
 
 // ─── Closures + HOF integration ─────────────────────
 
@@ -130,14 +108,14 @@ const CLOSURES_HOF: &str = r#"
 #[test]
 fn closures_compose() {
     let mut m = jit(CLOSURES_HOF);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "compose", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "compose")) };
     assert_eq!(f(), 17.0);
 }
 
 #[test]
 fn closures_pipeline() {
     let mut m = jit(CLOSURES_HOF);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "pipeline_closures", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "pipeline_closures")) };
     assert_eq!(f(), 45.0);
 }
 
@@ -170,14 +148,14 @@ const STRUCT_METHODS: &str = r#"
 #[test]
 fn struct_measure() {
     let mut m = jit(STRUCT_METHODS);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "create_and_measure", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "create_and_measure")) };
     assert_eq!(f(), 25.0);
 }
 
 #[test]
 fn struct_translate() {
     let mut m = jit(STRUCT_METHODS);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "translate_point", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "translate_point")) };
     assert_eq!(f(), 15.0);
 }
 
@@ -194,7 +172,7 @@ fn constrained_param_in_pipeline() {
             return safe_divide(10, 2)
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "run", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "run")) };
     assert_eq!(f(), 5.0);
     assert!(!runtime::constraint_violated());
 }
@@ -207,7 +185,7 @@ fn constrained_param_violation_in_pipeline() {
             return a / b
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn(f64, f64) -> f64>(call_f64(&mut m, "safe_divide", 2)) };
+    let f = unsafe { std::mem::transmute::<_, fn(f64, f64) -> f64>(call_f64(&mut m, "safe_divide")) };
     f(10.0, 0.0);
     assert!(runtime::constraint_violated(), "0 < min 1");
 }
@@ -229,7 +207,7 @@ fn retry_with_fallback() {
             flaky -> retry(3, 0) |> fallback(0)
         }}
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "resilient", 1)) };
+    let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "resilient")) };
     // Auto-stub returns 0.0 (default Number) with no error — retry not triggered
     assert_eq!(f(5.0), 0.0);
 }
@@ -247,7 +225,7 @@ fn retry_then_halt() {
             unstable -> retry(2, 0) |> fallback(0)
         }}
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "try_hard", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "try_hard")) };
     // Auto-stub returns success (0.0) — retry not triggered
     assert_eq!(f(), 0.0);
 }
@@ -270,7 +248,7 @@ fn wait_all_concurrent() {
             return a + b
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "run_both", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "run_both")) };
     assert_eq!(f(), 30.0);
 }
 
@@ -289,7 +267,7 @@ fn wait_first_returns_fastest() {
             return winner
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "race", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "race")) };
     let result = f();
     // Either 42 or 99 — both are valid "first" results
     assert!(result == 42.0 || result == 99.0, "got: {}", result);

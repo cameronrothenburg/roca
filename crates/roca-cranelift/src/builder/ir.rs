@@ -86,6 +86,7 @@ impl<'a, 'b: 'a> IrBuilder<'a, 'b> {
     pub fn i_eq(&mut self, a: Value, bv: Value) -> Value {
         crate::helpers::icmp_to_i64(self.b, ir::condcodes::IntCC::Equal, a, bv)
     }
+    #[allow(dead_code)]
     pub fn i_ne(&mut self, a: Value, bv: Value) -> Value {
         crate::helpers::icmp_to_i64(self.b, ir::condcodes::IntCC::NotEqual, a, bv)
     }

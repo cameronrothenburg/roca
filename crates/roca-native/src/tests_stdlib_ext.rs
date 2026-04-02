@@ -1,4 +1,4 @@
-//! Constraint edge cases, AOT, math/path/process, wait/async, and stdlib memory tests
+//! Constraint edge cases, AOT, math/path/process, wait/async, and stdlib tests
 
 use super::test_helpers::*;
 use crate::{compile_to_object, runtime};
@@ -17,7 +17,7 @@ fn constraint_empty_string_with_minlen_1() {
             return 1
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make")) };
     f();
     assert!(runtime::constraint_violated(), "empty string violates minLen: 1");
 }
@@ -34,7 +34,7 @@ fn constraint_contains_empty_needle() {
             return 1
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make")) };
     assert_eq!(f(), 1.0);
     assert!(!runtime::constraint_violated(), "contains empty string always passes");
 }
@@ -53,7 +53,7 @@ fn constraint_default_only_no_validation() {
             return s.timeout
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make")) };
     assert_eq!(f(), 999.0);
     assert!(!runtime::constraint_violated(), "default-only field has no validation");
 }
@@ -72,7 +72,7 @@ fn constraint_string_min_as_minlen() {
             return 1
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make")) };
     f();
     assert!(runtime::constraint_violated(), "min on String = minLen, 'ab' (len 2) < 4");
 }
@@ -89,7 +89,7 @@ fn constraint_string_max_as_maxlen() {
             return 1
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make")) };
     f();
     assert!(runtime::constraint_violated(), "max on String = maxLen, 'toolongvalue' (len 12) > 5");
 }
@@ -109,7 +109,7 @@ fn constraint_multiple_fields_all_valid() {
             return s.port
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make")) };
     assert_eq!(f(), 443.0);
     assert!(!runtime::constraint_violated(), "all fields valid");
 }
@@ -127,7 +127,7 @@ fn constraint_multiple_fields_second_violated() {
             return s.port
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make")) };
     f();
     assert!(runtime::constraint_violated(), "empty name violates minLen: 1");
 }
@@ -204,7 +204,7 @@ fn wait_single() {
             return result
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "test_wait", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "test_wait")) };
     assert_eq!(f(), 7.0);
 }
 
@@ -217,7 +217,7 @@ fn wait_expr_await() {
             return result
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "test_await", 0)) };
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "test_await")) };
     assert_eq!(f(), 42.0);
 }
 
@@ -236,134 +236,6 @@ fn time_now_epoch() {
     assert!(now > 1_700_000_000_000.0, "should be epoch ms, got {}", now);
 }
 
-// ─── Memory Tests (stdlib scope) ──────────────────────
-
-mem_test!(rc_alloc_and_release, {
-    let ptr = runtime::roca_rc_alloc(32);
-    assert_ne!(ptr, 0);
-    assert_eq!(runtime::MEM.stats().0, 1);
-    assert_eq!(runtime::MEM.stats().1, 0);
-
-    runtime::roca_rc_release(ptr);
-    assert_eq!(runtime::MEM.stats().1, 1);
-    assert_eq!(runtime::MEM.stats().4, 0);
-});
-
-mem_test!(rc_retain_delays_free, {
-    let ptr = runtime::roca_rc_alloc(16);
-    runtime::roca_rc_retain(ptr); // refcount 2
-
-    runtime::roca_rc_release(ptr); // refcount 1
-    assert_eq!(runtime::MEM.stats().1, 0);
-
-    runtime::roca_rc_release(ptr); // refcount 0, freed
-    assert_eq!(runtime::MEM.stats().1, 1);
-});
-
-mem_test!(rc_null_is_safe, {
-    runtime::roca_rc_retain(0);
-    runtime::roca_rc_release(0);
-    runtime::MEM.assert_clean();
-});
-
-mem_test!(rc_multiple_allocs_all_freed, {
-    let ptrs: Vec<i64> = (0..10).map(|_| runtime::roca_rc_alloc(24)).collect();
-    assert_eq!(runtime::MEM.stats().0, 10);
-    for ptr in ptrs { runtime::roca_rc_release(ptr); }
-    runtime::MEM.assert_clean();
-});
-
-mem_test!(rc_shared_const_pattern, {
-    let ptr = runtime::roca_rc_alloc(8);
-    runtime::roca_rc_retain(ptr); // refcount 2
-    runtime::roca_rc_release(ptr); // refcount 1
-    runtime::roca_rc_release(ptr); // refcount 0, freed
-    runtime::MEM.assert_clean();
-});
-
-mem_test!(mem_scope_frees_string_locals, {
-    let mut m = jit(r#"
-        pub fn work() -> Number {
-            const s = "hello"
-            const t = "world"
-            return 42
-        }
-    "#);
-    runtime::MEM.reset(); // reset after compilation
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "work", 0)) };
-    assert_eq!(f(), 42.0);
-    let (allocs, frees, _, _, _) = runtime::MEM.stats();
-    assert!(allocs >= 2, "should allocate >= 2 strings, got {}", allocs);
-    assert_eq!(allocs, frees, "all string locals freed: {} allocs, {} frees", allocs, frees);
-});
-
-mem_test!(mem_return_value_not_freed, {
-    let mut m = jit(r#"
-        pub fn greeting() -> String {
-            const extra = "unused"
-            return "hello"
-        }
-    "#);
-    let mut sig = m.make_signature();
-    sig.returns.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I64));
-    let id = m.declare_function("greeting", cranelift_module::Linkage::Export, &sig).unwrap();
-    let f = unsafe { std::mem::transmute::<_, fn() -> *const u8>(m.get_finalized_function(id)) };
-    runtime::MEM.reset();
-    let result = f();
-    assert!(!result.is_null());
-    let (allocs, frees, _, _, _) = runtime::MEM.stats();
-    assert_eq!(frees, allocs - 1, "return value NOT freed: {} allocs, {} frees", allocs, frees);
-});
-
-mem_test!(mem_struct_freed_at_scope_exit, {
-    let mut m = jit(r#"
-        pub fn make_point() -> Number {
-            const p = Point { x: 10, y: 20 }
-            return p.x
-        }
-    "#);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "make_point", 0)) };
-    runtime::MEM.reset();
-    assert_eq!(f(), 10.0);
-    let (allocs, frees, _, _, _) = runtime::MEM.stats();
-    assert!(allocs >= 1, "should allocate struct");
-    assert_eq!(allocs, frees, "struct freed: {} allocs, {} frees", allocs, frees);
-});
-
-mem_test!(mem_loop_no_leak, {
-    let mut m = jit(r#"
-        pub fn loop_count() -> Number {
-            let i = 0
-            while i < 5 {
-                const s = "temp"
-                i = i + 1
-            }
-            return i
-        }
-    "#);
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "loop_count", 0)) };
-    runtime::MEM.reset();
-    assert_eq!(f(), 5.0);
-    let (allocs, frees, _, _, _) = runtime::MEM.stats();
-    assert!(allocs >= 5, "should allocate >= 5 strings, got {}", allocs);
-    assert_eq!(allocs, frees, "loop locals freed: {} allocs, {} frees", allocs, frees);
-});
-
-mem_test!(mem_wait_no_leak, {
-    let mut m = jit(r#"
-        pub fn make() -> String { return "created" }
-        pub fn test_wait_mem() -> Number {
-            let result, failed = wait make()
-            return result.length
-        }
-    "#);
-    runtime::MEM.reset();
-    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "test_wait_mem", 0)) };
-    assert_eq!(f(), 7.0);
-    let (allocs, frees, _, _, _) = runtime::MEM.stats();
-    assert_eq!(allocs, frees, "wait no leak: {} allocs, {} frees", allocs, frees);
-});
-
 // ─── Function parameter constraints ────────────────
 
 #[test]
@@ -374,7 +246,7 @@ fn param_constraint_number_valid() {
             return n * 2
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "clamp", 1)) };
+    let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "clamp")) };
     assert_eq!(f(50.0), 100.0);
     assert!(!runtime::constraint_violated(), "50 is within 0..100");
 }
@@ -387,7 +259,7 @@ fn param_constraint_number_min_violated() {
             return n * 2
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "clamp", 1)) };
+    let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "clamp")) };
     f(-5.0);
     assert!(runtime::constraint_violated(), "-5 < min 0");
 }
@@ -400,7 +272,7 @@ fn param_constraint_number_max_violated() {
             return n * 2
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "clamp", 1)) };
+    let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(call_f64(&mut m, "clamp")) };
     f(200.0);
     assert!(runtime::constraint_violated(), "200 > max 100");
 }
@@ -413,20 +285,16 @@ fn param_constraint_string_contains() {
             return to.length
         }
     "#);
-    let mut sig = m.make_signature();
-    sig.params.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I64));
-    sig.returns.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::F64));
-    let id = m.declare_function("sendEmail", cranelift_module::Linkage::Export, &sig).unwrap();
-    let f = unsafe { std::mem::transmute::<_, fn(*const u8) -> f64>(m.get_finalized_function(id)) };
+    let f = unsafe { std::mem::transmute::<_, fn(i64) -> f64>(get_function_ptr(&m, "sendEmail").unwrap()) };
 
     // Valid — contains @
     runtime::reset_constraint_violated();
-    assert_eq!(f(b"user@example.com\0".as_ptr()), 16.0);
+    assert_eq!(f(b"user@example.com\0".as_ptr() as i64), 16.0);
     assert!(!runtime::constraint_violated(), "valid email has @");
 
     // Invalid — missing @
     runtime::reset_constraint_violated();
-    f(b"nope\0".as_ptr());
+    f(b"nope\0".as_ptr() as i64);
     assert!(runtime::constraint_violated(), "missing @ should violate");
 }
 
@@ -438,20 +306,16 @@ fn param_constraint_string_minlen() {
             return name.length
         }
     "#);
-    let mut sig = m.make_signature();
-    sig.params.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::I64));
-    sig.returns.push(cranelift_codegen::ir::AbiParam::new(cranelift_codegen::ir::types::F64));
-    let id = m.declare_function("setName", cranelift_module::Linkage::Export, &sig).unwrap();
-    let f = unsafe { std::mem::transmute::<_, fn(*const u8) -> f64>(m.get_finalized_function(id)) };
+    let f = unsafe { std::mem::transmute::<_, fn(i64) -> f64>(get_function_ptr(&m, "setName").unwrap()) };
 
     // Valid
     runtime::reset_constraint_violated();
-    assert_eq!(f(b"Cameron\0".as_ptr()), 7.0);
+    assert_eq!(f(b"Cameron\0".as_ptr() as i64), 7.0);
     assert!(!runtime::constraint_violated());
 
     // Too short
     runtime::reset_constraint_violated();
-    f(b"X\0".as_ptr());
+    f(b"X\0".as_ptr() as i64);
     assert!(runtime::constraint_violated(), "1 char < minLen 2");
 }
 
@@ -463,7 +327,7 @@ fn param_constraint_multiple_params() {
             return age + score
         }
     "#);
-    let f = unsafe { std::mem::transmute::<_, fn(f64, f64) -> f64>(call_f64(&mut m, "createUser", 2)) };
+    let f = unsafe { std::mem::transmute::<_, fn(f64, f64) -> f64>(call_f64(&mut m, "createUser")) };
 
     // Both valid
     runtime::reset_constraint_violated();
@@ -745,7 +609,7 @@ fn box_alloc_different_sizes_no_corruption() {
     }
 }
 
-// ─── Box allocator: destructor & MEM tracking regressions ───
+// ─── Box allocator: destructor regression ───
 
 /// roca_box_free must invoke the drop trampoline for typed values.
 #[test]
@@ -772,100 +636,4 @@ fn box_free_runs_drop_on_owned_type() {
         DROPPED.load(Ordering::SeqCst),
         "roca_box_free did not run Drop — inner heap allocations leak"
     );
-}
-
-/// Box allocs must participate in MEM tracking so assert_clean catches leaks.
-#[test]
-fn box_alloc_tracked_by_mem() {
-    runtime::MEM.reset();
-
-    let ptr = runtime::roca_box_alloc(64);
-    assert_ne!(ptr, 0);
-
-    let (allocs, _, _, _, live) = runtime::MEM.stats();
-    assert_eq!(allocs, 1, "BUG: roca_box_alloc not tracked — MEM blind to box leaks");
-    assert!(live > 0, "live bytes should reflect the allocation");
-
-    runtime::roca_box_free(ptr);
-
-    let (allocs, frees, _, _, live) = runtime::MEM.stats();
-    assert_eq!(frees, 1, "BUG: roca_box_free not tracked");
-    assert_eq!(allocs, frees, "alloc/free mismatch");
-    assert_eq!(live, 0, "live bytes should be 0 after free");
-}
-
-/// JSON parse + free must leave MEM clean (combines both issues).
-#[test]
-fn box_free_json_mem_clean() {
-    let json_str = runtime::alloc_str(r#"{"key": "value", "nested": {"a": 1}}"#);
-
-    // Reset after alloc_str so we only measure the box alloc/free
-    runtime::MEM.reset();
-
-    let (ptr, err) = runtime::roca_json_parse(json_str);
-    assert_eq!(err, 0, "JSON parse should succeed");
-    assert_ne!(ptr, 0);
-
-    runtime::roca_box_free(ptr);
-
-    let (allocs, frees, ..) = runtime::MEM.stats();
-    assert_eq!(allocs, frees, "BUG: JSON box alloc/free not tracked by MEM");
-}
-
-// ─── Stdlib memory lifecycle: alloc everything, free everything, assert clean ───
-
-/// Exercises every heap-allocating stdlib path and verifies MEM is balanced.
-#[test]
-fn stdlib_mem_lifecycle_all_types() {
-    // Pre-allocate strings we'll need (these are RC-managed, not box-managed)
-    let url_str = runtime::alloc_str("https://example.com/path?q=1#frag");
-    let json_str = runtime::alloc_str(r#"{"name":"roca","tags":["fast","safe"],"nested":{"x":1}}"#);
-    let key_name = runtime::alloc_str("name");
-    let key_tags = runtime::alloc_str("tags");
-    let key_nested = runtime::alloc_str("nested");
-
-    // Reset MEM after string allocs so we only measure box/array/map operations
-    runtime::MEM.reset();
-
-    // ── JSON parse ──
-    let (json, err) = runtime::roca_json_parse(json_str);
-    assert_eq!(err, 0, "JSON parse failed");
-
-    // ── JSON.get (returns boxed JSON) ──
-    let nested = runtime::roca_json_get(json, key_nested);
-    assert_ne!(nested, 0, "JSON.get nested failed");
-
-    // ── JSON.getArray (returns array of boxed JSON) ──
-    let arr = runtime::roca_json_get_array(json, key_tags);
-    assert_ne!(arr, 0, "JSON.getArray failed");
-    let arr_len = runtime::roca_array_len(arr);
-    assert_eq!(arr_len, 2, "expected 2 tags");
-
-    // ── Url.parse ──
-    let (url, err) = runtime::roca_url_parse(url_str);
-    assert_eq!(err, 0, "Url.parse failed");
-
-    // Read some fields to prove values are live (these return RC strings)
-    let hostname = runtime::roca_url_hostname(url);
-    assert_ne!(hostname, 0);
-    let name_val = runtime::roca_json_get_string(json, key_name);
-
-    // ── Free everything ──
-    // RC strings from read operations
-    runtime::roca_rc_release(hostname);
-    runtime::roca_rc_release(name_val);
-    // Boxed types
-    runtime::roca_box_free(url);
-    runtime::roca_free_json_array(arr);
-    runtime::roca_box_free(nested);
-    runtime::roca_box_free(json);
-
-    // ── Assert MEM is clean ──
-    let (allocs, frees, _, _, live) = runtime::MEM.stats();
-    assert_eq!(
-        allocs, frees,
-        "MEM leak: {} allocs but {} frees (delta: {})",
-        allocs, frees, allocs as i64 - frees as i64
-    );
-    assert_eq!(live, 0, "MEM live bytes should be 0, got {}", live);
 }

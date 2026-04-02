@@ -2,15 +2,12 @@
 //! Uses Function/Struct/Satisfies/ExternFn/ExternContract builders from roca-cranelift.
 
 use std::collections::HashMap;
-use cranelift_codegen::ir::types;
-use cranelift_module::{Module, FuncId};
-
 use roca_ast::{self as roca};
 use roca_cranelift::api::Function;
-use roca_cranelift::CraneliftType;
+use roca_cranelift::{Module, FuncId, FnDecl, CompiledFuncs};
 use roca_types::RocaType;
 use crate::runtime::RuntimeFuncs;
-use roca_cranelift::CompiledFuncs;
+use super::context::NativeCtx;
 use super::emit::{emit_body, emit_expr, closure_hash};
 
 // ─── Metadata extraction ─────────────────────────────
@@ -71,8 +68,7 @@ pub fn declare_all_functions<M: Module>(
     source: &roca::SourceFile,
     compiled: &mut CompiledFuncs,
 ) -> Result<(), String> {
-    use cranelift_codegen::ir::AbiParam;
-    use cranelift_module::Linkage;
+    let mut declarations = Vec::new();
 
     for item in &source.items {
         let fns_to_declare: Vec<(&roca::FnDef, Option<&str>)> = match item {
@@ -82,29 +78,22 @@ pub fn declare_all_functions<M: Module>(
             _ => vec![],
         };
         for (f, struct_name) in fns_to_declare {
-            let qualified = if let Some(sn) = struct_name {
+            let name = if let Some(sn) = struct_name {
                 format!("{}.{}", sn, f.name)
             } else {
                 f.name.clone()
             };
-            if compiled.funcs.contains_key(&qualified) { continue; }
-            let mut sig = module.make_signature();
-            if struct_name.is_some() {
-                sig.params.push(AbiParam::new(types::I64));
-            }
-            for param in &f.params {
-                sig.params.push(AbiParam::new(RocaType::from(&param.type_ref).to_cranelift()));
-            }
-            sig.returns.push(AbiParam::new(RocaType::from(&f.return_type).to_cranelift()));
-            if f.returns_err {
-                sig.returns.push(AbiParam::new(types::I8));
-            }
-            let func_id = module.declare_function(&qualified, Linkage::Export, &sig)
-                .map_err(|e| format!("declare {}: {}", qualified, e))?;
-            compiled.funcs.insert(qualified, func_id);
+            declarations.push(FnDecl {
+                name,
+                params: f.params.iter().map(|p| RocaType::from(&p.type_ref)).collect(),
+                has_self: struct_name.is_some(),
+                return_type: RocaType::from(&f.return_type),
+                returns_err: f.returns_err,
+            });
         }
     }
-    Ok(())
+
+    roca_cranelift::declare_functions(module, &declarations, compiled)
 }
 
 // ─── Closure pre-compilation ─────────────────────────
@@ -125,17 +114,20 @@ pub fn compile_closures<M: Module>(
     }
     for (params, closure_body) in closures {
         let name = format!("__closure_{}_{}", params.len(), closure_hash(&params, &closure_body));
-        if compiled.funcs.contains_key(&name) { continue; }
+        if compiled.has(&name) { continue; }
 
         let mut func = Function::new(&name);
         for p in &params {
             func = func.param(p, RocaType::Number);
         }
-        func = func.returns(RocaType::Number)
-            .with_return_kinds(func_return_kinds.clone());
+        func = func.returns(RocaType::Number);
 
+        let nctx = NativeCtx {
+            func_return_kinds: func_return_kinds.clone(),
+            ..Default::default()
+        };
         func.build(module, rt, compiled, |body| {
-            let val = emit_expr(body, &closure_body);
+            let val = emit_expr(body, &nctx, &closure_body);
             body.return_val(val);
         })?;
     }
@@ -198,13 +190,16 @@ pub fn compile_wait_exprs<M: Module>(
             collect_wait_exprs(&f.body, &mut wait_exprs);
         }
     }
+    let nctx = NativeCtx {
+        func_return_kinds: func_return_kinds.clone(),
+        ..Default::default()
+    };
     for (name, expr) in wait_exprs {
-        if compiled.funcs.contains_key(&name) { continue; }
+        if compiled.has(&name) { continue; }
         Function::new(&name)
             .returns(RocaType::Number)
-            .with_return_kinds(func_return_kinds.clone())
             .build(module, rt, compiled, |body| {
-                let val = emit_expr(body, &expr);
+                let val = emit_expr(body, &nctx, &expr);
                 body.return_val(val);
             })?;
     }
@@ -244,6 +239,29 @@ pub(super) fn expr_debug_hash(expr: &roca::Expr) -> u64 {
     h.finish()
 }
 
+// ─── NativeCtx construction ─────────────────────────
+
+/// Build a NativeCtx from the Roca-specific metadata for a function.
+fn build_native_ctx(
+    crash: Option<&roca::CrashBlock>,
+    func_return_kinds: &HashMap<String, RocaType>,
+    enum_variants: &HashMap<String, Vec<String>>,
+    struct_defs: &HashMap<String, Vec<roca::Field>>,
+) -> NativeCtx {
+    let mut nctx = NativeCtx {
+        func_return_kinds: func_return_kinds.clone(),
+        enum_variants: enum_variants.clone(),
+        struct_defs: struct_defs.clone(),
+        ..Default::default()
+    };
+    if let Some(crash_block) = crash {
+        for h in &crash_block.handlers {
+            nctx.crash_handlers.insert(h.call.clone(), h.strategy.clone());
+        }
+    }
+    nctx
+}
+
 // ─── Function compilation ────────────────────────────
 
 /// Compile a Roca function to native code.
@@ -258,20 +276,18 @@ pub fn compile_function<M: Module>(
 ) -> Result<FuncId, String> {
     let mut f = Function::new(&func.name);
     for p in &func.params {
-        f = f.param_with_constraints(&p.name, RocaType::from(&p.type_ref), p.constraints.clone());
+        f = f.param_with_constraints(&p.name, RocaType::from(&p.type_ref),
+            p.constraints.iter().map(roca_types::Constraint::from).collect());
     }
     f = f.returns(RocaType::from(&func.return_type))
-        .returns_err_if(func.returns_err)
-        .crash_opt(func.crash.as_ref())
-        .with_return_kinds(func_return_kinds.clone())
-        .with_enum_variants(enum_variants.clone())
-        .with_struct_defs(struct_defs.clone());
+        .returns_err_if(func.returns_err);
 
+    let nctx = build_native_ctx(func.crash.as_ref(), func_return_kinds, enum_variants, struct_defs);
     let body_stmts = func.body.clone();
     let params = func.params.clone();
     f.build(module, rt, compiled, |body| {
         super::emit::emit_param_constraints(body, &params);
-        emit_body(body, &body_stmts);
+        emit_body(body, &nctx, &body_stmts);
     })
 }
 
@@ -294,22 +310,20 @@ pub fn compile_struct_method<M: Module>(
     let mut f = Function::new(&format!("{}.{}", struct_name, func.name))
         .self_param();
     for p in &func.params {
-        f = f.param_with_constraints(&p.name, RocaType::from(&p.type_ref), p.constraints.clone());
+        f = f.param_with_constraints(&p.name, RocaType::from(&p.type_ref),
+            p.constraints.iter().map(roca_types::Constraint::from).collect());
     }
     f = f.returns(RocaType::from(&func.return_type))
         .returns_err_if(func.returns_err)
-        .crash_opt(func.crash.as_ref())
-        .with_struct_layout(struct_name, roca_cranelift::StructLayout { fields: field_info })
-        .with_self_struct_type(struct_name)
-        .with_return_kinds(func_return_kinds.clone())
-        .with_enum_variants(enum_variants.clone())
-        .with_struct_defs(struct_defs.clone());
+        .with_struct_layout(struct_name, roca_cranelift::StructLayout::new(field_info))
+        .with_self_struct_type(struct_name);
 
+    let nctx = build_native_ctx(func.crash.as_ref(), func_return_kinds, enum_variants, struct_defs);
     let body_stmts = func.body.clone();
     let params = func.params.clone();
     f.build(module, rt, compiled, |body| {
         super::emit::emit_param_constraints(body, &params);
-        emit_body(body, &body_stmts);
+        emit_body(body, &nctx, &body_stmts);
     })
 }
 
@@ -329,8 +343,9 @@ pub fn compile_extern_fn_stub<M: Module>(
         .returns_err_if(extern_fn.returns_err);
 
     let default_expr = default_value_expr.clone();
+    let nctx = NativeCtx::default();
     f.build(module, rt, compiled, |body| {
-        let val = emit_expr(body, &default_expr);
+        let val = emit_expr(body, &nctx, &default_expr);
         body.return_val(val);
     })
 }
@@ -344,7 +359,7 @@ pub fn compile_contract_stubs<M: Module>(
 ) -> Result<(), String> {
     for sig_def in &contract.functions {
         let qualified = format!("{}.{}", contract.name, sig_def.name);
-        if compiled.funcs.contains_key(&qualified) { continue; }
+        if compiled.has(&qualified) { continue; }
 
         let ret_type = RocaType::from(&sig_def.return_type);
         let returns_err = sig_def.returns_err;

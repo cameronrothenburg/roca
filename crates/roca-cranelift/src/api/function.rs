@@ -5,7 +5,6 @@ use std::collections::HashMap;
 use cranelift_codegen::ir::types;
 use cranelift_module::{Module, FuncId};
 
-use roca_ast::crash::CrashHandlerKind;
 use roca_types::{self as rt, RocaType, Param, Field};
 use crate::builder::{FunctionCompiler, FunctionSpec, ParamSpec};
 use crate::context::{CompiledFuncs, EmitCtx, StructLayout, VarInfo};
@@ -17,19 +16,17 @@ use super::body::Body;
 
 // ─── Function ─────────────────────────────────────────
 
-/// Roca function builder. Describe the function, then compile it.
+/// Generic function builder. Describe the function, then compile it.
+/// Language-specific metadata (crash handlers, enum variants, etc.)
+/// should be managed by the consuming crate, not stored here.
 pub struct Function {
     name: String,
     params: Vec<Param>,
     return_type: RocaType,
     returns_err: bool,
     self_param: bool,
-    crash_handlers: HashMap<String, CrashHandlerKind>,
     struct_layouts: HashMap<String, StructLayout>,
     var_struct_type: HashMap<String, String>,
-    func_return_kinds: HashMap<String, RocaType>,
-    enum_variants: HashMap<String, Vec<String>>,
-    struct_defs: HashMap<String, Vec<roca_ast::Field>>,
 }
 
 impl Function {
@@ -40,12 +37,8 @@ impl Function {
             return_type: RocaType::Void,
             returns_err: false,
             self_param: false,
-            crash_handlers: HashMap::new(),
             struct_layouts: HashMap::new(),
             var_struct_type: HashMap::new(),
-            func_return_kinds: HashMap::new(),
-            enum_variants: HashMap::new(),
-            struct_defs: HashMap::new(),
         }
     }
 
@@ -62,9 +55,8 @@ impl Function {
     }
 
     /// Add a single parameter with constraints.
-    pub fn param_with_constraints(mut self, name: &str, roca_type: RocaType, constraints: Vec<roca_ast::Constraint>) -> Self {
-        let converted: Vec<rt::Constraint> = constraints.iter().map(rt::Constraint::from).collect();
-        self.params.push(Param { name: name.to_string(), roca_type, constraints: converted });
+    pub fn param_with_constraints(mut self, name: &str, roca_type: RocaType, constraints: Vec<rt::Constraint>) -> Self {
+        self.params.push(Param { name: name.to_string(), roca_type, constraints });
         self
     }
 
@@ -90,37 +82,6 @@ impl Function {
     pub fn self_param(mut self) -> Self {
         self.self_param = true;
         self
-    }
-
-    /// Set crash block — registers all handlers.
-    pub fn crash(mut self, crash: &roca_ast::CrashBlock) -> Self {
-        for h in &crash.handlers {
-            self.crash_handlers.insert(h.call.clone(), h.strategy.clone());
-        }
-        self
-    }
-
-    /// Optionally set crash block.
-    pub fn crash_opt(self, crash: Option<&roca_ast::CrashBlock>) -> Self {
-        if let Some(c) = crash { self.crash(c) } else { self }
-    }
-
-    /// Register a single crash handler for a call.
-    pub fn crash_handler(mut self, call_name: &str, strategy: &CrashHandlerKind) -> Self {
-        self.crash_handlers.insert(call_name.to_string(), strategy.clone());
-        self
-    }
-
-    pub fn with_return_kinds(mut self, kinds: HashMap<String, RocaType>) -> Self {
-        self.func_return_kinds = kinds; self
-    }
-
-    pub fn with_enum_variants(mut self, variants: HashMap<String, Vec<String>>) -> Self {
-        self.enum_variants = variants; self
-    }
-
-    pub fn with_struct_defs(mut self, defs: HashMap<String, Vec<roca_ast::Field>>) -> Self {
-        self.struct_defs = defs; self
     }
 
     pub fn with_struct_layout(mut self, name: &str, layout: StructLayout) -> Self {
@@ -152,12 +113,8 @@ impl Function {
 
         let return_type = self.return_type.clone();
         let returns_err = self.returns_err;
-        let crash_handlers = self.crash_handlers;
         let struct_layouts = self.struct_layouts;
         let var_struct_type = self.var_struct_type;
-        let func_return_kinds = self.func_return_kinds;
-        let enum_variants = self.enum_variants;
-        let struct_defs = self.struct_defs;
         let self_param = self.self_param;
         let params = self.params;
 
@@ -171,14 +128,11 @@ impl Function {
                 return_type: ret_cl_type,
                 struct_layouts,
                 var_struct_type,
-                crash_handlers,
-                func_return_kinds,
-                enum_variants,
-                struct_defs,
                 live_heap_vars: Vec::new(),
                 loop_heap_base: 0,
                 loop_exit: None,
                 loop_header: None,
+                pending_struct_type: None,
             };
 
             // Store params automatically
@@ -204,11 +158,12 @@ impl Function {
 
             // TODO: emit_param_constraints
 
-            let mut body = Body { ir: &mut *ir, ctx, returned: false };
+            let mut body = Body { ir: &mut *ir, ctx, returned: false, temps: Vec::new() };
             body_fn(&mut body);
 
             // Auto default return
             if !body.returned {
+                body.flush_temps_inner();
                 emit_scope_cleanup(&mut *body.ir, &body.ctx, None);
                 let default_val = default_for_ir_type(body.ir.raw(), ret_cl_type);
                 if returns_err {
@@ -230,7 +185,6 @@ pub struct Method {
     params: Vec<Param>,
     return_type: RocaType,
     returns_err: bool,
-    crash_handlers: HashMap<String, CrashHandlerKind>,
     body_fn: Option<Box<dyn FnOnce(&mut Body)>>,
 }
 
@@ -241,7 +195,6 @@ impl Method {
             params: Vec::new(),
             return_type: RocaType::Void,
             returns_err: false,
-            crash_handlers: HashMap::new(),
             body_fn: None,
         }
     }
@@ -256,13 +209,6 @@ impl Method {
 
     pub fn returns_err(mut self) -> Self {
         self.returns_err = true; self
-    }
-
-    pub fn crash(mut self, crash: &roca_ast::CrashBlock) -> Self {
-        for h in &crash.handlers {
-            self.crash_handlers.insert(h.call.clone(), h.strategy.clone());
-        }
-        self
     }
 
     pub fn body(mut self, f: impl FnOnce(&mut Body) + 'static) -> Self {
@@ -295,9 +241,6 @@ impl Struct {
         module: &mut M,
         rt_funcs: &RuntimeFuncs,
         compiled: &mut CompiledFuncs,
-        func_return_kinds: &HashMap<String, RocaType>,
-        enum_variants: &HashMap<String, Vec<String>>,
-        struct_defs: &HashMap<String, Vec<roca_ast::Field>>,
     ) -> Result<(), String> {
         let field_info: Vec<(String, RocaType)> = self.fields.iter()
             .map(|f| (f.name.clone(), f.roca_type.clone()))
@@ -306,20 +249,13 @@ impl Struct {
 
         for method in self.methods {
             let qualified = format!("{}.{}", self.name, method.name);
-            let mut func = Function::new(&qualified)
+            let func = Function::new(&qualified)
                 .params(&method.params)
                 .returns(method.return_type)
                 .returns_err_if(method.returns_err)
                 .self_param()
                 .with_struct_layout(&self.name, layout.clone())
-                .with_self_struct_type(&self.name)
-                .with_return_kinds(func_return_kinds.clone())
-                .with_enum_variants(enum_variants.clone())
-                .with_struct_defs(struct_defs.clone());
-
-            for (call, strategy) in &method.crash_handlers {
-                func.crash_handlers.insert(call.clone(), strategy.clone());
-            }
+                .with_self_struct_type(&self.name);
 
             if let Some(body_fn) = method.body_fn {
                 func.build(module, rt_funcs, compiled, body_fn)?;
@@ -352,9 +288,6 @@ impl Satisfies {
         module: &mut M,
         rt_funcs: &RuntimeFuncs,
         compiled: &mut CompiledFuncs,
-        func_return_kinds: &HashMap<String, RocaType>,
-        enum_variants: &HashMap<String, Vec<String>>,
-        struct_defs: &HashMap<String, Vec<roca_ast::Field>>,
         struct_fields: Option<&[(String, RocaType)]>,
     ) -> Result<(), String> {
         for method in self.methods {
@@ -363,10 +296,7 @@ impl Satisfies {
                 .params(&method.params)
                 .returns(method.return_type)
                 .returns_err_if(method.returns_err)
-                .self_param()
-                .with_return_kinds(func_return_kinds.clone())
-                .with_enum_variants(enum_variants.clone())
-                .with_struct_defs(struct_defs.clone());
+                .self_param();
 
             if let Some(fields) = struct_fields {
                 let layout = crate::StructLayout { fields: fields.to_vec() };
@@ -386,8 +316,8 @@ impl Satisfies {
 
 /// Roca enum builder — registers variants. No code emission (metadata only).
 pub struct RocaEnum {
-    pub name: String,
-    pub variants: Vec<(String, Vec<RocaType>)>,
+    pub(crate) name: String,
+    pub(crate) variants: Vec<(String, Vec<RocaType>)>,
 }
 
 impl RocaEnum {

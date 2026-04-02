@@ -2,63 +2,69 @@
 //! Zero IR imports. Every expression is 1-3 lines, every statement is 2-5 lines.
 //!
 //! Roca language semantics (stdlib dispatch, log, inline map/filter, constraint
-//! validation) live here as free functions that compose Body's public API.
+//! validation, crash handling, type inference) live here as free functions that
+//! compose Body's generic API with NativeCtx's Roca-specific metadata.
 
 use roca_ast::{self as roca, Expr, Stmt, BinOp, StringPart as AstStringPart};
 use roca_ast::crash::{CrashHandlerKind, CrashStep};
 use roca_cranelift::api::{Body, Value, StringPart, MatchArmLazy, LazyArmKind};
 use roca_types::RocaType;
+use super::context::NativeCtx;
 
 /// Walk a statement list, emitting each through the Body API.
-pub fn emit_body(body: &mut Body, stmts: &[Stmt]) {
+pub fn emit_body(body: &mut Body, nctx: &NativeCtx, stmts: &[Stmt]) {
     for stmt in stmts {
         if body.has_returned() { break; }
-        emit_stmt(body, stmt);
+        emit_stmt(body, nctx, stmt);
     }
 }
 
-fn emit_stmt(body: &mut Body, stmt: &Stmt) {
+fn emit_stmt(body: &mut Body, nctx: &NativeCtx, stmt: &Stmt) {
     match stmt {
         Stmt::Const { name, value, .. } | Stmt::Let { name, value, .. } => {
             if let Expr::StructLit { name: struct_name, .. } = value {
                 body.set_struct_type(name, struct_name);
             }
-            let kind = body.infer_type(value);
-            let val = emit_expr(body, value);
-            body.const_var_typed(name, val, kind);
+            let kind = nctx.infer_type(value, body);
+            let val = emit_expr(body, nctx, value);
+            if matches!(stmt, Stmt::Const { .. }) {
+                body.const_var_typed(name, val, kind);
+            } else {
+                body.let_var_typed(name, val, kind);
+            }
         }
         Stmt::Return(expr) => {
-            let val = emit_expr(body, expr);
+            let val = emit_expr(body, nctx, expr);
             body.return_val(val);
         }
-        Stmt::Expr(expr) => { emit_expr(body, expr); }
+        Stmt::Expr(expr) => { emit_expr(body, nctx, expr); }
         Stmt::If { condition, then_body, else_body, .. } => {
-            let cond = emit_expr(body, condition);
+            let cond = emit_expr(body, nctx, condition);
             let then_stmts = then_body.clone();
             let else_stmts = else_body.clone();
             body.if_else(cond,
-                |b| emit_body(b, &then_stmts),
-                |b| if let Some(stmts) = &else_stmts { emit_body(b, stmts); },
+                |b| emit_body(b, nctx, &then_stmts),
+                |b| if let Some(stmts) = &else_stmts { emit_body(b, nctx, stmts); },
             );
         }
         Stmt::While { condition, body: while_body, .. } => {
             let cond_expr = condition.clone();
             let loop_body = while_body.clone();
             body.while_loop(
-                |b| emit_expr(b, &cond_expr),
-                |b| emit_body(b, &loop_body),
+                |b| emit_expr(b, nctx, &cond_expr),
+                |b| emit_body(b, nctx, &loop_body),
             );
         }
         Stmt::For { binding, iter, body: for_body } => {
-            let arr = emit_expr(body, iter);
+            let arr = emit_expr(body, nctx, iter);
             let binding = binding.clone();
             let loop_body = for_body.clone();
-            body.for_each(&binding, arr, |b| emit_body(b, &loop_body));
+            body.for_each(&binding, arr, |b| emit_body(b, nctx, &loop_body));
         }
         Stmt::Break => body.break_loop(),
         Stmt::Continue => body.continue_loop(),
         Stmt::Assign { name, value } => {
-            let val = emit_expr(body, value);
+            let val = emit_expr(body, nctx, value);
             body.assign_name(name, val);
         }
         Stmt::FieldAssign { target, field, value } => {
@@ -67,14 +73,14 @@ fn emit_stmt(body: &mut Body, stmt: &Stmt) {
                 Expr::SelfRef => "self",
                 _ => return,
             };
-            let val = emit_expr(body, value);
+            let val = emit_expr(body, nctx, value);
             body.field_assign(var_name, field, val);
         }
         Stmt::LetResult { name, err_name, value } => {
             if let Expr::Call { target, args } = value {
                 if let Expr::Ident(fn_name) = target.as_ref() {
-                    let arg_vals: Vec<Value> = args.iter().map(|a| emit_expr(body, a)).collect();
-                    body.let_result(name, err_name, fn_name, &arg_vals);
+                    let arg_vals: Vec<Value> = args.iter().map(|a| emit_expr(body, nctx, a)).collect();
+                    emit_let_result(body, nctx, name, err_name, fn_name, &arg_vals);
                 }
             }
         }
@@ -82,12 +88,13 @@ fn emit_stmt(body: &mut Body, stmt: &Stmt) {
             body.return_err(name);
         }
         Stmt::Wait { names, failed_name, kind } => {
-            emit_wait(body, names, failed_name, kind);
+            emit_wait(body, nctx, names, failed_name, kind);
         }
     }
+    body.flush_temps();
 }
 
-pub fn emit_expr(body: &mut Body, expr: &Expr) -> Value {
+pub fn emit_expr(body: &mut Body, nctx: &NativeCtx, expr: &Expr) -> Value {
     match expr {
         Expr::Number(n) => body.number(*n),
         Expr::Bool(v) => body.bool_val(*v),
@@ -96,28 +103,40 @@ pub fn emit_expr(body: &mut Body, expr: &Expr) -> Value {
         Expr::SelfRef => body.self_ref(),
         Expr::Ident(name) => body.var(name),
         Expr::BinOp { left, op, right } => {
-            let l_is_temp_string = matches!(op, BinOp::Add)
-                && !matches!(left.as_ref(), Expr::Ident(_) | Expr::Number(_) | Expr::Bool(_) | Expr::Null)
-                && body.infer_type(left) == RocaType::String;
-            let l = emit_expr(body, left);
-            let r = emit_expr(body, right);
-            let result = body.binop(op, l, r);
-            if l_is_temp_string { body.release_rc(l); }
-            result
+            let l = emit_expr(body, nctx, left);
+            let r = emit_expr(body, nctx, right);
+            let is_float = body.is_number(l);
+            match op {
+                BinOp::Add if is_float => body.add(l, r),
+                BinOp::Add => body.string_concat(l, r),
+                BinOp::Sub => body.sub(l, r),
+                BinOp::Mul => body.mul(l, r),
+                BinOp::Div => body.div(l, r),
+                BinOp::Eq if is_float => body.eq(l, r),
+                BinOp::Eq => body.string_eq(l, r),
+                BinOp::Neq if is_float => body.neq(l, r),
+                BinOp::Neq => body.string_neq(l, r),
+                BinOp::Lt => body.lt(l, r),
+                BinOp::Gt => body.gt(l, r),
+                BinOp::Lte => body.lte(l, r),
+                BinOp::Gte => body.gte(l, r),
+                BinOp::And => body.and(l, r),
+                BinOp::Or => body.or(l, r),
+            }
         }
         Expr::Not(inner) => {
-            let val = emit_expr(body, inner);
+            let val = emit_expr(body, nctx, inner);
             body.not(val)
         }
-        Expr::StructLit { name, fields } => emit_struct_lit(body, name, fields),
-        Expr::Call { target, args } => emit_call(body, target, args),
+        Expr::StructLit { name, fields } => emit_struct_lit(body, nctx, name, fields),
+        Expr::Call { target, args } => emit_call(body, nctx, target, args),
         Expr::Array(elements) => {
-            let vals: Vec<Value> = elements.iter().map(|e| emit_expr(body, e)).collect();
+            let vals: Vec<Value> = elements.iter().map(|e| emit_expr(body, nctx, e)).collect();
             body.array(&vals)
         }
         Expr::Index { target, index } => {
-            let arr = emit_expr(body, target);
-            let idx = emit_expr(body, index);
+            let arr = emit_expr(body, nctx, target);
+            let idx = emit_expr(body, nctx, index);
             body.index(arr, idx)
         }
         Expr::Closure { params, body: closure_body } => {
@@ -127,41 +146,41 @@ pub fn emit_expr(body: &mut Body, expr: &Expr) -> Value {
         Expr::StringInterp(parts) => {
             let converted: Vec<StringPart> = parts.iter().map(|p| match p {
                 AstStringPart::Literal(s) => StringPart::Lit(s.clone()),
-                AstStringPart::Expr(e) => StringPart::Expr(emit_expr(body, e)),
+                AstStringPart::Expr(e) => StringPart::Expr(emit_expr(body, nctx, e)),
             }).collect();
             body.string_interp(&converted)
         }
-        Expr::Match { value, arms } => emit_match(body, value, arms),
-        Expr::FieldAccess { target, field } => emit_field_access(body, target, field),
+        Expr::Match { value, arms } => emit_match(body, nctx, value, arms),
+        Expr::FieldAccess { target, field } => emit_field_access(body, nctx, target, field),
         Expr::EnumVariant { enum_name: _, variant, args } => {
-            let arg_vals: Vec<Value> = args.iter().map(|a| emit_expr(body, a)).collect();
+            let arg_vals: Vec<Value> = args.iter().map(|a| emit_expr(body, nctx, a)).collect();
             body.enum_variant("", variant, &arg_vals)
         }
-        Expr::Await(inner) => emit_expr(body, inner),
+        Expr::Await(inner) => emit_expr(body, nctx, inner),
     }
 }
 
-fn emit_call(body: &mut Body, target: &Expr, args: &[Expr]) -> Value {
+fn emit_call(body: &mut Body, nctx: &NativeCtx, target: &Expr, args: &[Expr]) -> Value {
     // Method call: obj.method(args)
     if let Expr::FieldAccess { target: obj, field: method } = target {
-        return emit_method_call(body, obj, method, args);
+        return emit_method_call(body, nctx, obj, method, args);
     }
 
     if let Expr::Ident(name) = target {
         // log() builtin
         if name == "log" {
             if let Some(arg) = args.first() {
-                let val = emit_expr(body, arg);
+                let val = emit_expr(body, nctx, arg);
                 emit_log(body, val);
             }
             return body.bool_val(false);
         }
 
-        let arg_vals: Vec<Value> = args.iter().map(|a| emit_expr(body, a)).collect();
+        let arg_vals: Vec<Value> = args.iter().map(|a| emit_expr(body, nctx, a)).collect();
 
         // Known function call — check for crash handler
         if body.has_func(name) {
-            if let Some(handler) = body.get_crash_handler(name) {
+            if let Some(handler) = nctx.get_crash_handler(name).cloned() {
                 return emit_crash_call(body, name, &arg_vals, &handler);
             }
             return body.call(name, &arg_vals);
@@ -173,55 +192,44 @@ fn emit_call(body: &mut Body, target: &Expr, args: &[Expr]) -> Value {
     body.null()
 }
 
-fn emit_method_call(body: &mut Body, target: &Expr, method: &str, args: &[Expr]) -> Value {
+fn emit_method_call(body: &mut Body, nctx: &NativeCtx, target: &Expr, method: &str, args: &[Expr]) -> Value {
     // Static/type-level dispatch: Type.method(args)
-    // Includes enum variant constructors, extern contract methods, struct static methods
     if let Expr::Ident(type_name) = target {
         let qualified = format!("{}.{}", type_name, method);
-        // Check if this is a known function (extern contract, struct method, etc.)
         let has_func = body.has_func(&qualified);
         if has_func {
-            let arg_vals: Vec<Value> = args.iter().map(|a| emit_expr(body, a)).collect();
+            let arg_vals: Vec<Value> = args.iter().map(|a| emit_expr(body, nctx, a)).collect();
             return body.call(&qualified, &arg_vals);
         }
-        // Check if this is an enum variant constructor
-        if body.is_enum_variant(type_name, method) {
-            let arg_vals: Vec<Value> = args.iter().map(|a| emit_expr(body, a)).collect();
+        if nctx.is_enum_variant(type_name, method) {
+            let arg_vals: Vec<Value> = args.iter().map(|a| emit_expr(body, nctx, a)).collect();
             return body.enum_variant(type_name, method, &arg_vals);
         }
-        // Otherwise fall through to instance method dispatch
     }
 
     // Inline map/filter
     if (method == "map" || method == "filter") && !args.is_empty() {
         if let Expr::Closure { params, body: closure_body } = &args[0] {
-            let arr = emit_expr(body, target);
+            let arr = emit_expr(body, nctx, target);
             let param_name = params.first().cloned().unwrap_or_default();
             let closure_body = *closure_body.clone();
             return if method == "map" {
-                emit_inline_map(body, arr, &param_name, |b| emit_expr(b, &closure_body))
+                emit_inline_map(body, nctx, arr, &param_name, |b, nc| emit_expr(b, nc, &closure_body))
             } else {
-                emit_inline_filter(body, arr, &param_name, |b| emit_expr(b, &closure_body))
+                emit_inline_filter(body, nctx, arr, &param_name, |b, nc| emit_expr(b, nc, &closure_body))
             };
         }
     }
 
-    // Track temp strings for chained method calls
-    let target_is_temp_string = !matches!(target, Expr::Ident(_) | Expr::String(_))
-        && body.infer_type(target) == RocaType::String;
-
-    let obj = emit_expr(body, target);
-    let arg_vals: Vec<Value> = args.iter().map(|a| emit_expr(body, a)).collect();
-    let result = emit_stdlib_dispatch(body, obj, method, &arg_vals);
-
-    if target_is_temp_string { body.release_rc(obj); }
-    result
+    let obj = emit_expr(body, nctx, target);
+    let arg_vals: Vec<Value> = args.iter().map(|a| emit_expr(body, nctx, a)).collect();
+    emit_stdlib_dispatch(body, obj, method, &arg_vals)
 }
 
-fn emit_field_access(body: &mut Body, target: &Expr, field: &str) -> Value {
+fn emit_field_access(body: &mut Body, nctx: &NativeCtx, target: &Expr, field: &str) -> Value {
     // Enum unit variant: Token.Plus
     if let Expr::Ident(name) = target {
-        if body.is_enum_variant(name, field) {
+        if nctx.is_enum_variant(name, field) {
             return body.enum_variant(name, field, &[]);
         }
     }
@@ -233,24 +241,22 @@ fn emit_field_access(body: &mut Body, target: &Expr, field: &str) -> Value {
     };
 
     if let Some(var_name) = var_name {
-        let obj = emit_expr(body, target);
+        let obj = emit_expr(body, nctx, target);
         return body.field_access_on(var_name, obj, field);
     }
 
-    let obj = emit_expr(body, target);
+    let obj = emit_expr(body, nctx, target);
     emit_stdlib_dispatch(body, obj, field, &[])
 }
 
-fn emit_struct_lit(body: &mut Body, name: &str, fields: &[(String, Expr)]) -> Value {
+fn emit_struct_lit(body: &mut Body, nctx: &NativeCtx, name: &str, fields: &[(String, Expr)]) -> Value {
     let field_vals: Vec<(&str, Value)> = fields.iter()
-        .map(|(n, e)| (n.as_str(), emit_expr(body, e)))
+        .map(|(n, e)| (n.as_str(), emit_expr(body, nctx, e)))
         .collect();
 
-    let defs = body.struct_defs(name);
-    let ptr = body.struct_lit_checked(name, &field_vals, defs.as_deref());
+    let ptr = body.struct_lit_checked(name, &field_vals);
 
-    // Validate constraints on struct fields
-    if let Some(ref defs) = defs {
+    if let Some(defs) = nctx.struct_defs(name) {
         let has_constraints = defs.iter().any(|d| !d.constraints.is_empty());
         if has_constraints {
             emit_struct_field_constraints(body, ptr, name, defs);
@@ -260,8 +266,8 @@ fn emit_struct_lit(body: &mut Body, name: &str, fields: &[(String, Expr)]) -> Va
     ptr
 }
 
-fn emit_match(body: &mut Body, value: &Expr, arms: &[roca::MatchArm]) -> Value {
-    let scrutinee = emit_expr(body, value);
+fn emit_match(body: &mut Body, nctx: &NativeCtx, value: &Expr, arms: &[roca::MatchArm]) -> Value {
+    let scrutinee = emit_expr(body, nctx, value);
 
     let default_arm = arms.iter().find(|a| a.pattern.is_none());
     let remaining: Vec<_> = arms.iter().filter(|a| a.pattern.is_some()).collect();
@@ -271,7 +277,7 @@ fn emit_match(body: &mut Body, value: &Expr, arms: &[roca::MatchArm]) -> Value {
     for arm in &remaining {
         match &arm.pattern {
             Some(roca::MatchPattern::Value(pattern)) => {
-                let pat = emit_expr(body, pattern);
+                let pat = emit_expr(body, nctx, pattern);
                 match_arms.push(CompiledArm::Value { pattern: pat, value_expr: arm.value.clone() });
             }
             Some(roca::MatchPattern::Variant { variant, bindings, .. }) => {
@@ -287,7 +293,22 @@ fn emit_match(body: &mut Body, value: &Expr, arms: &[roca::MatchArm]) -> Value {
 
     let default_expr = default_arm.map(|a| a.value.clone());
 
-    body.match_lazy(scrutinee, &match_arms, &default_expr, emit_expr)
+    // Infer result type from arms
+    let result_type = if let Some(ref def) = default_expr {
+        let kind = nctx.infer_type(def, body);
+        if kind == RocaType::Number { RocaType::Number } else { RocaType::Unknown }
+    } else if let Some(first) = match_arms.first() {
+        let expr = match first {
+            CompiledArm::Value { value_expr, .. } => value_expr,
+            CompiledArm::Variant { value_expr, .. } => value_expr,
+        };
+        let kind = nctx.infer_type(expr, body);
+        if kind == RocaType::Number { RocaType::Number } else { RocaType::Unknown }
+    } else if body.is_number(scrutinee) { RocaType::Number }
+    else { RocaType::Unknown };
+
+    body.match_lazy(scrutinee, &match_arms, &default_expr,
+        |b, e| emit_expr(b, nctx, e), result_type)
 }
 
 /// Intermediate representation for match arms with deferred result evaluation.
@@ -296,8 +317,8 @@ pub enum CompiledArm {
     Variant { variant: String, bindings: Vec<String>, value_expr: roca::Expr },
 }
 
-impl MatchArmLazy for CompiledArm {
-    fn kind(&self) -> LazyArmKind<'_> {
+impl MatchArmLazy<roca::Expr> for CompiledArm {
+    fn kind(&self) -> LazyArmKind<'_, roca::Expr> {
         match self {
             CompiledArm::Value { pattern, value_expr } => {
                 LazyArmKind::Value { pattern, value_expr }
@@ -309,29 +330,92 @@ impl MatchArmLazy for CompiledArm {
     }
 }
 
-fn emit_wait(body: &mut Body, names: &[String], failed_name: &str, kind: &roca::WaitKind) {
+/// Destructure error tuple: let {name, err_name} = call(fn_name, args)
+fn emit_let_result(body: &mut Body, nctx: &NativeCtx, name: &str, err_name: &str, fn_name: &str, args: &[Value]) {
+    let results = body.call_multi(fn_name, args);
+    if results.len() >= 2 {
+        let val = results[0];
+        let err = results[1];
+        let kind = if body.is_number(val) {
+            RocaType::Number
+        } else if let Some(k) = nctx.func_return_kinds.get(fn_name) {
+            k.clone()
+        } else {
+            // Unknown heap return — default to RcRelease so it gets freed
+            RocaType::String
+        };
+        body.const_var_typed(name, val, kind);
+        body.const_var_typed(err_name, err, RocaType::Bool);
+    } else {
+        // Function not found or single-return — bind defaults so variables exist in scope
+        let null_val = body.null();
+        let false_val = body.bool_val(false);
+        body.const_var_typed(name, null_val, RocaType::Unknown);
+        body.const_var_typed(err_name, false_val, RocaType::Bool);
+    }
+}
+
+fn emit_wait(body: &mut Body, nctx: &NativeCtx, names: &[String], failed_name: &str, kind: &roca::WaitKind) {
     match kind {
         roca::WaitKind::Single(expr) => {
-            let kind = body.infer_type(expr);
-            let val = emit_expr(body, expr);
+            let kind = nctx.infer_type(expr, body);
+            let val = emit_expr(body, nctx, expr);
             if !names.is_empty() {
-                body.wait_single_typed(&names[0], val, kind);
+                body.const_var_typed(&names[0], val, kind);
             }
-            body.bind_failed(failed_name);
+            bind_failed(body, failed_name);
         }
         roca::WaitKind::All(exprs) => {
             let fn_names: Vec<String> = exprs.iter()
                 .map(|e| format!("__wait_{}", super::compile::wait_expr_hash(e)))
                 .collect();
-            body.wait_all(names, failed_name, &fn_names);
+            emit_wait_all(body, names, failed_name, &fn_names);
         }
         roca::WaitKind::First(exprs) => {
             let fn_names: Vec<String> = exprs.iter()
                 .map(|e| format!("__wait_{}", super::compile::wait_expr_hash(e)))
                 .collect();
-            body.wait_first(names, failed_name, &fn_names);
+            emit_wait_first(body, names, failed_name, &fn_names);
         }
     }
+}
+
+/// Wait for all async functions, bind results to names.
+fn emit_wait_all(body: &mut Body, names: &[String], failed_name: &str, fn_names: &[String]) {
+    let (arr, count) = build_wait_fn_array(body, fn_names);
+    let results = body.call("__wait_all", &[arr, count]);
+    for (i, name) in names.iter().enumerate() {
+        let idx = body.int(i as i64);
+        let val = body.call("__array_get_f64", &[results, idx]);
+        body.const_var_typed(name, val, RocaType::Number);
+    }
+    bind_failed(body, failed_name);
+}
+
+fn emit_wait_first(body: &mut Body, names: &[String], failed_name: &str, fn_names: &[String]) {
+    let (arr, count) = build_wait_fn_array(body, fn_names);
+    let val = body.call("__wait_first", &[arr, count]);
+    if !names.is_empty() {
+        body.const_var_typed(&names[0], val, RocaType::Number);
+    }
+    bind_failed(body, failed_name);
+}
+
+/// Build a function-pointer array from pre-compiled wait function names.
+fn build_wait_fn_array(body: &mut Body, fn_names: &[String]) -> (Value, Value) {
+    let arr = body.call("__array_new", &[]);
+    for name in fn_names {
+        if let Some(ptr) = body.func_addr(name) {
+            body.call_void("__array_push_str", &[arr, ptr]);
+        }
+    }
+    let count = body.int(fn_names.len() as i64);
+    (arr, count)
+}
+
+fn bind_failed(body: &mut Body, name: &str) {
+    let false_val = body.bool_val(false);
+    body.const_var_typed(name, false_val, RocaType::Bool);
 }
 
 /// Simple hash for identifying closures by their AST structure.
@@ -423,12 +507,10 @@ fn emit_stdlib_dispatch(body: &mut Body, obj: Value, method: &str, args: &[Value
         }
         _ => {}
     }
-    // Fallback: unknown method — return object as-is
     obj
 }
 
 // ─── Constraint Validation ───────────────────────────
-// Roca-specific constraint checks built from Body's public API.
 
 /// Validate parameter constraints at function entry.
 pub fn emit_param_constraints(body: &mut Body, params: &[roca::Param]) {
@@ -460,7 +542,6 @@ pub fn emit_struct_field_constraints(
     }
 }
 
-/// Validate constraints on a single value.
 fn emit_constraints(
     body: &mut Body,
     val: Value,
@@ -505,7 +586,6 @@ fn emit_constraints(
     }
 }
 
-/// Emit a constraint violation trap: if cond is non-zero, print error and return default.
 fn emit_constraint_trap(body: &mut Body, cond: Value, field: &str, msg: &str) {
     let err_msg = format!("{}: {}", field, msg);
     body.if_then(cond, |b| {
@@ -516,9 +596,7 @@ fn emit_constraint_trap(body: &mut Body, cond: Value, field: &str, msg: &str) {
 }
 
 // ─── Crash Handling ─────────────────────────────────
-// Roca crash strategies built from Body's public API.
 
-/// Call a function with crash handler — retry loop + error chain dispatch.
 fn emit_crash_call(
     body: &mut Body,
     name: &str,
@@ -538,10 +616,8 @@ fn emit_crash_call(
         } else { None }
     });
 
-    // Track which args are numbers for proper variable reload
     let arg_is_number: Vec<bool> = args.iter().map(|v| body.is_number(*v)).collect();
 
-    // Store args as named variables so they survive across blocks
     for (i, &arg) in args.iter().enumerate() {
         let var_name = format!("__crash_arg_{}", i);
         if arg_is_number[i] {
@@ -551,12 +627,10 @@ fn emit_crash_call(
         }
     }
 
-    // Helper: reload args from named variables
     fn reload_args(body: &mut Body, count: usize) -> Vec<Value> {
         (0..count).map(|i| body.var(&format!("__crash_arg_{}", i))).collect()
     }
 
-    // Initial call
     let call_args = reload_args(body, args.len());
     let results = body.call_multi(name, &call_args);
     if results.len() < 2 {
@@ -571,7 +645,6 @@ fn emit_crash_call(
     }
     body.let_var_typed("__crash_err", results[1], RocaType::Bool);
 
-    // Retry loop
     if let Some((attempts, delay_ms)) = retry {
         let counter_init = body.int(1);
         body.let_var("__crash_counter", counter_init);
@@ -587,9 +660,7 @@ fn emit_crash_call(
                     let counter = b.var("__crash_counter");
                     let has_more = b.int_lt(counter, max);
                     let err = b.var("__crash_err");
-                    let err_ext = b.extend_bool(err);
-                    // Continue while has_more AND err
-                    b.binop(&BinOp::And, has_more, err_ext)
+                    b.and(has_more, err)
                 },
                 move |b| {
                     if delay_ms > 0 {
@@ -613,7 +684,6 @@ fn emit_crash_call(
         });
     }
 
-    // Error handler dispatch: if err, run crash chain; else return value
     let final_err = body.var("__crash_err");
     let val_loaded = body.var("__crash_val");
     if result_is_number {
@@ -633,7 +703,6 @@ fn emit_crash_call(
     body.var("__crash_result")
 }
 
-/// Emit crash chain steps (log, halt, panic, skip, fallback) inside an error branch.
 fn emit_crash_chain(body: &mut Body, chain: &[CrashStep]) {
     for step in chain {
         match step {
@@ -649,33 +718,28 @@ fn emit_crash_chain(body: &mut Body, chain: &[CrashStep]) {
                 body.panic();
                 return;
             }
-            CrashStep::Skip => {
-                // Skip: default value already in __crash_result, continue
-            }
-            CrashStep::Fallback(_expr) => {
-                // TODO: emit fallback expression
-            }
-            CrashStep::Retry { .. } => {} // handled above
+            CrashStep::Skip => {}
+            CrashStep::Fallback(_expr) => {}
+            CrashStep::Retry { .. } => {}
         }
     }
 }
 
 // ─── Inline Map/Filter ──────────────────────────────
-// Array iteration patterns built from Body's for_each + named variables.
 
-/// Inline map: iterate arr, apply body_fn to each element, collect results.
 fn emit_inline_map(
     body: &mut Body,
+    nctx: &NativeCtx,
     arr: Value,
     binding: &str,
-    body_fn: impl FnOnce(&mut Body) -> Value,
+    body_fn: impl FnOnce(&mut Body, &NativeCtx) -> Value,
 ) -> Value {
     let result_arr = body.call("__array_new", &[]);
     body.let_var("__map_result", result_arr);
     let binding = binding.to_string();
 
     body.for_each(&binding, arr, |b| {
-        let mapped = body_fn(b);
+        let mapped = body_fn(b, nctx);
         let res = b.var("__map_result");
         b.array_push(res, mapped);
     });
@@ -683,19 +747,19 @@ fn emit_inline_map(
     body.var("__map_result")
 }
 
-/// Inline filter: iterate arr, keep elements where body_fn returns truthy.
 fn emit_inline_filter(
     body: &mut Body,
+    nctx: &NativeCtx,
     arr: Value,
     binding: &str,
-    body_fn: impl FnOnce(&mut Body) -> Value,
+    body_fn: impl FnOnce(&mut Body, &NativeCtx) -> Value,
 ) -> Value {
     let result_arr = body.call("__array_new", &[]);
     body.let_var("__filter_result", result_arr);
     let binding = binding.to_string();
 
     body.for_each(&binding, arr, |b| {
-        let cond = body_fn(b);
+        let cond = body_fn(b, nctx);
         let elem = b.var(&binding);
         let res = b.var("__filter_result");
         b.if_then(cond, |b| {

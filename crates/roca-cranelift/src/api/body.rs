@@ -3,16 +3,11 @@
 //! All block management, memory, cleanup is internal.
 
 use cranelift_codegen::ir::{self, types, InstBuilder, Value};
-use roca_ast::{self as roca, BinOp};
-use roca_ast::crash::CrashHandlerKind;
 use roca_types::RocaType;
 use crate::builder::{IrBuilder, VarSlot};
 use crate::context::{EmitCtx, StructLayout};
 use crate::cranelift_type::CraneliftType;
-use crate::emit_helpers::{
-    FreeRefs, emit_scope_cleanup, emit_free_by_kind, emit_loop_body_cleanup,
-    infer_kind as ast_infer_kind,
-};
+use crate::emit_helpers::{emit_scope_cleanup, emit_loop_body_cleanup};
 use crate::helpers::default_for_ir_type;
 
 // ─── Variable References ──────────────────────────────
@@ -66,6 +61,62 @@ pub struct Body<'a, 'b: 'a, 'c> {
     pub(crate) ir: &'c mut IrBuilder<'a, 'b>,
     pub(crate) ctx: EmitCtx,
     pub(crate) returned: bool,
+    /// Heap values created by Body methods but not yet bound to a variable.
+    /// Freed at scope exit if unclaimed. Internal — no other crate sees this.
+    pub(crate) temps: Vec<Value>,
+}
+
+// ─── Internal temp tracking ─────────────────────────
+
+impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
+    /// Track a heap value as a temporary. Removed when bound to a variable.
+    fn track_temp(&mut self, val: Value) {
+        if self.ir.value_ir_type(val) == types::I64 {
+            self.temps.push(val);
+        }
+    }
+
+    /// Remove a value from temps (it's been bound to a variable).
+    fn claim_temp(&mut self, val: Value) {
+        self.temps.retain(|&v| v != val);
+    }
+
+    /// Free all unclaimed temporaries. Called internally at scope exit.
+    pub(crate) fn flush_temps_inner(&mut self) {
+        if self.temps.is_empty() { return; }
+        if let Some(&free_ref) = self.ctx.get_func("__free") {
+            for &val in &self.temps {
+                self.ir.call_void(free_ref, &[val]);
+            }
+        }
+        self.temps.clear();
+    }
+
+    /// Free unclaimed temporaries. Called at statement boundaries.
+    pub fn flush_temps(&mut self) {
+        self.flush_temps_inner();
+    }
+
+    /// Evaluate a closure in an isolated temp scope. Temps created inside
+    /// are flushed before returning; the result value is claimed (not freed).
+    /// Used by match arms to prevent branch-local temps from leaking into merge.
+    fn with_isolated_temps(&mut self, f: impl FnOnce(&mut Self) -> Value) -> Value {
+        let saved = self.temps.clone();
+        let result = f(self);
+        self.claim_temp(result);
+        self.flush_temps_inner();
+        self.temps = saved;
+        result
+    }
+
+    /// Free branch-local heap vars (vars added after heap_base).
+    fn emit_branch_cleanup(&mut self, heap_base: usize) {
+        if let Some(&free_ref) = self.ctx.get_func("__free") {
+            for var_name in self.ctx.live_heap_vars.iter().skip(heap_base) {
+                crate::emit_helpers::emit_free_var_inner(self.ir, &self.ctx, var_name, free_ref);
+            }
+        }
+    }
 }
 
 // ─── Literals ─────────────────────────────────────────
@@ -81,11 +132,13 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
 
     pub fn string(&mut self, s: &str) -> Value {
         let static_ptr = self.ir.leak_cstr(s);
-        if let Some(&f) = self.ctx.get_func("__string_new") {
+        let val = if let Some(&f) = self.ctx.get_func("__string_new") {
             self.ir.call(f, &[static_ptr])
         } else {
             static_ptr
-        }
+        };
+        self.track_temp(val);
+        val
     }
 
     pub fn null(&mut self) -> Value {
@@ -118,66 +171,68 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
         }
     }
 
-    /// Bind an immutable variable.
+    /// Bind an immutable variable. Heap tracking is automatic — any I64 value
+    /// is marked as heap and will be freed at scope exit via `__free(ptr)`.
     pub fn const_var(&mut self, name: &str, val: Value) -> ConstRef {
-        let roca_type = self.infer_value_type(val);
-        let cl_type = roca_type.to_cranelift();
+        self.claim_temp(val);
+        let cl_type = self.ir.value_ir_type(val);
         let slot = self.ir.alloc_var(val);
-        self.ctx.set_var_kind(name.to_string(), slot.0, cl_type, roca_type.clone());
-        ConstRef { name: name.to_string(), slot, roca_type }
+        self.ctx.set_var(name.to_string(), slot.0, cl_type);
+        if let Some(struct_type) = self.ctx.pending_struct_type.take() {
+            self.ctx.var_struct_type.insert(name.to_string(), struct_type);
+        }
+        ConstRef { name: name.to_string(), slot, roca_type: RocaType::Unknown }
     }
 
-    /// Bind an immutable variable with an explicit type hint.
+    /// Bind an immutable variable with an explicit type hint (for field access tracking).
     pub fn const_var_typed(&mut self, name: &str, val: Value, roca_type: RocaType) -> ConstRef {
+        self.claim_temp(val);
         let cl_type = self.ir.value_ir_type(val);
         let slot = self.ir.alloc_var(val);
         self.ctx.set_var_kind(name.to_string(), slot.0, cl_type, roca_type.clone());
+        if let Some(struct_type) = self.ctx.pending_struct_type.take() {
+            self.ctx.var_struct_type.insert(name.to_string(), struct_type);
+        }
         ConstRef { name: name.to_string(), slot, roca_type }
     }
 
-    /// Bind a mutable variable.
+    /// Bind a mutable variable. Heap tracking is automatic.
     pub fn let_var(&mut self, name: &str, val: Value) -> MutRef {
-        let roca_type = self.infer_value_type(val);
-        let cl_type = roca_type.to_cranelift();
+        self.claim_temp(val);
+        let cl_type = self.ir.value_ir_type(val);
         let slot = self.ir.alloc_var(val);
-        self.ctx.set_var_kind(name.to_string(), slot.0, cl_type, roca_type.clone());
-        MutRef { name: name.to_string(), slot, roca_type }
+        self.ctx.set_var(name.to_string(), slot.0, cl_type);
+        if let Some(struct_type) = self.ctx.pending_struct_type.take() {
+            self.ctx.var_struct_type.insert(name.to_string(), struct_type);
+        }
+        MutRef { name: name.to_string(), slot, roca_type: RocaType::Unknown }
     }
 
     /// Bind a mutable variable with an explicit type hint.
     pub fn let_var_typed(&mut self, name: &str, val: Value, roca_type: RocaType) -> MutRef {
+        self.claim_temp(val);
         let cl_type = self.ir.value_ir_type(val);
         let slot = self.ir.alloc_var(val);
         self.ctx.set_var_kind(name.to_string(), slot.0, cl_type, roca_type.clone());
+        if let Some(struct_type) = self.ctx.pending_struct_type.take() {
+            self.ctx.var_struct_type.insert(name.to_string(), struct_type);
+        }
         MutRef { name: name.to_string(), slot, roca_type }
     }
 
-    /// Reassign a mutable variable. Frees the old heap value automatically.
+    /// Reassign a mutable variable. Frees the old value (including struct fields), stores new.
     pub fn assign(&mut self, var: &MutRef, val: Value) {
-        if let Some(old) = self.ctx.get_var(&var.name) {
-            if old.is_heap {
-                let slot = old.slot;
-                let cl_type = old.cranelift_type;
-                let kind = old.kind.clone();
-                let refs = FreeRefs::from_ctx(&self.ctx);
-                emit_free_by_kind(self.ir, slot, cl_type, kind, &refs);
-            }
-        }
+        self.claim_temp(val);
+        crate::emit_helpers::emit_free_var(self.ir, &self.ctx, &var.name);
         self.ir.store_var(var.slot, val);
     }
 
-    /// Reassign a variable by name. Frees old heap value, stores new value.
+    /// Reassign a variable by name. Frees old value (including struct fields), stores new.
     pub fn assign_name(&mut self, name: &str, val: Value) {
+        self.claim_temp(val);
+        crate::emit_helpers::emit_free_var(self.ir, &self.ctx, name);
         if let Some(var) = self.ctx.get_var(name) {
-            let slot = var.slot;
-            let is_heap = var.is_heap;
-            let cl_type = var.cranelift_type;
-            let kind = var.kind.clone();
-            if is_heap {
-                let refs = FreeRefs::from_ctx(&self.ctx);
-                emit_free_by_kind(self.ir, slot, cl_type, kind, &refs);
-            }
-            self.ir.raw().ins().stack_store(val, slot, 0);
+            self.ir.raw().ins().stack_store(val, var.slot, 0);
         }
     }
 
@@ -191,57 +246,50 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
         self.ctx.var_struct_type.insert(var_name.to_string(), struct_name.to_string());
     }
 
-    /// Infer RocaType from an IR value's type.
-    fn infer_value_type(&self, val: Value) -> RocaType {
-        if self.ir.is_number(val) { RocaType::Number }
-        else if self.ir.value_ir_type(val) == types::I8 { RocaType::Bool }
-        else { RocaType::Unknown }
+    /// Get the RocaType of a named variable (for type inference in the emit layer).
+    pub fn var_kind(&self, name: &str) -> Option<RocaType> {
+        self.ctx.get_var(name).map(|v| v.kind.clone())
     }
+
 }
 
 // ─── Operators ────────────────────────────────────────
 
 impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
-    /// Binary operation — dispatches based on operator and value types.
-    pub fn binop(&mut self, op: &BinOp, l: Value, r: Value) -> Value {
-        let is_float = self.ir.is_number(l);
-        match op {
-            BinOp::Add if is_float => self.ir.add(l, r),
-            BinOp::Add => {
-                if let Some(f) = self.ctx.get_func("__string_concat") { self.ir.call(*f, &[l, r]) }
-                else { self.ir.iadd(l, r) }
-            }
-            BinOp::Sub => self.ir.sub(l, r),
-            BinOp::Mul => self.ir.mul(l, r),
-            BinOp::Div => self.ir.div(l, r),
-            BinOp::Eq if is_float => self.ir.f_eq(l, r),
-            BinOp::Eq => {
-                if let Some(f) = self.ctx.get_func("__string_eq") {
-                    let result = self.ir.call(*f, &[l, r]);
-                    self.ir.extend_bool(result)
-                } else { self.ir.i_eq(l, r) }
-            }
-            BinOp::Neq if is_float => self.ir.f_ne(l, r),
-            BinOp::Neq => {
-                if let Some(f) = self.ctx.get_func("__string_eq") {
-                    let eq = self.ir.call(*f, &[l, r]);
-                    let ext = self.ir.extend_bool(eq);
-                    let one = self.ir.const_i64(1);
-                    self.ir.isub(one, ext)
-                } else { self.ir.i_ne(l, r) }
-            }
-            BinOp::Lt => self.ir.f_lt(l, r),
-            BinOp::Gt => self.ir.f_gt(l, r),
-            BinOp::Lte => self.ir.f_le(l, r),
-            BinOp::Gte => self.ir.f_ge(l, r),
-            BinOp::And => self.ir.bool_and(l, r),
-            BinOp::Or => self.ir.bool_or(l, r),
-        }
+    pub fn add(&mut self, l: Value, r: Value) -> Value { self.ir.add(l, r) }
+    pub fn sub(&mut self, l: Value, r: Value) -> Value { self.ir.sub(l, r) }
+    pub fn mul(&mut self, l: Value, r: Value) -> Value { self.ir.mul(l, r) }
+    pub fn div(&mut self, l: Value, r: Value) -> Value { self.ir.div(l, r) }
+    pub fn eq(&mut self, l: Value, r: Value) -> Value { self.ir.f_eq(l, r) }
+    pub fn neq(&mut self, l: Value, r: Value) -> Value { self.ir.f_ne(l, r) }
+    pub fn lt(&mut self, l: Value, r: Value) -> Value { self.ir.f_lt(l, r) }
+    pub fn gt(&mut self, l: Value, r: Value) -> Value { self.ir.f_gt(l, r) }
+    pub fn lte(&mut self, l: Value, r: Value) -> Value { self.ir.f_le(l, r) }
+    pub fn gte(&mut self, l: Value, r: Value) -> Value { self.ir.f_ge(l, r) }
+    pub fn and(&mut self, l: Value, r: Value) -> Value { self.ir.bool_and(l, r) }
+    pub fn or(&mut self, l: Value, r: Value) -> Value { self.ir.bool_or(l, r) }
+    pub fn int_eq(&mut self, l: Value, r: Value) -> Value { self.ir.i_eq(l, r) }
+
+    pub fn string_concat(&mut self, l: Value, r: Value) -> Value {
+        let val = if let Some(f) = self.ctx.get_func("__string_concat") { self.ir.call(*f, &[l, r]) }
+        else { return self.ir.null() };
+        self.track_temp(val);
+        val
     }
 
-    /// Boolean NOT.
+    pub fn string_eq(&mut self, l: Value, r: Value) -> Value {
+        if let Some(f) = self.ctx.get_func("__string_eq") {
+            self.ir.call(*f, &[l, r])
+        } else { self.ir.i_eq(l, r) }
+    }
+
+    pub fn string_neq(&mut self, l: Value, r: Value) -> Value {
+        let eq = self.string_eq(l, r);
+        self.not(eq)
+    }
+
     pub fn not(&mut self, val: Value) -> Value {
-        let zero = self.ir.null();
+        let zero = self.ir.const_bool(false);
         self.ir.i_eq(val, zero)
     }
 }
@@ -253,7 +301,11 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
     pub fn call(&mut self, name: &str, args: &[Value]) -> Value {
         if let Some(&func_ref) = self.ctx.get_func(name) {
             let results = self.ir.call_multi(func_ref, args);
-            if !results.is_empty() { results[0] } else { self.ir.null() }
+            if !results.is_empty() {
+                let val = results[0];
+                self.track_temp(val);
+                val
+            } else { self.ir.null() }
         } else {
             self.ir.null()
         }
@@ -269,7 +321,11 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
     /// Call a function by name, return all results.
     pub fn call_multi(&mut self, name: &str, args: &[Value]) -> Vec<Value> {
         if let Some(&func_ref) = self.ctx.get_func(name) {
-            self.ir.call_multi(func_ref, args)
+            let results = self.ir.call_multi(func_ref, args);
+            for &val in &results {
+                self.track_temp(val);
+            }
+            results
         } else {
             vec![]
         }
@@ -307,7 +363,7 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
     }
 
     /// Get the IR type of a value (for dispatch decisions in the emit layer).
-    pub fn value_type(&self, val: Value) -> cranelift_codegen::ir::Type {
+    pub(crate) fn value_type(&self, val: Value) -> cranelift_codegen::ir::Type {
         self.ir.value_ir_type(val)
     }
 
@@ -338,6 +394,7 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
         for &elem in elements {
             crate::emit_helpers::emit_array_push(self.ir, arr, elem, &mut self.ctx);
         }
+        self.track_temp(arr);
         arr
     }
 
@@ -354,21 +411,37 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
         crate::emit_helpers::emit_array_push(self.ir, arr, val, &mut self.ctx);
     }
 
-    /// Struct literal construction.
-    pub fn struct_lit(&mut self, _name: &str, fields: &[(&str, Value)]) -> Value {
+    /// Struct literal construction. Registers layout so scope cleanup
+    /// knows which fields are heap-allocated and need freeing.
+    pub fn struct_lit(&mut self, name: &str, fields: &[(&str, Value)]) -> Value {
         let num_fields = self.ir.const_i64(fields.len() as i64);
         let ptr = if let Some(f) = self.ctx.get_func("__struct_alloc") {
             self.ir.call(*f, &[num_fields])
         } else { return self.ir.null(); };
+        // Build layout from field values
+        let layout_fields: Vec<(String, RocaType)> = fields.iter()
+            .map(|(n, v)| {
+                let kind = if self.ir.is_number(*v) { RocaType::Number }
+                else if self.ir.value_ir_type(*v) == types::I8 { RocaType::Bool }
+                else { RocaType::String }; // any I64 = heap
+                (n.to_string(), kind)
+            })
+            .collect();
+        let layout_name = if name.is_empty() { format!("__anon_{}", fields.len()) } else { name.to_string() };
+        self.ctx.struct_layouts.insert(layout_name.clone(), StructLayout { fields: layout_fields });
+        self.ctx.pending_struct_type = Some(layout_name);
         for (i, &(_, val)) in fields.iter().enumerate() {
+            // Fields are owned by the struct — remove from temps
+            self.claim_temp(val);
             let idx = self.ir.const_i64(i as i64);
             crate::emit_helpers::emit_struct_set(self.ir, ptr, idx, val, &mut self.ctx);
         }
-        // TODO: validate constraints on fields
+        self.track_temp(ptr);
         ptr
     }
 
-    /// Enum variant construction.
+    /// Enum variant construction. The tag string (slot 0) is owned by the enum.
+    /// Registers a layout so scope cleanup knows to free heap fields.
     pub fn enum_variant(&mut self, _enum_name: &str, variant: &str, args: &[Value]) -> Value {
         let num_fields = self.ir.const_i64((1 + args.len()) as i64);
         let ptr = if let Some(f) = self.ctx.get_func("__struct_alloc") {
@@ -383,6 +456,24 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
             let idx = self.ir.const_i64((i + 1) as i64);
             crate::emit_helpers::emit_struct_set(self.ir, ptr, idx, arg, &mut self.ctx);
         }
+        // Register layout: slot 0 = tag string (heap), remaining slots = args
+        let enum_layout_name = format!("__enum_{}", variant);
+        if !self.ctx.struct_layouts.contains_key(&enum_layout_name) {
+            let mut fields = vec![("__tag".to_string(), RocaType::String)];
+            for (i, &arg) in args.iter().enumerate() {
+                let kind = if self.ir.is_number(arg) { RocaType::Number }
+                else if self.ir.value_ir_type(arg) == types::I8 { RocaType::Bool }
+                else { RocaType::String }; // any I64 = heap
+                fields.push((format!("__arg{}", i), kind));
+            }
+            self.ctx.struct_layouts.insert(enum_layout_name.clone(), StructLayout { fields });
+        }
+        self.ctx.pending_struct_type = Some(enum_layout_name);
+        // Tag string is owned by the enum — claim it from temps
+        self.claim_temp(tag);
+        // Args are owned by the enum too
+        for &arg in args { self.claim_temp(arg); }
+        self.track_temp(ptr);
         ptr
     }
 
@@ -447,7 +538,6 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
         &mut self,
         name: &str,
         fields: &[(&str, Value)],
-        _field_defs: Option<&[roca::Field]>,
     ) -> Value {
         // Register layout if not present
         if !self.ctx.struct_layouts.contains_key(name) {
@@ -455,12 +545,13 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
                 .map(|(n, v)| {
                     let kind = if self.ir.is_number(*v) { RocaType::Number }
                     else if self.ir.value_ir_type(*v) == types::I8 { RocaType::Bool }
-                    else { RocaType::Unknown };
+                    else { RocaType::String }; // any I64 = heap
                     (n.to_string(), kind)
                 })
                 .collect();
             self.ctx.struct_layouts.insert(name.to_string(), StructLayout { fields: layout_fields });
         }
+        self.ctx.pending_struct_type = Some(name.to_string());
 
         let num_fields = self.ir.const_i64(fields.len() as i64);
         let ptr = if let Some(f) = self.ctx.get_func("__struct_alloc") {
@@ -473,10 +564,12 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
         };
 
         for (i, &(_, val)) in fields.iter().enumerate() {
+            self.claim_temp(val); // fields owned by struct
             let idx_val = self.ir.const_i64(indices[i] as i64);
             crate::emit_helpers::emit_struct_set(self.ir, ptr, idx_val, val, &mut self.ctx);
         }
 
+        self.track_temp(ptr);
         ptr
     }
 
@@ -493,12 +586,13 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
         self.ir.const_number(0.0)
     }
 
-    /// Release a reference-counted value (for temp string cleanup).
-    pub fn release_rc(&mut self, val: Value) {
-        if let Some(&f) = self.ctx.get_func("__rc_release") {
+    /// Free a heap value immediately (for temporary cleanup).
+    pub fn free(&mut self, val: Value) {
+        if let Some(&f) = self.ctx.get_func("__free") {
             self.ir.call_void(f, &[val]);
         }
     }
+
 
     /// Check if a value is a number type.
     pub fn is_number(&self, val: Value) -> bool {
@@ -545,16 +639,18 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
                 Some(acc) => {
                     if let Some(f) = concat {
                         let new_val = self.ir.call(f, &[acc, val]);
-                        // Release the old intermediate string
-                        if let Some(&release) = self.ctx.get_func("__rc_release") {
-                            self.ir.call_void(release, &[acc]);
+                        // Free the old intermediate string
+                        if let Some(&free_fn) = self.ctx.get_func("__free") {
+                            self.ir.call_void(free_fn, &[acc]);
                         }
                         new_val
                     } else { val }
                 }
             });
         }
-        result.unwrap_or_else(|| self.ir.null())
+        let val = result.unwrap_or_else(|| self.ir.null());
+        self.track_temp(val);
+        val
     }
 }
 
@@ -582,7 +678,11 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
         then_fn(self);
         let then_returned = self.returned;
         self.returned = false;
-        if !then_returned { self.ir.jump(merge_block); }
+        if !then_returned {
+            // Free branch-local heap vars before jumping to merge
+            self.emit_branch_cleanup(heap_base);
+            self.ir.jump(merge_block);
+        }
 
         self.ctx.live_heap_vars.truncate(heap_base);
         self.ctx.vars = saved_vars.clone();
@@ -593,7 +693,10 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
         else_fn(self);
         let else_returned = self.returned;
         self.returned = false;
-        if !else_returned { self.ir.jump(merge_block); }
+        if !else_returned {
+            self.emit_branch_cleanup(heap_base);
+            self.ir.jump(merge_block);
+        }
 
         self.ctx.live_heap_vars.truncate(heap_base);
         self.ctx.vars = saved_vars;
@@ -737,9 +840,15 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
 // ─── Returns ──────────────────────────────────────────
 
 impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
-    /// Return a value.
+    /// Return a value. If the value came from a variable, pass `skip` to
+    /// prevent scope cleanup from freeing it — ownership transfers to caller.
     pub fn return_val(&mut self, val: Value) {
-        emit_scope_cleanup(self.ir, &self.ctx, None);
+        // Free any unclaimed temporaries (except the return value)
+        self.claim_temp(val); // return value is not a temp
+        self.flush_temps_inner();
+        // Find which variable (if any) this value was loaded from.
+        let skip = self.find_var_for_value(val);
+        emit_scope_cleanup(self.ir, &self.ctx, skip.as_deref());
         if self.ctx.returns_err {
             let no_err = self.ir.const_bool(false);
             self.ir.ret_with_err(val, no_err);
@@ -749,9 +858,28 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
         self.returned = true;
     }
 
-    /// Return an error by name.
+    /// Find which heap variable holds the given value, if any.
+    /// Returns the variable name so scope cleanup can skip freeing it.
+    fn find_var_for_value(&mut self, val: Value) -> Option<String> {
+        if self.ir.value_ir_type(val) != types::I64 { return None; }
+        let dfg = &self.ir.raw().func.dfg;
+        if let Some(inst) = dfg.value_def(val).inst() {
+            let data = &dfg.insts[inst];
+            if let ir::InstructionData::StackLoad { stack_slot, .. } = data {
+                for (name, var) in &self.ctx.vars {
+                    if var.slot == *stack_slot && var.is_heap {
+                        return Some(name.clone());
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Return an error by name. Frees all locals and temps.
     pub fn return_err(&mut self, err_name: &str) {
         if self.ctx.returns_err {
+            self.flush_temps_inner();
             emit_scope_cleanup(self.ir, &self.ctx, None);
             let default_val = default_for_ir_type(self.ir.raw(), self.ctx.return_type);
             let tag = (err_name.bytes().fold(1u8, |a, c| a.wrapping_add(c))).max(1);
@@ -761,127 +889,16 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
         }
     }
 
-    /// Destructure: let {name, err_name} = call(fn_name, args).
-    pub fn let_result(&mut self, name: &str, err_name: &str, fn_name: &str, args: &[Value]) -> (Value, Value) {
-        if let Some(func_ref) = self.ctx.get_func(fn_name).copied() {
-            let results = self.ir.call_multi(func_ref, args);
-            if results.len() >= 2 {
-                let val = results[0];
-                let err = results[1];
-                let cl_type = self.ir.value_ir_type(val);
-                let val_slot = self.ir.alloc_var(val);
-                let kind = if self.ir.is_number(val) {
-                    RocaType::Number
-                } else if let Some(k) = self.ctx.func_return_kinds.get(fn_name) {
-                    k.clone()
-                } else {
-                    RocaType::Unknown
-                };
-                self.ctx.set_var_kind(name.to_string(), val_slot.0, cl_type, kind);
-                let err_slot = self.ir.alloc_var(err);
-                self.ctx.set_var_kind(err_name.to_string(), err_slot.0, types::I8, RocaType::Bool);
-                return (val, err);
-            }
-        }
-        (self.ir.null(), self.ir.const_bool(false))
-    }
+    // let_result (error tuple destructuring) moved to the consuming crate.
+    // Use call_multi() + const_var_typed() to implement it.
 
     pub fn has_returned(&self) -> bool { self.returned }
 }
 
-// ─── Type Inference ───────────────────────────────────
-
-impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
-    /// Infer the RocaType of an AST expression.
-    pub fn infer_type(&self, expr: &roca::Expr) -> RocaType {
-        ast_infer_kind(expr, &self.ctx)
-    }
-
-    /// Get struct field definitions (for constraint validation).
-    pub fn struct_defs(&self, name: &str) -> Option<Vec<roca::Field>> {
-        self.ctx.struct_defs.get(name).cloned()
-    }
-
-    /// Check if a name.variant is a known enum variant.
-    pub fn is_enum_variant(&self, type_name: &str, variant: &str) -> bool {
-        self.ctx.enum_variants.get(type_name)
-            .map_or(false, |vs| vs.contains(&variant.to_string()))
-    }
-}
-
-// ─── Async ────────────────────────────────────────────
-
-impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
-    /// Wait for a single async expression.
-    pub fn wait_single(&mut self, name: &str, val: Value) {
-        let cl_type = self.ir.value_ir_type(val);
-        let slot = self.ir.alloc_var(val);
-        self.ctx.set_var_kind(name.to_string(), slot.0, cl_type, RocaType::Unknown);
-    }
-
-    /// Wait for a single async expression with type hint.
-    pub fn wait_single_typed(&mut self, name: &str, val: Value, kind: RocaType) {
-        let cl_type = self.ir.value_ir_type(val);
-        let slot = self.ir.alloc_var(val);
-        self.ctx.set_var_kind(name.to_string(), slot.0, cl_type, kind);
-    }
-
-    /// Bind a failed_name variable to false (used for wait statements).
-    pub fn bind_failed(&mut self, failed_name: &str) {
-        let false_val = self.ir.const_bool(false);
-        let err_slot = self.ir.alloc_var(false_val);
-        self.ctx.set_var_kind(failed_name.to_string(), err_slot.0, types::I8, RocaType::Bool);
-    }
-
-    /// Build a function-pointer array from pre-compiled wait function names.
-    fn build_wait_fn_array(&mut self, fn_names: &[String]) -> (Value, Value) {
-        let arr = if let Some(&arr_new) = self.ctx.get_func("__array_new") {
-            self.ir.call(arr_new, &[])
-        } else {
-            self.ir.null()
-        };
-        for name in fn_names {
-            if let Some(&func_ref) = self.ctx.get_func(name) {
-                let ptr = self.ir.func_addr(func_ref);
-                if let Some(&push) = self.ctx.get_func("__array_push_str") {
-                    self.ir.call_void(push, &[arr, ptr]);
-                }
-            }
-        }
-        let count = self.ir.const_i64(fn_names.len() as i64);
-        (arr, count)
-    }
-
-    /// Wait for all async functions, bind results to names.
-    pub fn wait_all(&mut self, names: &[String], failed_name: &str, fn_names: &[String]) {
-        let (arr, count) = self.build_wait_fn_array(fn_names);
-        if let Some(&wait_all) = self.ctx.get_func("__wait_all") {
-            let results = self.ir.call(wait_all, &[arr, count]);
-            for (i, name) in names.iter().enumerate() {
-                if let Some(&get) = self.ctx.get_func("__array_get_f64") {
-                    let idx = self.ir.const_i64(i as i64);
-                    let val = self.ir.call(get, &[results, idx]);
-                    let slot = self.ir.alloc_var(val);
-                    self.ctx.set_var_kind(name.clone(), slot.0, types::F64, RocaType::Number);
-                }
-            }
-        }
-        self.bind_failed(failed_name);
-    }
-
-    /// Wait for the first async function to complete.
-    pub fn wait_first(&mut self, names: &[String], failed_name: &str, fn_names: &[String]) {
-        let (arr, count) = self.build_wait_fn_array(fn_names);
-        if let Some(&wait_first) = self.ctx.get_func("__wait_first") {
-            let val = self.ir.call(wait_first, &[arr, count]);
-            if !names.is_empty() {
-                let slot = self.ir.alloc_var(val);
-                self.ctx.set_var_kind(names[0].clone(), slot.0, types::F64, RocaType::Number);
-            }
-        }
-        self.bind_failed(failed_name);
-    }
-}
+// Type inference, enum variant checks, struct definitions, and async wait
+// methods are language-specific and belong in the consuming crate.
+// Use var_kind(), is_number(), is_bool() for generic type queries.
+// Use call(), let_var_typed(), closure_ref() for async dispatch.
 
 // ─── Slot Primitives (internal) ─────────────────────
 
@@ -966,14 +983,9 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
     }
 }
 
-// ─── Crash / Error Context ──────────────────────────
+// ─── Error / Return Context ─────────────────────────
 
 impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
-    /// Get crash handler for a function name (if registered).
-    pub fn get_crash_handler(&self, name: &str) -> Option<CrashHandlerKind> {
-        self.ctx.crash_handlers.get(name).cloned()
-    }
-
     /// Whether the current function returns an error tuple.
     pub fn returns_err(&self) -> bool {
         self.ctx.returns_err
@@ -1115,27 +1127,21 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
     /// Match expression with lazy result evaluation.
     /// Arms provide pattern data but result expressions are evaluated inside branches
     /// via the emit_fn callback, allowing bindings to be available.
-    pub fn match_lazy<Arm>(
+    /// `result_type` specifies the type of the match result (caller infers this).
+    /// `E` is the expression type used by the language (e.g., the AST expression node).
+    pub fn match_lazy<E, Arm, F>(
         &mut self,
         scrutinee: Value,
         arms: &[Arm],
-        default_expr: &Option<roca::Expr>,
-        emit_fn: fn(&mut Body, &roca::Expr) -> Value,
+        default_expr: &Option<E>,
+        emit_fn: F,
+        result_type: RocaType,
     ) -> Value
     where
-        Arm: MatchArmLazy,
+        Arm: MatchArmLazy<E>,
+        F: Fn(&mut Body, &E) -> Value,
     {
         let is_float = self.ir.is_number(scrutinee);
-
-        // Infer result type: check default arm first (always concrete), then first arm
-        let result_type = if let Some(def) = default_expr {
-            let kind = self.infer_type(def);
-            if kind == RocaType::Number { RocaType::Number } else { RocaType::Unknown }
-        } else if let Some(first) = arms.first() {
-            let kind = self.infer_type(first.kind().value_expr());
-            if kind == RocaType::Number { RocaType::Number } else { RocaType::Unknown }
-        } else if is_float { RocaType::Number }
-        else { RocaType::Unknown };
 
         let merge = self.ir.create_block();
         self.ir.append_block_param(merge, &result_type);
@@ -1160,7 +1166,7 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
 
                     self.ir.switch_to(then_block);
                     self.ir.seal(then_block);
-                    let result = emit_fn(self, value_expr);
+                    let result = self.with_isolated_temps(|b| emit_fn(b, value_expr));
                     self.ir.jump_with(merge, result);
 
                     self.ir.switch_to(next_block);
@@ -1196,7 +1202,7 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
                         self.ctx.set_var_kind(binding.clone(), slot.0, types::F64, RocaType::Number);
                     }
 
-                    let result = emit_fn(self, value_expr);
+                    let result = self.with_isolated_temps(|b| emit_fn(b, value_expr));
                     self.ir.jump_with(merge, result);
 
                     self.ir.switch_to(next_block);
@@ -1205,28 +1211,32 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
             }
         }
 
-        let default_val = if let Some(expr) = default_expr {
-            emit_fn(self, expr)
-        } else {
-            self.ir.default_for(&result_type)
-        };
+        let default_val = self.with_isolated_temps(|b| {
+            if let Some(expr) = default_expr {
+                emit_fn(b, expr)
+            } else {
+                b.ir.default_for(&result_type)
+            }
+        });
         self.ir.jump_with(merge, default_val);
 
         self.ir.switch_to(merge);
         self.ir.seal(merge);
-        self.ir.block_param(merge, 0)
+        let phi = self.ir.block_param(merge, 0);
+        self.track_temp(phi);
+        phi
     }
 }
 
-/// Kind of a lazy match arm.
-pub enum LazyArmKind<'a> {
-    Value { pattern: &'a Value, value_expr: &'a roca::Expr },
-    Variant { variant: &'a str, bindings: &'a [String], value_expr: &'a roca::Expr },
+/// Kind of a lazy match arm, generic over the expression type `E`.
+pub enum LazyArmKind<'a, E> {
+    Value { pattern: &'a Value, value_expr: &'a E },
+    Variant { variant: &'a str, bindings: &'a [String], value_expr: &'a E },
 }
 
-impl<'a> LazyArmKind<'a> {
+impl<'a, E> LazyArmKind<'a, E> {
     /// Get the value expression for type inference.
-    pub fn value_expr(&self) -> &'a roca::Expr {
+    pub fn value_expr(&self) -> &'a E {
         match self {
             LazyArmKind::Value { value_expr, .. } => value_expr,
             LazyArmKind::Variant { value_expr, .. } => value_expr,
@@ -1234,7 +1244,7 @@ impl<'a> LazyArmKind<'a> {
     }
 }
 
-/// Trait for accessing match arm data lazily.
-pub trait MatchArmLazy {
-    fn kind(&self) -> LazyArmKind<'_>;
+/// Trait for accessing match arm data lazily, generic over expression type `E`.
+pub trait MatchArmLazy<E> {
+    fn kind(&self) -> LazyArmKind<'_, E>;
 }
