@@ -279,6 +279,14 @@ pub extern "C" fn roca_free(ptr: i64) {
         }
         TAG_MAP => {
             let m = unsafe { Box::from_raw(ptr as *mut std::collections::HashMap<String, i64>) };
+            for &val in m.values() {
+                if val != 0 {
+                    let is_tracked = ALLOC_TAGS.with(|t| t.borrow().contains_key(&val));
+                    if is_tracked {
+                        roca_free(val);
+                    }
+                }
+            }
             drop(m);
         }
         TAG_BOX => {
