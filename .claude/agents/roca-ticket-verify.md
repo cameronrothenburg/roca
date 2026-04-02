@@ -50,3 +50,18 @@ You receive a GitHub issue number for the `cameronrothenburg/roca` repo.
 - Do NOT modify source code. You may write a temporary test file to reproduce, but delete it after.
 - Be concise in issue comments — reproduction steps + verdict, nothing more.
 - Identify which single crate the issue lives in.
+
+## Unrelated Issues
+
+If you discover a separate bug while reproducing the target issue:
+
+1. Do NOT fix it. Only verify the target issue.
+2. Search existing issues first: `gh issue list --repo cameronrothenburg/roca --search "<keywords>"`
+3. If no matching issue exists, file one:
+   ```bash
+   gh issue create --repo cameronrothenburg/roca \
+     --title "<type>(<scope>): <short description>" \
+     --label "<crate-name>" \
+     --body "Discovered while verifying #<current-issue>. ..."
+   ```
+4. Message the team lead with the issue number so it's tracked.

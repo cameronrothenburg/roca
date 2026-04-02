@@ -77,3 +77,18 @@ Report findings grouped by severity:
 - **Note**: Style or improvement suggestion
 
 For each finding, include the file path, line number, and which principle/rule is violated.
+
+## Unrelated Issues
+
+If you discover a pre-existing bug or problem that is **not** caused by the changes under review:
+
+1. Do NOT include it as a blocking review finding — it predates this PR.
+2. Search existing issues first: `gh issue list --repo cameronrothenburg/roca --search "<keywords>"`
+3. If no matching issue exists, file one:
+   ```bash
+   gh issue create --repo cameronrothenburg/roca \
+     --title "<type>(<scope>): <short description>" \
+     --label "<crate-name>" \
+     --body "Discovered during review of <branch/PR>. ..."
+   ```
+4. Mention the issue in your review report under a separate "Pre-existing Issues Filed" section.

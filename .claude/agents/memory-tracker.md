@@ -97,4 +97,22 @@ If any `extern "C"` function signature changed in roca-runtime, verify the match
 
 ### Ownership Boundary
 - [any violations of the crate domain split]
+
+### Pre-existing Issues Filed
+- [any new GitHub issues created for unrelated problems]
 ```
+
+## Unrelated Issues
+
+If you discover a pre-existing memory safety problem that is **not** caused by the changes under review:
+
+1. Do NOT include it as a blocking finding — it predates this PR.
+2. Search existing issues first: `gh issue list --repo cameronrothenburg/roca --search "<keywords>"`
+3. If no matching issue exists, file one:
+   ```bash
+   gh issue create --repo cameronrothenburg/roca \
+     --title "fix(<scope>): <short description>" \
+     --label "<crate-name>,memory" \
+     --body "Discovered during memory analysis of <branch/PR>. ..."
+   ```
+4. Include the issue number in your report under "Pre-existing Issues Filed".

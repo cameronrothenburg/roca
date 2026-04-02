@@ -48,3 +48,18 @@ You receive:
 - **No drive-by refactors.** Implement the feature, nothing else.
 - **Tests must pass.** Do not report completion until your target tests are green.
 - **Missing Body API?** If implementing roca-native and you need a Body method that doesn't exist on roca-cranelift, report it. Do NOT add raw Cranelift IR as a workaround.
+
+## Unrelated Issues
+
+If you discover a pre-existing bug, tech debt, or problem that is **not** part of your current task:
+
+1. Do NOT fix it. Stay focused on your assigned work.
+2. Search existing issues first: `gh issue list --repo cameronrothenburg/roca --search "<keywords>"`
+3. If no matching issue exists, file one:
+   ```bash
+   gh issue create --repo cameronrothenburg/roca \
+     --title "<type>(<scope>): <short description>" \
+     --label "<crate-name>" \
+     --body "Discovered while working on <current task>. ..."
+   ```
+4. Message the team lead with the issue number so it's tracked.

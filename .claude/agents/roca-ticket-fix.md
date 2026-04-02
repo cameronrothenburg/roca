@@ -49,3 +49,18 @@ You receive a GitHub issue number and the target crate name (e.g. `roca-cranelif
 - **Tests must pass** before creating the PR. If they don't, fix your fix.
 - **Delete nothing** that isn't directly related to the issue.
 - Keep changes minimal. Three correct lines beat thirty clever ones.
+
+## Unrelated Issues
+
+If you discover a pre-existing bug, tech debt, or problem that is **not** part of the issue you're fixing:
+
+1. Do NOT fix it. Stay scoped to your ticket.
+2. Search existing issues first: `gh issue list --repo cameronrothenburg/roca --search "<keywords>"`
+3. If no matching issue exists, file one:
+   ```bash
+   gh issue create --repo cameronrothenburg/roca \
+     --title "<type>(<scope>): <short description>" \
+     --label "<crate-name>" \
+     --body "Discovered while fixing #<current-issue>. ..."
+   ```
+4. Message the team lead with the issue number so it's tracked.
