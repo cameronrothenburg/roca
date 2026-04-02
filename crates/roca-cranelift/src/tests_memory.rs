@@ -1078,3 +1078,270 @@ mem_test!(mix_bound_and_unbound_cleaned, {
     assert_eq!(allocs, 3, "1 bound + 2 temps");
     assert_eq!(allocs, frees, "mix cleaned: {} allocs, {} frees", allocs, frees);
 });
+
+// ─── Integration: functions calling functions ───────
+
+mem_test!(function_returns_string_caller_stores_and_cleans, {
+    let (mut m, rt, mut c) = jit_module();
+
+    // make_greeting() returns a string
+    Function::new("make_greeting")
+        .returns(RocaType::String)
+        .build(&mut *m, &rt, &mut c, |body| {
+            let s = body.string("hello world");
+            body.return_val(s);
+        })
+        .unwrap();
+
+    // test() calls make_greeting, stores result, returns a number
+    build_f64(&mut m, &rt, &mut c, "test", |body| {
+        let greeting = body.call("make_greeting", &[]);
+        body.const_var("g", greeting);
+        let r = body.number(1.0);
+        body.return_val(r);
+    });
+
+    MEM.reset();
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(finalize_and_get(&mut m, "test")) };
+    assert_eq!(f(), 1.0);
+    let (allocs, frees, _, _, _) = MEM.stats();
+    assert_eq!(allocs, frees, "call result stored and cleaned: {} allocs, {} frees", allocs, frees);
+});
+
+mem_test!(function_returns_string_caller_ignores_result, {
+    let (mut m, rt, mut c) = jit_module();
+
+    Function::new("make_greeting")
+        .returns(RocaType::String)
+        .build(&mut *m, &rt, &mut c, |body| {
+            let s = body.string("ignored");
+            body.return_val(s);
+        })
+        .unwrap();
+
+    // test() calls make_greeting but doesn't store the result — it's a temp
+    build_f64(&mut m, &rt, &mut c, "test", |body| {
+        body.call("make_greeting", &[]);
+        body.flush_temps(); // the ignored return value should be freed
+        let r = body.number(1.0);
+        body.return_val(r);
+    });
+
+    MEM.reset();
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(finalize_and_get(&mut m, "test")) };
+    assert_eq!(f(), 1.0);
+    let (allocs, frees, _, _, _) = MEM.stats();
+    assert_eq!(allocs, frees, "ignored result cleaned: {} allocs, {} frees", allocs, frees);
+});
+
+mem_test!(while_loop_calls_function_each_iteration, {
+    let (mut m, rt, mut c) = jit_module();
+
+    // factory() returns a new string each call
+    Function::new("factory")
+        .returns(RocaType::String)
+        .build(&mut *m, &rt, &mut c, |body| {
+            let s = body.string("made");
+            body.return_val(s);
+        })
+        .unwrap();
+
+    build_f64(&mut m, &rt, &mut c, "test", |body| {
+        let zero = body.number(0.0);
+        body.let_var_typed("i", zero, RocaType::Number);
+        body.while_loop(
+            |b| {
+                let i = b.var("i");
+                let limit = b.number(3.0);
+                b.lt(i, limit)
+            },
+            |b| {
+                // Call factory, store result in loop-local var
+                let s = b.call("factory", &[]);
+                b.const_var("item", s);
+                let i = b.var("i");
+                let one = b.number(1.0);
+                let next = b.add(i, one);
+                b.assign_name("i", next);
+            },
+        );
+        let i = body.var("i");
+        body.return_val(i);
+    });
+
+    MEM.reset();
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(finalize_and_get(&mut m, "test")) };
+    assert_eq!(f(), 3.0);
+    let (allocs, frees, _, _, _) = MEM.stats();
+    assert_eq!(allocs, 3, "3 iterations, 3 strings");
+    assert_eq!(allocs, frees, "loop call cleanup: {} allocs, {} frees", allocs, frees);
+});
+
+mem_test!(if_else_both_branches_call_function, {
+    let (mut m, rt, mut c) = jit_module();
+
+    Function::new("make_pos")
+        .returns(RocaType::String)
+        .build(&mut *m, &rt, &mut c, |body| {
+            let s = body.string("positive");
+            body.return_val(s);
+        })
+        .unwrap();
+
+    Function::new("make_neg")
+        .returns(RocaType::String)
+        .build(&mut *m, &rt, &mut c, |body| {
+            let s = body.string("negative");
+            body.return_val(s);
+        })
+        .unwrap();
+
+    build_f64_param(&mut m, &rt, &mut c, "test", "n", |body| {
+        let n = body.var("n");
+        let zero = body.number(0.0);
+        let cond = body.gt(n, zero);
+        body.if_else(cond,
+            |b| {
+                let s = b.call("make_pos", &[]);
+                b.const_var("msg", s);
+                let r = b.number(1.0);
+                b.return_val(r);
+            },
+            |b| {
+                let s = b.call("make_neg", &[]);
+                b.const_var("msg", s);
+                let r = b.number(0.0);
+                b.return_val(r);
+            },
+        );
+    });
+
+    let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(finalize_and_get(&mut m, "test")) };
+
+    MEM.reset();
+    assert_eq!(f(5.0), 1.0);
+    let (a1, f1, _, _, _) = MEM.stats();
+    assert_eq!(a1, f1, "positive branch: {} allocs, {} frees", a1, f1);
+
+    MEM.reset();
+    assert_eq!(f(-5.0), 0.0);
+    let (a2, f2, _, _, _) = MEM.stats();
+    assert_eq!(a2, f2, "negative branch: {} allocs, {} frees", a2, f2);
+});
+
+mem_test!(value_created_in_branch_stays_in_branch, {
+    let (mut m, rt, mut c) = jit_module();
+
+    build_f64_param(&mut m, &rt, &mut c, "test", "n", |body| {
+        let n = body.var("n");
+        let zero = body.number(0.0);
+        let cond = body.gt(n, zero);
+        // String created inside branch should be cleaned there, not hoisted
+        body.if_else(cond,
+            |b| {
+                let s = b.string("branch_only");
+                b.const_var("local", s);
+            },
+            |_b| {},
+        );
+        // After the if-else, "local" should be gone — no leak
+        let r = body.number(1.0);
+        body.return_val(r);
+    });
+
+    let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(finalize_and_get(&mut m, "test")) };
+
+    MEM.reset();
+    assert_eq!(f(1.0), 1.0);
+    let (a1, f1, _, _, _) = MEM.stats();
+    assert_eq!(a1, f1, "branch taken: {} allocs, {} frees", a1, f1);
+
+    MEM.reset();
+    assert_eq!(f(-1.0), 1.0);
+    let (a2, f2, _, _, _) = MEM.stats();
+    assert_eq!(a2, f2, "branch skipped: {} allocs, {} frees", a2, f2);
+});
+
+mem_test!(deeply_nested_calls_all_clean, {
+    let (mut m, rt, mut c) = jit_module();
+
+    // d() allocates and returns
+    Function::new("d")
+        .returns(RocaType::String)
+        .build(&mut *m, &rt, &mut c, |body| {
+            let local = body.string("d_local");
+            body.const_var("l", local);
+            let result = body.string("d_result");
+            body.return_val(result);
+        })
+        .unwrap();
+
+    // c() calls d(), stores result, allocates own local
+    build_f64(&mut m, &rt, &mut c, "c", |body| {
+        let from_d = body.call("d", &[]);
+        body.const_var("from_d", from_d);
+        let own = body.string("c_local");
+        body.const_var("own", own);
+        let r = body.number(1.0);
+        body.return_val(r);
+    });
+
+    // b() calls c()
+    build_f64(&mut m, &rt, &mut c, "b", |body| {
+        let own = body.string("b_local");
+        body.const_var("own", own);
+        let r = body.call("c", &[]);
+        body.return_val(r);
+    });
+
+    // a() calls b()
+    build_f64(&mut m, &rt, &mut c, "test", |body| {
+        let own = body.string("a_local");
+        body.const_var("own", own);
+        let r = body.call("b", &[]);
+        body.return_val(r);
+    });
+
+    MEM.reset();
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(finalize_and_get(&mut m, "test")) };
+    assert_eq!(f(), 1.0);
+    let (allocs, frees, _, _, _) = MEM.stats();
+    // a_local + b_local + c_local + from_d + d_local + d_result = 6
+    // d_result is returned from d, owned by c's "from_d", freed by c
+    assert_eq!(allocs, frees, "deep nesting: {} allocs, {} frees", allocs, frees);
+});
+
+mem_test!(for_each_with_function_call_per_element, {
+    let (mut m, rt, mut c) = jit_module();
+
+    // process() takes a number, allocates a string, returns a number
+    build_f64_param(&mut m, &rt, &mut c, "process", "x", |body| {
+        let s = body.string("processed");
+        body.const_var("label", s);
+        let x = body.var("x");
+        body.return_val(x);
+    });
+
+    build_f64(&mut m, &rt, &mut c, "test", |body| {
+        let v1 = body.number(1.0);
+        let v2 = body.number(2.0);
+        let v3 = body.number(3.0);
+        let arr = body.array(&[v1, v2, v3]);
+        body.const_var("arr", arr);
+        let arr_val = body.var("arr");
+        body.for_each("item", arr_val, |b| {
+            let item = b.var("item");
+            let result = b.call("process", &[item]);
+            b.const_var("r", result);
+        });
+        let r = body.number(1.0);
+        body.return_val(r);
+    });
+
+    MEM.reset();
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(finalize_and_get(&mut m, "test")) };
+    assert_eq!(f(), 1.0);
+    let (allocs, frees, _, _, _) = MEM.stats();
+    // array + 3x "processed" string (one per iteration, each cleaned by process())
+    assert_eq!(allocs, frees, "for_each+call: {} allocs, {} frees", allocs, frees);
+});

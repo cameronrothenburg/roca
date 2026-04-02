@@ -7,8 +7,17 @@ use crate::context::EmitCtx;
 use crate::builder::IrBuilder;
 use crate::helpers::load_slot;
 
-/// Emit cleanup for a single variable — frees heap fields if it's a struct, then frees the value.
-fn emit_free_var(ir: &mut IrBuilder, ctx: &EmitCtx, var_name: &str, free_ref: ir::FuncRef) {
+/// Free a single variable — frees heap fields if struct, then frees the value.
+/// Public so assign() can use it for struct field cleanup on reassignment.
+pub fn emit_free_var(ir: &mut IrBuilder, ctx: &EmitCtx, var_name: &str) {
+    let free_ref = match ctx.get_func("__free") {
+        Some(&f) => f,
+        None => return,
+    };
+    emit_free_var_inner(ir, ctx, var_name, free_ref);
+}
+
+pub fn emit_free_var_inner(ir: &mut IrBuilder, ctx: &EmitCtx, var_name: &str, free_ref: ir::FuncRef) {
     let var = match ctx.vars.get(var_name) {
         Some(v) if v.is_heap => v,
         _ => return,
@@ -43,7 +52,7 @@ pub fn emit_scope_cleanup(ir: &mut IrBuilder, ctx: &EmitCtx, skip_name: Option<&
     };
     for var_name in &ctx.live_heap_vars {
         if skip_name == Some(var_name.as_str()) { continue; }
-        emit_free_var(ir, ctx, var_name, free_ref);
+        emit_free_var_inner(ir, ctx, var_name, free_ref);
     }
 }
 
@@ -54,7 +63,7 @@ pub fn emit_loop_body_cleanup(ir: &mut IrBuilder, ctx: &EmitCtx) {
         None => return,
     };
     for var_name in ctx.live_heap_vars.iter().skip(ctx.loop_heap_base) {
-        emit_free_var(ir, ctx, var_name, free_ref);
+        emit_free_var_inner(ir, ctx, var_name, free_ref);
     }
 }
 

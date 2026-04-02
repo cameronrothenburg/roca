@@ -75,6 +75,7 @@ pub extern "C" fn roca_string_slice(s: i64, start: i64, end: i64) -> i64 {
 pub extern "C" fn roca_string_split(s: i64, delim: i64) -> i64 {
     let parts: Vec<i64> = read_cstr(s).split(read_cstr(delim)).map(|p| alloc_str(p)).collect();
     let ptr = Box::into_raw(Box::new(parts)) as i64;
+    super::tag_alloc(ptr, super::TAG_VEC, 32);
     super::MEM.track_alloc(32);
     ptr
 }
@@ -169,6 +170,7 @@ pub extern "C" fn roca_map_keys(map_ptr: i64) -> i64 {
     let map = unsafe { &*(map_ptr as *const RocaMap) };
     let keys: Vec<i64> = map.keys().map(|k| alloc_str(k)).collect();
     let ptr = Box::into_raw(Box::new(keys)) as i64;
+    super::tag_alloc(ptr, super::TAG_VEC, 32);
     super::MEM.track_alloc(32);
     ptr
 }
@@ -178,6 +180,7 @@ pub extern "C" fn roca_map_values(map_ptr: i64) -> i64 {
     let map = unsafe { &*(map_ptr as *const RocaMap) };
     let vals: Vec<i64> = map.values().copied().collect();
     let ptr = Box::into_raw(Box::new(vals)) as i64;
+    super::tag_alloc(ptr, super::TAG_VEC, 32);
     super::MEM.track_alloc(32);
     ptr
 }

@@ -96,6 +96,15 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
     pub fn flush_temps(&mut self) {
         self.flush_temps_inner();
     }
+
+    /// Free branch-local heap vars (vars added after heap_base).
+    fn emit_branch_cleanup(&mut self, heap_base: usize) {
+        if let Some(&free_ref) = self.ctx.get_func("__free") {
+            for var_name in self.ctx.live_heap_vars.iter().skip(heap_base) {
+                crate::emit_helpers::emit_free_var_inner(self.ir, &self.ctx, var_name, free_ref);
+            }
+        }
+    }
 }
 
 // ─── Literals ─────────────────────────────────────────
@@ -199,33 +208,19 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
         MutRef { name: name.to_string(), slot, roca_type }
     }
 
-    /// Reassign a mutable variable. Frees the old value, stores new. Claims temp.
+    /// Reassign a mutable variable. Frees the old value (including struct fields), stores new.
     pub fn assign(&mut self, var: &MutRef, val: Value) {
         self.claim_temp(val);
-        if let Some(old) = self.ctx.get_var(&var.name) {
-            if old.is_heap {
-                if let Some(&free_ref) = self.ctx.get_func("__free") {
-                    let old_ptr = self.ir.raw().ins().stack_load(types::I64, old.slot, 0);
-                    self.ir.call_void(free_ref, &[old_ptr]);
-                }
-            }
-        }
+        crate::emit_helpers::emit_free_var(self.ir, &self.ctx, &var.name);
         self.ir.store_var(var.slot, val);
     }
 
-    /// Reassign a variable by name. Frees old value, stores new. Claims temp.
+    /// Reassign a variable by name. Frees old value (including struct fields), stores new.
     pub fn assign_name(&mut self, name: &str, val: Value) {
         self.claim_temp(val);
+        crate::emit_helpers::emit_free_var(self.ir, &self.ctx, name);
         if let Some(var) = self.ctx.get_var(name) {
-            let slot = var.slot;
-            let is_heap = var.is_heap;
-            if is_heap {
-                if let Some(&free_ref) = self.ctx.get_func("__free") {
-                    let old_ptr = self.ir.raw().ins().stack_load(types::I64, slot, 0);
-                    self.ir.call_void(free_ref, &[old_ptr]);
-                }
-            }
-            self.ir.raw().ins().stack_store(val, slot, 0);
+            self.ir.raw().ins().stack_store(val, var.slot, 0);
         }
     }
 
@@ -296,7 +291,11 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
     pub fn call(&mut self, name: &str, args: &[Value]) -> Value {
         if let Some(&func_ref) = self.ctx.get_func(name) {
             let results = self.ir.call_multi(func_ref, args);
-            if !results.is_empty() { results[0] } else { self.ir.null() }
+            if !results.is_empty() {
+                let val = results[0];
+                self.track_temp(val);
+                val
+            } else { self.ir.null() }
         } else {
             self.ir.null()
         }
@@ -312,7 +311,11 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
     /// Call a function by name, return all results.
     pub fn call_multi(&mut self, name: &str, args: &[Value]) -> Vec<Value> {
         if let Some(&func_ref) = self.ctx.get_func(name) {
-            self.ir.call_multi(func_ref, args)
+            let results = self.ir.call_multi(func_ref, args);
+            for &val in &results {
+                self.track_temp(val);
+            }
+            results
         } else {
             vec![]
         }
@@ -532,12 +535,13 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
                 .map(|(n, v)| {
                     let kind = if self.ir.is_number(*v) { RocaType::Number }
                     else if self.ir.value_ir_type(*v) == types::I8 { RocaType::Bool }
-                    else { RocaType::Unknown };
+                    else { RocaType::String }; // any I64 = heap
                     (n.to_string(), kind)
                 })
                 .collect();
             self.ctx.struct_layouts.insert(name.to_string(), StructLayout { fields: layout_fields });
         }
+        self.ctx.pending_struct_type = Some(name.to_string());
 
         let num_fields = self.ir.const_i64(fields.len() as i64);
         let ptr = if let Some(f) = self.ctx.get_func("__struct_alloc") {
@@ -550,10 +554,12 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
         };
 
         for (i, &(_, val)) in fields.iter().enumerate() {
+            self.claim_temp(val); // fields owned by struct
             let idx_val = self.ir.const_i64(indices[i] as i64);
             crate::emit_helpers::emit_struct_set(self.ir, ptr, idx_val, val, &mut self.ctx);
         }
 
+        self.track_temp(ptr);
         ptr
     }
 
@@ -577,10 +583,6 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
         }
     }
 
-    /// Legacy alias for free().
-    pub fn release_rc(&mut self, val: Value) {
-        self.free(val);
-    }
 
     /// Check if a value is a number type.
     pub fn is_number(&self, val: Value) -> bool {
@@ -666,7 +668,11 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
         then_fn(self);
         let then_returned = self.returned;
         self.returned = false;
-        if !then_returned { self.ir.jump(merge_block); }
+        if !then_returned {
+            // Free branch-local heap vars before jumping to merge
+            self.emit_branch_cleanup(heap_base);
+            self.ir.jump(merge_block);
+        }
 
         self.ctx.live_heap_vars.truncate(heap_base);
         self.ctx.vars = saved_vars.clone();
@@ -677,7 +683,10 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
         else_fn(self);
         let else_returned = self.returned;
         self.returned = false;
-        if !else_returned { self.ir.jump(merge_block); }
+        if !else_returned {
+            self.emit_branch_cleanup(heap_base);
+            self.ir.jump(merge_block);
+        }
 
         self.ctx.live_heap_vars.truncate(heap_base);
         self.ctx.vars = saved_vars;
@@ -857,9 +866,10 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
         None
     }
 
-    /// Return an error by name.
+    /// Return an error by name. Frees all locals and temps.
     pub fn return_err(&mut self, err_name: &str) {
         if self.ctx.returns_err {
+            self.flush_temps_inner();
             emit_scope_cleanup(self.ir, &self.ctx, None);
             let default_val = default_for_ir_type(self.ir.raw(), self.ctx.return_type);
             let tag = (err_name.bytes().fold(1u8, |a, c| a.wrapping_add(c))).max(1);
