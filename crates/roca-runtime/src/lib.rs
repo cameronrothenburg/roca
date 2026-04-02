@@ -266,7 +266,7 @@ pub extern "C" fn roca_free(ptr: i64) {
             unsafe { std::alloc::dealloc(ptr as *mut u8, layout); }
         }
         TAG_VEC => {
-            let v = unsafe { &*(ptr as *const Vec<i64>) };
+            let v = unsafe { Box::from_raw(ptr as *mut Vec<i64>) };
             for &elem in v.iter() {
                 if elem != 0 {
                     let is_tracked = ALLOC_TAGS.with(|t| t.borrow().contains_key(&elem));
@@ -275,7 +275,6 @@ pub extern "C" fn roca_free(ptr: i64) {
                     }
                 }
             }
-            let v = unsafe { Box::from_raw(ptr as *mut Vec<i64>) };
             drop(v);
         }
         TAG_MAP => {
