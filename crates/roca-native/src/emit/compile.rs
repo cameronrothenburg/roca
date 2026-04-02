@@ -159,9 +159,14 @@ fn collect_closures(stmts: &[roca::Stmt], out: &mut Vec<(Vec<String>, roca::Expr
 }
 
 /// Collect closures passed as arguments to function/method calls (e.g. `arr.map(|x| x + 1)`).
+/// Skip closures in map/filter calls — those are always inlined by emit_method_call.
 fn collect_closures_from_call_args(expr: &roca::Expr, out: &mut Vec<(Vec<String>, roca::Expr)>) {
     if let roca::Expr::Call { target, args } = expr {
-        if matches!(target.as_ref(), roca::Expr::Ident(_) | roca::Expr::FieldAccess { .. }) {
+        let is_inlined_method = matches!(
+            target.as_ref(),
+            roca::Expr::FieldAccess { field, .. } if field == "map" || field == "filter"
+        );
+        if !is_inlined_method && matches!(target.as_ref(), roca::Expr::Ident(_) | roca::Expr::FieldAccess { .. }) {
             for a in args {
                 if let roca::Expr::Closure { params, body } = a {
                     out.push((params.clone(), *body.clone()));
