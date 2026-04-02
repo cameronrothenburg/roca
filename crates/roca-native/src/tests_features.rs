@@ -328,3 +328,32 @@ fn integration_match_with_computation() {
     assert_eq!(f(2.0), 170.0);
     assert_eq!(f(99.0), 100.0);
 }
+
+#[test]
+fn for_loop_over_array() {
+    let mut m = jit(r#"
+        pub fn sum_array() -> Number {
+            const arr = [10, 20, 30]
+            let total = 0
+            for item in arr {
+                total = total + item
+            }
+            return total
+        }
+    "#);
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "sum_array")) };
+    assert_eq!(f(), 60.0);
+}
+
+#[test]
+fn struct_field_mutation() {
+    let mut m = jit(r#"
+        pub fn mutate_field() -> Number {
+            const p = Point { x: 10, y: 20 }
+            p.x = 99
+            return p.x + p.y
+        }
+    "#);
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(call_f64(&mut m, "mutate_field")) };
+    assert_eq!(f(), 119.0);
+}

@@ -1220,7 +1220,9 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
 
         self.ir.switch_to(merge);
         self.ir.seal(merge);
-        self.ir.block_param(merge, 0)
+        let phi = self.ir.block_param(merge, 0);
+        self.track_temp(phi);
+        phi
     }
 }
 
