@@ -20,6 +20,7 @@ pub enum CleanupStrategy {
     FreeArray,
     FreeStruct { heap_fields: u32 },
     FreeEnum,
+    FreeMap,
     BoxFree,
     None,
 }
@@ -29,7 +30,8 @@ pub fn default_cleanup(ty: &RocaType) -> CleanupStrategy {
     match ty {
         RocaType::String => CleanupStrategy::RcRelease,
         RocaType::Array(_) => CleanupStrategy::FreeArray,
-        RocaType::Map(_, _) | RocaType::Struct(_) => CleanupStrategy::FreeStruct { heap_fields: 0 },
+        RocaType::Map(_, _) => CleanupStrategy::FreeMap,
+        RocaType::Struct(_) => CleanupStrategy::FreeStruct { heap_fields: 0 },
         RocaType::Enum(_) => CleanupStrategy::FreeEnum,
         _ => CleanupStrategy::None,
     }
@@ -129,6 +131,12 @@ pub fn emit_cleanup(
                 let ptr = load_slot(b, slot, types::I64);
                 let one = b.ins().iconst(types::I64, 1);
                 call_void(b, f, &[ptr, one]);
+            }
+        }
+        CleanupStrategy::FreeMap => {
+            if let Some(f) = refs.map_free {
+                let ptr = load_slot(b, slot, types::I64);
+                call_void(b, f, &[ptr]);
             }
         }
         CleanupStrategy::BoxFree => {

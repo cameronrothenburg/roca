@@ -542,7 +542,16 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
             };
             result = Some(match result {
                 None => val,
-                Some(acc) => if let Some(f) = concat { self.ir.call(f, &[acc, val]) } else { val },
+                Some(acc) => {
+                    if let Some(f) = concat {
+                        let new_val = self.ir.call(f, &[acc, val]);
+                        // Release the old intermediate string
+                        if let Some(&release) = self.ctx.get_func("__rc_release") {
+                            self.ir.call_void(release, &[acc]);
+                        }
+                        new_val
+                    } else { val }
+                }
             });
         }
         result.unwrap_or_else(|| self.ir.null())
@@ -761,7 +770,13 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
                 let err = results[1];
                 let cl_type = self.ir.value_ir_type(val);
                 let val_slot = self.ir.alloc_var(val);
-                let kind = if self.ir.is_number(val) { RocaType::Number } else { RocaType::Unknown };
+                let kind = if self.ir.is_number(val) {
+                    RocaType::Number
+                } else if let Some(k) = self.ctx.func_return_kinds.get(fn_name) {
+                    k.clone()
+                } else {
+                    RocaType::Unknown
+                };
                 self.ctx.set_var_kind(name.to_string(), val_slot.0, cl_type, kind);
                 let err_slot = self.ir.alloc_var(err);
                 self.ctx.set_var_kind(err_name.to_string(), err_slot.0, types::I8, RocaType::Bool);
