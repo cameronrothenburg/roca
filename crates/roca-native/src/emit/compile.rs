@@ -141,26 +141,10 @@ fn collect_closures(stmts: &[roca::Stmt], out: &mut Vec<(Vec<String>, roca::Expr
                 if let roca::Expr::Closure { params, body } = value {
                     out.push((params.clone(), *body.clone()));
                 }
-                if let roca::Expr::Call { target, args } = value {
-                    if matches!(target.as_ref(), roca::Expr::Ident(_)) {
-                        for a in args {
-                            if let roca::Expr::Closure { params, body } = a {
-                                out.push((params.clone(), *body.clone()));
-                            }
-                        }
-                    }
-                }
+                collect_closures_from_call_args(value, out);
             }
             roca::Stmt::Return(expr) | roca::Stmt::Expr(expr) => {
-                if let roca::Expr::Call { target, args } = expr {
-                    if matches!(target.as_ref(), roca::Expr::Ident(_)) {
-                        for a in args {
-                            if let roca::Expr::Closure { params, body } = a {
-                                out.push((params.clone(), *body.clone()));
-                            }
-                        }
-                    }
-                }
+                collect_closures_from_call_args(expr, out);
             }
             roca::Stmt::If { then_body, else_body, .. } => {
                 collect_closures(then_body, out);
@@ -170,6 +154,19 @@ fn collect_closures(stmts: &[roca::Stmt], out: &mut Vec<(Vec<String>, roca::Expr
                 collect_closures(body, out);
             }
             _ => {}
+        }
+    }
+}
+
+/// Collect closures passed as arguments to a direct function call (e.g. `arr.map(|x| x + 1)`).
+fn collect_closures_from_call_args(expr: &roca::Expr, out: &mut Vec<(Vec<String>, roca::Expr)>) {
+    if let roca::Expr::Call { target, args } = expr {
+        if matches!(target.as_ref(), roca::Expr::Ident(_)) {
+            for a in args {
+                if let roca::Expr::Closure { params, body } = a {
+                    out.push((params.clone(), *body.clone()));
+                }
+            }
         }
     }
 }

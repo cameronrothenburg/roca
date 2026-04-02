@@ -65,14 +65,8 @@ impl NativeCtx {
                         if self.is_enum_variant(name, field) {
                             return RocaType::Enum(name.clone());
                         }
-                        match (name.as_str(), field.as_str()) {
-                            ("JSON", "parse") | ("JSON", "get") => return RocaType::Struct("Json".into()),
-                            ("JSON", "getArray") => return RocaType::Struct("JsonArray".into()),
-                            ("Url", "parse") => return RocaType::Struct("Url".into()),
-                            ("Http", "get") | ("Http", "post") | ("Http", "put")
-                            | ("Http", "patch") | ("Http", "delete") => return RocaType::Struct("HttpResponse".into()),
-                            ("Http", "json") => return RocaType::Struct("Json".into()),
-                            _ => {}
+                        if let Some(t) = stdlib_static_method_type(name, field) {
+                            return t;
                         }
                     }
                 }
@@ -111,5 +105,19 @@ impl NativeCtx {
             Expr::Null => RocaType::Unknown,
             _ => RocaType::Unknown,
         }
+    }
+}
+
+/// Return type of well-known static contract methods (e.g. JSON.parse, Http.get).
+/// Add new stdlib entries here rather than inlining them in infer_type.
+fn stdlib_static_method_type(contract: &str, method: &str) -> Option<RocaType> {
+    match (contract, method) {
+        ("JSON", "parse") | ("JSON", "get") => Some(RocaType::Struct("Json".into())),
+        ("JSON", "getArray") => Some(RocaType::Struct("JsonArray".into())),
+        ("Url", "parse") => Some(RocaType::Struct("Url".into())),
+        ("Http", "get") | ("Http", "post") | ("Http", "put")
+        | ("Http", "patch") | ("Http", "delete") => Some(RocaType::Struct("HttpResponse".into())),
+        ("Http", "json") => Some(RocaType::Struct("Json".into())),
+        _ => None,
     }
 }

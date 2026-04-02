@@ -109,17 +109,24 @@ pub fn emit_expr(body: &mut Body, nctx: &NativeCtx, expr: &Expr) -> Value {
             match op {
                 BinOp::Add if is_float => body.add(l, r),
                 BinOp::Add => body.string_concat(l, r),
-                BinOp::Sub => body.sub(l, r),
-                BinOp::Mul => body.mul(l, r),
-                BinOp::Div => body.div(l, r),
+                BinOp::Sub if is_float => body.sub(l, r),
+                BinOp::Sub => panic!("type error: Sub on non-numeric operands — checker should prevent this"),
+                BinOp::Mul if is_float => body.mul(l, r),
+                BinOp::Mul => panic!("type error: Mul on non-numeric operands — checker should prevent this"),
+                BinOp::Div if is_float => body.div(l, r),
+                BinOp::Div => panic!("type error: Div on non-numeric operands — checker should prevent this"),
                 BinOp::Eq if is_float => body.eq(l, r),
                 BinOp::Eq => body.string_eq(l, r),
                 BinOp::Neq if is_float => body.neq(l, r),
                 BinOp::Neq => body.string_neq(l, r),
-                BinOp::Lt => body.lt(l, r),
-                BinOp::Gt => body.gt(l, r),
-                BinOp::Lte => body.lte(l, r),
-                BinOp::Gte => body.gte(l, r),
+                BinOp::Lt if is_float => body.lt(l, r),
+                BinOp::Lt => panic!("type error: Lt on non-numeric operands — checker should prevent this"),
+                BinOp::Gt if is_float => body.gt(l, r),
+                BinOp::Gt => panic!("type error: Gt on non-numeric operands — checker should prevent this"),
+                BinOp::Lte if is_float => body.lte(l, r),
+                BinOp::Lte => panic!("type error: Lte on non-numeric operands — checker should prevent this"),
+                BinOp::Gte if is_float => body.gte(l, r),
+                BinOp::Gte => panic!("type error: Gte on non-numeric operands — checker should prevent this"),
                 BinOp::And => body.and(l, r),
                 BinOp::Or => body.or(l, r),
             }
@@ -330,12 +337,17 @@ impl MatchArmLazy<roca::Expr> for CompiledArm {
     }
 }
 
+/// Index of the value in the multi-return tuple `[value, err]`.
+const RESULT_VALUE: usize = 0;
+/// Index of the error flag in the multi-return tuple `[value, err]`.
+const RESULT_ERR: usize = 1;
+
 /// Destructure error tuple: let {name, err_name} = call(fn_name, args)
 fn emit_let_result(body: &mut Body, nctx: &NativeCtx, name: &str, err_name: &str, fn_name: &str, args: &[Value]) {
     let results = body.call_multi(fn_name, args);
     if results.len() >= 2 {
-        let val = results[0];
-        let err = results[1];
+        let val = results[RESULT_VALUE];
+        let err = results[RESULT_ERR];
         let kind = if body.is_number(val) {
             RocaType::Number
         } else if let Some(k) = nctx.func_return_kinds.get(fn_name) {
@@ -381,6 +393,8 @@ fn emit_wait(body: &mut Body, nctx: &NativeCtx, names: &[String], failed_name: &
 }
 
 /// Wait for all async functions, bind results to names.
+/// NOTE: all results are assumed to be f64/Number — extend this if async functions
+/// can return strings or structs.
 fn emit_wait_all(body: &mut Body, names: &[String], failed_name: &str, fn_names: &[String]) {
     let (arr, count) = build_wait_fn_array(body, fn_names);
     let results = body.call("__wait_all", &[arr, count]);
@@ -505,7 +519,9 @@ fn emit_stdlib_dispatch(body: &mut Body, obj: Value, method: &str, args: &[Value
             let kind = if body.is_number(obj) { RocaType::Number } else { RocaType::Unknown };
             return body.length_with_kind(obj, kind);
         }
-        _ => {}
+        _ => {
+            eprintln!("[roca-native] unknown stdlib method '{}' — returning object unchanged; add it to emit_stdlib_dispatch if intentional", method);
+        }
     }
     obj
 }
@@ -515,7 +531,6 @@ fn emit_stdlib_dispatch(body: &mut Body, obj: Value, method: &str, args: &[Value
 /// Validate parameter constraints at function entry.
 pub fn emit_param_constraints(body: &mut Body, params: &[roca::Param]) {
     for param in params {
-        if param.constraints.is_empty() { continue; }
         let val = body.var(&param.name);
         let is_string = matches!(param.type_ref, roca::TypeRef::String);
         emit_constraints(body, val, is_string, &param.name, &param.constraints);
@@ -530,7 +545,6 @@ pub fn emit_struct_field_constraints(
     field_defs: &[roca::Field],
 ) {
     for field_def in field_defs {
-        if field_def.constraints.is_empty() { continue; }
         let layout_idx = body.struct_field_index(struct_name, &field_def.name);
         if let Some(idx) = layout_idx {
             let is_string = matches!(field_def.type_ref, roca::TypeRef::String);
@@ -549,6 +563,7 @@ fn emit_constraints(
     name: &str,
     constraints: &[roca::Constraint],
 ) {
+    if constraints.is_empty() { return; }
     for constraint in constraints {
         match constraint {
             roca::Constraint::Min(n) if !is_string => {
