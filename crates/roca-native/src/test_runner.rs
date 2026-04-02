@@ -249,7 +249,10 @@ pub(super) fn call_fn(
     let mut packed: Vec<u64> = Vec::new();
 
     if is_method {
-        packed.push(0u64); // dummy self pointer
+        // Allocate a zero-initialized struct so method tests can safely read
+        // fields (getting defaults) instead of segfaulting on a null pointer.
+        let self_ptr = crate::runtime::roca_struct_alloc(8) as u64;
+        packed.push(self_ptr);
     }
 
     for (arg, param) in args.iter().zip(func.params.iter()) {

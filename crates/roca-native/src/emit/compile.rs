@@ -383,7 +383,8 @@ pub fn compile_test_shim<M: Module>(
     let has_self = struct_name.is_some();
 
     // Shim signature: (args_ptr: I64) -> I64 [+ I8 if err]
-    // RocaType::String maps to I64 — used for the pointer param and the unified i64 return.
+    // RocaType::String maps to Cranelift I64 — reused here for the raw pointer param
+    // and unified i64 return since we don't have a dedicated RocaType::Ptr variant.
     Function::new(&shim_name)
         .param("args_ptr", RocaType::String)
         .returns(RocaType::String)
@@ -427,6 +428,7 @@ pub fn compile_test_shim<M: Module>(
                 let (raw_result, err_tag) = if results.len() >= 2 {
                     (results[0], results[1])
                 } else {
+                    debug_assert!(false, "call_multi for '{}' returned {} results, expected 2", real_name, results.len());
                     (body.int(0), body.bool_val(false))
                 };
                 let result_i64 = unify_to_i64!(body, raw_result);

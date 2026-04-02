@@ -114,7 +114,7 @@ pub fn infer_type_with_registry(expr: &Expr, scope: &Scope, registry: Option<&Co
                             "trim" | "toUpperCase" | "toLowerCase" | "slice" | "replace"
                             | "concat" | "padStart" | "padEnd" | "repeat" | "at" | "charAt"
                             | "substring" | "trimStart" | "trimEnd" => Some("String".to_string()),
-                            _ => Some("String".to_string()),
+                            _ => None,
                         };
                     }
                     // Check registry for method return type on any resolved type

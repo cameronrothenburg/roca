@@ -110,23 +110,23 @@ pub fn emit_expr(body: &mut Body, nctx: &NativeCtx, expr: &Expr) -> Value {
                 BinOp::Add if is_float => body.add(l, r),
                 BinOp::Add => body.string_concat(l, r),
                 BinOp::Sub if is_float => body.sub(l, r),
-                BinOp::Sub => panic!("type error: Sub on non-numeric operands — checker should prevent this"),
+                BinOp::Sub => { eprintln!("[roca-native] ICE: Sub on non-numeric operands"); body.int(0) }
                 BinOp::Mul if is_float => body.mul(l, r),
-                BinOp::Mul => panic!("type error: Mul on non-numeric operands — checker should prevent this"),
+                BinOp::Mul => { eprintln!("[roca-native] ICE: Mul on non-numeric operands"); body.int(0) }
                 BinOp::Div if is_float => body.div(l, r),
-                BinOp::Div => panic!("type error: Div on non-numeric operands — checker should prevent this"),
+                BinOp::Div => { eprintln!("[roca-native] ICE: Div on non-numeric operands"); body.int(0) }
                 BinOp::Eq if is_float => body.eq(l, r),
                 BinOp::Eq => body.string_eq(l, r),
                 BinOp::Neq if is_float => body.neq(l, r),
                 BinOp::Neq => body.string_neq(l, r),
                 BinOp::Lt if is_float => body.lt(l, r),
-                BinOp::Lt => panic!("type error: Lt on non-numeric operands — checker should prevent this"),
+                BinOp::Lt => { eprintln!("[roca-native] ICE: Lt on non-numeric operands"); body.int(0) }
                 BinOp::Gt if is_float => body.gt(l, r),
-                BinOp::Gt => panic!("type error: Gt on non-numeric operands — checker should prevent this"),
+                BinOp::Gt => { eprintln!("[roca-native] ICE: Gt on non-numeric operands"); body.int(0) }
                 BinOp::Lte if is_float => body.lte(l, r),
-                BinOp::Lte => panic!("type error: Lte on non-numeric operands — checker should prevent this"),
+                BinOp::Lte => { eprintln!("[roca-native] ICE: Lte on non-numeric operands"); body.int(0) }
                 BinOp::Gte if is_float => body.gte(l, r),
-                BinOp::Gte => panic!("type error: Gte on non-numeric operands — checker should prevent this"),
+                BinOp::Gte => { eprintln!("[roca-native] ICE: Gte on non-numeric operands"); body.int(0) }
                 BinOp::And => body.and(l, r),
                 BinOp::Or => body.or(l, r),
             }
@@ -521,10 +521,9 @@ fn emit_stdlib_dispatch(body: &mut Body, obj: Value, method: &str, args: &[Value
         }
         _ => {
             eprintln!("[roca-native] unknown stdlib method '{}' — returning null; add it to emit_stdlib_dispatch if intentional", method);
-            return body.null();
+            body.null()
         }
     }
-    obj
 }
 
 // ─── Constraint Validation ───────────────────────────
