@@ -85,7 +85,7 @@ fn eval_expr(input: &str, defs: &[String]) {
             return;
         }
         // Emit everything, then extract the __repl__ body for the expression
-        let emitted = roca_emit::emit(&file).replace("export ", "");
+        let emitted = roca_js::emit(&file).replace("export ", "");
         // Find __repl__ function and extract its body
         if let Some(fn_start) = emitted.find("function __repl__()") {
             let rest = &emitted[fn_start..];
@@ -109,7 +109,7 @@ fn eval_expr(input: &str, defs: &[String]) {
     );
     match roca_parse::try_parse(&stmt_src) {
         Ok(file) => {
-            let js = roca_emit::emit(&file).replace("export ", "");
+            let js = roca_js::emit(&file).replace("export ", "");
             run_bun(&format!("{}\n__repl__();", js));
         }
         Err(e) => println!("  parse error: {}", e),

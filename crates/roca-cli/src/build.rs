@@ -3,7 +3,7 @@
 use std::fs;
 use std::path::Path;
 
-use roca_emit as emit;
+use roca_js as emit;
 use roca_resolve as resolve;
 use super::config::*;
 use super::log::{log_event, LogEvent};

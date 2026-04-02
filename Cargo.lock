@@ -1698,8 +1698,8 @@ dependencies = [
  "oxc_span",
  "roca-ast",
  "roca-check",
- "roca-emit",
  "roca-errors",
+ "roca-js",
  "roca-native",
  "roca-parse",
  "roca-resolve",
@@ -1720,7 +1720,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "roca-emit"
+name = "roca-errors"
+version = "0.3.0"
+
+[[package]]
+name = "roca-js"
 version = "0.3.0"
 dependencies = [
  "oxc_allocator",
@@ -1730,10 +1734,6 @@ dependencies = [
  "roca-ast",
  "roca-parse",
 ]
-
-[[package]]
-name = "roca-errors"
-version = "0.3.0"
 
 [[package]]
 name = "roca-lsp"
@@ -1809,8 +1809,8 @@ dependencies = [
  "roca-ast",
  "roca-check",
  "roca-cli",
- "roca-emit",
  "roca-errors",
+ "roca-js",
  "roca-lsp",
  "roca-native",
  "roca-parse",

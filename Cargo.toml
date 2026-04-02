@@ -15,7 +15,7 @@ roca-ast = { path = "crates/roca-ast" }
 roca-parse = { path = "crates/roca-parse" }
 roca-resolve = { path = "crates/roca-resolve" }
 roca-check = { path = "crates/roca-check" }
-roca-emit = { path = "crates/roca-emit" }
+roca-js = { path = "crates/roca-js" }
 roca-native = { path = "crates/roca-native" }
 roca-lsp = { path = "crates/roca-lsp" }
 roca-cli = { path = "crates/roca-cli" }
@@ -64,7 +64,7 @@ roca-ast.workspace = true
 roca-parse.workspace = true
 roca-resolve.workspace = true
 roca-check.workspace = true
-roca-emit.workspace = true
+roca-js.workspace = true
 roca-native.workspace = true
 roca-lsp.workspace = true
 roca-cli.workspace = true
