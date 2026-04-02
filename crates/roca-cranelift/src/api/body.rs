@@ -505,6 +505,11 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
         self.ir.is_number(val)
     }
 
+    /// Check if a value is a boolean type (i8).
+    pub fn is_bool(&self, val: Value) -> bool {
+        self.ir.value_ir_type(val) == types::I8
+    }
+
     /// Get length of array or string.
     pub fn length(&mut self, obj: Value) -> Value {
         let kind = if self.ir.is_number(obj) { RocaType::Number } else { RocaType::Unknown };
@@ -863,36 +868,36 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
     }
 }
 
-// ─── Slot Primitives ─────────────────────────────────
+// ─── Slot Primitives (internal) ─────────────────────
 
 impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
     /// Allocate a stack slot and store a value. Returns a handle for load/store.
-    pub fn alloc_slot(&mut self, val: Value) -> VarSlot {
+    pub(crate) fn alloc_slot(&mut self, val: Value) -> VarSlot {
         self.ir.alloc_var(val)
     }
 
     /// Load a pointer/i64 value from a slot.
-    pub fn load_slot(&mut self, slot: VarSlot) -> Value {
+    pub(crate) fn load_slot(&mut self, slot: VarSlot) -> Value {
         self.ir.load_var(slot, &RocaType::Unknown)
     }
 
     /// Load an f64 value from a slot.
-    pub fn load_slot_f64(&mut self, slot: VarSlot) -> Value {
+    pub(crate) fn load_slot_f64(&mut self, slot: VarSlot) -> Value {
         self.ir.load_var(slot, &RocaType::Number)
     }
 
     /// Load an i8 (bool/error tag) value from a slot.
-    pub fn load_slot_bool(&mut self, slot: VarSlot) -> Value {
+    pub(crate) fn load_slot_bool(&mut self, slot: VarSlot) -> Value {
         self.ir.load_var(slot, &RocaType::Bool)
     }
 
     /// Store a value to a slot.
-    pub fn store_slot(&mut self, slot: VarSlot, val: Value) {
+    pub(crate) fn store_slot(&mut self, slot: VarSlot, val: Value) {
         self.ir.store_var(slot, val);
     }
 
     /// Load from a slot as f64 if is_number, otherwise as i64 pointer.
-    pub fn load_slot_if_number(&mut self, slot: VarSlot, is_number: bool) -> Value {
+    pub(crate) fn load_slot_if_number(&mut self, slot: VarSlot, is_number: bool) -> Value {
         if is_number {
             self.ir.load_var(slot, &RocaType::Number)
         } else {
@@ -901,46 +906,46 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
     }
 }
 
-// ─── Comparisons ─────────────────────────────────────
+// ─── Integer Operations ─────────────────────────────
 
 impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
-    /// Float less-than comparison. Returns I64 0/1.
-    pub fn f64_lt(&mut self, a: Value, b: Value) -> Value {
-        self.ir.f_lt(a, b)
+    /// Integer constant (for struct field indices, loop counters, etc.).
+    pub fn int(&mut self, n: i64) -> Value {
+        self.ir.const_i64(n)
     }
 
-    /// Float greater-than comparison. Returns I64 0/1.
-    pub fn f64_gt(&mut self, a: Value, b: Value) -> Value {
-        self.ir.f_gt(a, b)
+    /// Integer addition.
+    pub fn int_add(&mut self, a: Value, b: Value) -> Value {
+        self.ir.iadd(a, b)
+    }
+
+    /// Integer subtraction.
+    pub fn int_sub(&mut self, a: Value, b: Value) -> Value {
+        self.ir.isub(a, b)
     }
 
     /// Signed integer less-than comparison. Returns I64 0/1.
-    pub fn i64_slt(&mut self, a: Value, b: Value) -> Value {
+    pub fn int_lt(&mut self, a: Value, b: Value) -> Value {
         self.ir.i_slt(a, b)
     }
 
     /// Signed integer greater-than comparison. Returns I64 0/1.
-    pub fn i64_sgt(&mut self, a: Value, b: Value) -> Value {
+    pub fn int_gt(&mut self, a: Value, b: Value) -> Value {
         self.ir.i_sgt(a, b)
     }
 
-    /// Integer constant.
-    pub fn i64_const(&mut self, n: i64) -> Value {
-        self.ir.const_i64(n)
+    /// Float less-than comparison. Returns I64 0/1.
+    pub fn float_lt(&mut self, a: Value, b: Value) -> Value {
+        self.ir.f_lt(a, b)
     }
 
-    /// Integer subtraction.
-    pub fn i64_sub(&mut self, a: Value, b: Value) -> Value {
-        self.ir.isub(a, b)
+    /// Float greater-than comparison. Returns I64 0/1.
+    pub fn float_gt(&mut self, a: Value, b: Value) -> Value {
+        self.ir.f_gt(a, b)
     }
 
-    /// Integer addition.
-    pub fn i64_add(&mut self, a: Value, b: Value) -> Value {
-        self.ir.iadd(a, b)
-    }
-
-    /// Static string pointer (leaked C string).
-    pub fn static_str(&mut self, s: &str) -> Value {
+    /// Non-RC C string pointer (for constraint/error messages).
+    pub fn cstr(&mut self, s: &str) -> Value {
         self.ir.leak_cstr(s)
     }
 }
@@ -981,8 +986,14 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
         self.returned = true;
     }
 
-    /// Emit a trap (process abort).
-    pub fn trap(&mut self, code: u8) {
+    /// Panic — abort the process. Used by crash Panic step.
+    pub fn panic(&mut self) {
+        self.ir.trap(1);
+        self.returned = true;
+    }
+
+    /// Emit a trap (process abort). Internal — use `panic()` instead.
+    pub(crate) fn trap(&mut self, code: u8) {
         self.ir.trap(code);
         self.returned = true;
     }

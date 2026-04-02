@@ -2,11 +2,11 @@
 //! Zero IR imports. Every expression is 1-3 lines, every statement is 2-5 lines.
 //!
 //! Roca language semantics (stdlib dispatch, log, inline map/filter, constraint
-//! validation) live here as free functions that compose Body's IR primitives.
+//! validation) live here as free functions that compose Body's public API.
 
 use roca_ast::{self as roca, Expr, Stmt, BinOp, StringPart as AstStringPart};
 use roca_ast::crash::{CrashHandlerKind, CrashStep};
-use roca_cranelift::api::{Body, Value, StringPart, MatchArmLazy, LazyArmKind, VarSlot};
+use roca_cranelift::api::{Body, Value, StringPart, MatchArmLazy, LazyArmKind};
 use roca_types::RocaType;
 
 /// Walk a statement list, emitting each through the Body API.
@@ -343,13 +343,13 @@ pub fn closure_hash(params: &[String], body: &Expr) -> u64 {
 }
 
 // ─── Roca Language Semantics ─────────────────────────
-// These use Body's IR primitives to implement Roca-specific dispatch.
+// These use Body's public API to implement Roca-specific dispatch.
 
 /// Log dispatch — routes to print_f64/print_bool/print based on type.
 fn emit_log(body: &mut Body, val: Value) {
     if body.is_number(val) {
         body.call_void("__print_f64", &[val]);
-    } else if body.value_type(val) == cranelift_codegen::ir::types::I8 {
+    } else if body.is_bool(val) {
         body.call_void("__print_bool", &[val]);
     } else {
         body.call_void("__print", &[val]);
@@ -428,7 +428,7 @@ fn emit_stdlib_dispatch(body: &mut Body, obj: Value, method: &str, args: &[Value
 }
 
 // ─── Constraint Validation ───────────────────────────
-// Roca-specific constraint checks built from Body's IR primitives.
+// Roca-specific constraint checks built from Body's public API.
 
 /// Validate parameter constraints at function entry.
 pub fn emit_param_constraints(body: &mut Body, params: &[roca::Param]) {
@@ -453,7 +453,7 @@ pub fn emit_struct_field_constraints(
         if let Some(idx) = layout_idx {
             let is_string = matches!(field_def.type_ref, roca::TypeRef::String);
             let get_fn = if is_string { "__struct_get_ptr" } else { "__struct_get_f64" };
-            let field_idx = body.i64_const(idx as i64);
+            let field_idx = body.int(idx as i64);
             let val = body.call(get_fn, &[ptr, field_idx]);
             emit_constraints(body, val, is_string, &field_def.name, &field_def.constraints);
         }
@@ -472,32 +472,32 @@ fn emit_constraints(
         match constraint {
             roca::Constraint::Min(n) if !is_string => {
                 let min_val = body.number(*n);
-                let cond = body.f64_lt(val, min_val);
+                let cond = body.float_lt(val, min_val);
                 emit_constraint_trap(body, cond, name, &format!("must be >= {}", n));
             }
             roca::Constraint::Max(n) if !is_string => {
                 let max_val = body.number(*n);
-                let cond = body.f64_gt(val, max_val);
+                let cond = body.float_gt(val, max_val);
                 emit_constraint_trap(body, cond, name, &format!("must be <= {}", n));
             }
             roca::Constraint::Min(n) | roca::Constraint::MinLen(n) if is_string => {
                 let len = body.call("__string_len", &[val]);
-                let min_val = body.i64_const(*n as i64);
-                let cond = body.i64_slt(len, min_val);
+                let min_val = body.int(*n as i64);
+                let cond = body.int_lt(len, min_val);
                 emit_constraint_trap(body, cond, name, &format!("min length {}", n));
             }
             roca::Constraint::Max(n) | roca::Constraint::MaxLen(n) if is_string => {
                 let len = body.call("__string_len", &[val]);
-                let max_val = body.i64_const(*n as i64);
-                let cond = body.i64_sgt(len, max_val);
+                let max_val = body.int(*n as i64);
+                let cond = body.int_gt(len, max_val);
                 emit_constraint_trap(body, cond, name, &format!("max length {}", n));
             }
             roca::Constraint::Contains(s) => {
-                let needle = body.static_str(s);
+                let needle = body.cstr(s);
                 let result = body.call("__string_includes", &[val, needle]);
                 let ext = body.extend_bool(result);
-                let one = body.i64_const(1);
-                let not_result = body.i64_sub(one, ext);
+                let one = body.int(1);
+                let not_result = body.int_sub(one, ext);
                 emit_constraint_trap(body, not_result, name, &format!("must contain \"{}\"", s));
             }
             _ => {}
@@ -509,14 +509,14 @@ fn emit_constraints(
 fn emit_constraint_trap(body: &mut Body, cond: Value, field: &str, msg: &str) {
     let err_msg = format!("{}: {}", field, msg);
     body.if_then(cond, |b| {
-        let msg_ptr = b.static_str(&err_msg);
+        let msg_ptr = b.cstr(&err_msg);
         b.call_void("__constraint_panic", &[msg_ptr]);
         b.return_default_err();
     });
 }
 
 // ─── Crash Handling ─────────────────────────────────
-// Roca crash strategies built from Body's IR primitives.
+// Roca crash strategies built from Body's public API.
 
 /// Call a function with crash handler — retry loop + error chain dispatch.
 fn emit_crash_call(
@@ -538,47 +538,55 @@ fn emit_crash_call(
         } else { None }
     });
 
-    // Track which args are numbers for proper slot reload
+    // Track which args are numbers for proper variable reload
     let arg_is_number: Vec<bool> = args.iter().map(|v| body.is_number(*v)).collect();
-    let arg_slots: Vec<VarSlot> = args.iter().map(|v| body.alloc_slot(*v)).collect();
 
-    // Helper: reload args from slots with correct types
-    fn reload_args(body: &mut Body, slots: &[VarSlot], is_number: &[bool]) -> Vec<Value> {
-        slots.iter().zip(is_number).map(|(s, &n)| {
-            body.load_slot_if_number(*s, n)
-        }).collect()
+    // Store args as named variables so they survive across blocks
+    for (i, &arg) in args.iter().enumerate() {
+        let var_name = format!("__crash_arg_{}", i);
+        if arg_is_number[i] {
+            body.let_var_typed(&var_name, arg, RocaType::Number);
+        } else {
+            body.let_var(&var_name, arg);
+        }
+    }
+
+    // Helper: reload args from named variables
+    fn reload_args(body: &mut Body, count: usize) -> Vec<Value> {
+        (0..count).map(|i| body.var(&format!("__crash_arg_{}", i))).collect()
     }
 
     // Initial call
-    let call_args = reload_args(body, &arg_slots, &arg_is_number);
+    let call_args = reload_args(body, args.len());
     let results = body.call_multi(name, &call_args);
     if results.len() < 2 {
         return if results.is_empty() { body.null() } else { results[0] };
     }
 
     let result_is_number = body.is_number(results[0]);
-    let value_slot = body.alloc_slot(results[0]);
-    let err_slot = body.alloc_slot(results[1]);
+    if result_is_number {
+        body.let_var_typed("__crash_val", results[0], RocaType::Number);
+    } else {
+        body.let_var("__crash_val", results[0]);
+    }
+    body.let_var_typed("__crash_err", results[1], RocaType::Bool);
 
     // Retry loop
     if let Some((attempts, delay_ms)) = retry {
-        let counter_init = body.i64_const(1);
-        let counter_slot = body.alloc_slot(counter_init);
+        let counter_init = body.int(1);
+        body.let_var("__crash_counter", counter_init);
 
-        let first_err = body.load_slot_bool(err_slot);
-        let arg_slots_c = arg_slots.clone();
-        let arg_is_number_c = arg_is_number.clone();
+        let first_err = body.var("__crash_err");
+        let arg_count = args.len();
         let name_c = name.to_string();
         body.if_then(first_err, move |b| {
-            let max = b.i64_const(attempts as i64);
+            let max = b.int(attempts as i64);
             let name_c2 = name_c.clone();
-            let arg_slots_c2 = arg_slots_c.clone();
-            let arg_is_number_c2 = arg_is_number_c.clone();
             b.while_loop(
                 |b| {
-                    let counter = b.load_slot(counter_slot);
-                    let has_more = b.i64_slt(counter, max);
-                    let err = b.load_slot_bool(err_slot);
+                    let counter = b.var("__crash_counter");
+                    let has_more = b.int_lt(counter, max);
+                    let err = b.var("__crash_err");
                     let err_ext = b.extend_bool(err);
                     // Continue while has_more AND err
                     b.binop(&BinOp::And, has_more, err_ext)
@@ -589,44 +597,48 @@ fn emit_crash_call(
                         b.call_void("__sleep", &[ms]);
                     }
 
-                    let retry_args = reload_args(b, &arg_slots_c2, &arg_is_number_c2);
+                    let retry_args = reload_args(b, arg_count);
                     let retry_results = b.call_multi(&name_c2, &retry_args);
                     if retry_results.len() >= 2 {
-                        b.store_slot(value_slot, retry_results[0]);
-                        b.store_slot(err_slot, retry_results[1]);
+                        b.assign_name("__crash_val", retry_results[0]);
+                        b.assign_name("__crash_err", retry_results[1]);
                     }
 
-                    let cur = b.load_slot(counter_slot);
-                    let one = b.i64_const(1);
-                    let next = b.i64_add(cur, one);
-                    b.store_slot(counter_slot, next);
+                    let cur = b.var("__crash_counter");
+                    let one = b.int(1);
+                    let next = b.int_add(cur, one);
+                    b.assign_name("__crash_counter", next);
                 },
             );
         });
     }
 
     // Error handler dispatch: if err, run crash chain; else return value
-    let final_err = body.load_slot_bool(err_slot);
-    let val_loaded = body.load_slot_if_number(value_slot, result_is_number);
-    let result_slot = body.alloc_slot(val_loaded);
+    let final_err = body.var("__crash_err");
+    let val_loaded = body.var("__crash_val");
+    if result_is_number {
+        body.let_var_typed("__crash_result", val_loaded, RocaType::Number);
+    } else {
+        body.let_var("__crash_result", val_loaded);
+    }
 
     let chain_no_retry: Vec<_> = chain.into_iter()
         .filter(|s| !matches!(s, CrashStep::Retry { .. }))
         .collect();
 
     body.if_then(final_err, |b| {
-        emit_crash_chain(b, &chain_no_retry, result_slot);
+        emit_crash_chain(b, &chain_no_retry);
     });
 
-    body.load_slot_if_number(result_slot, result_is_number)
+    body.var("__crash_result")
 }
 
 /// Emit crash chain steps (log, halt, panic, skip, fallback) inside an error branch.
-fn emit_crash_chain(body: &mut Body, chain: &[CrashStep], result_slot: VarSlot) {
+fn emit_crash_chain(body: &mut Body, chain: &[CrashStep]) {
     for step in chain {
         match step {
             CrashStep::Log => {
-                let msg = body.static_str("error");
+                let msg = body.cstr("error");
                 body.call_void("__print", &[msg]);
             }
             CrashStep::Halt => {
@@ -634,11 +646,11 @@ fn emit_crash_chain(body: &mut Body, chain: &[CrashStep], result_slot: VarSlot) 
                 return;
             }
             CrashStep::Panic => {
-                body.trap(1);
+                body.panic();
                 return;
             }
             CrashStep::Skip => {
-                // Skip: default value already in result_slot, continue
+                // Skip: default value already in __crash_result, continue
             }
             CrashStep::Fallback(_expr) => {
                 // TODO: emit fallback expression
@@ -649,7 +661,7 @@ fn emit_crash_chain(body: &mut Body, chain: &[CrashStep], result_slot: VarSlot) 
 }
 
 // ─── Inline Map/Filter ──────────────────────────────
-// Array iteration patterns built from Body's for_each + slot primitives.
+// Array iteration patterns built from Body's for_each + named variables.
 
 /// Inline map: iterate arr, apply body_fn to each element, collect results.
 fn emit_inline_map(
@@ -659,16 +671,16 @@ fn emit_inline_map(
     body_fn: impl FnOnce(&mut Body) -> Value,
 ) -> Value {
     let result_arr = body.call("__array_new", &[]);
-    let result_slot = body.alloc_slot(result_arr);
+    body.let_var("__map_result", result_arr);
     let binding = binding.to_string();
 
     body.for_each(&binding, arr, |b| {
         let mapped = body_fn(b);
-        let res = b.load_slot(result_slot);
+        let res = b.var("__map_result");
         b.array_push(res, mapped);
     });
 
-    body.load_slot(result_slot)
+    body.var("__map_result")
 }
 
 /// Inline filter: iterate arr, keep elements where body_fn returns truthy.
@@ -679,17 +691,17 @@ fn emit_inline_filter(
     body_fn: impl FnOnce(&mut Body) -> Value,
 ) -> Value {
     let result_arr = body.call("__array_new", &[]);
-    let result_slot = body.alloc_slot(result_arr);
+    body.let_var("__filter_result", result_arr);
     let binding = binding.to_string();
 
     body.for_each(&binding, arr, |b| {
         let cond = body_fn(b);
         let elem = b.var(&binding);
-        let res = b.load_slot(result_slot);
+        let res = b.var("__filter_result");
         b.if_then(cond, |b| {
             b.array_push(res, elem);
         });
     });
 
-    body.load_slot(result_slot)
+    body.var("__filter_result")
 }
