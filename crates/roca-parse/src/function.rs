@@ -1,0 +1,370 @@
+//! Function parser — `[pub] fn name(params) -> Type { body crash test }`.
+
+use roca_ast::*;
+use super::expr::{Parser, ParseResult};
+use super::tokenizer::Token;
+
+impl Parser {
+    /// Parse: [pub] fn name(params) -> ReturnType[, err] { body crash test }
+    pub fn parse_function(&mut self, is_pub: bool) -> ParseResult<FnDef> {
+        self.expect(&Token::Fn)?;
+        let name = self.expect_ident()?;
+
+        // Optional type parameters: fn name<T, U: Constraint>(...)
+        let type_params = if self.at(&Token::Lt) {
+            self.parse_type_params()?
+        } else {
+            Vec::new()
+        };
+
+        self.expect(&Token::LParen)?;
+        let params = self.parse_params()?;
+        self.expect(&Token::RParen)?;
+
+        // Return type
+        let mut return_type = TypeRef::Ok;
+        let mut returns_err = false;
+
+        if self.eat(&Token::Arrow) {
+            return_type = self.parse_type_ref()?;
+            if self.eat(&Token::Comma) {
+                self.expect(&Token::Err)?;
+                returns_err = true;
+            }
+        }
+
+        self.expect(&Token::LBrace)?;
+
+        // Parse body statements, crash block, and test block
+        let mut body = Vec::new();
+        let mut crash = None;
+        let mut test = None;
+
+        while !self.at(&Token::RBrace) && !self.at(&Token::EOF) {
+            match self.peek() {
+                Token::Crash => {
+                    crash = Some(self.parse_crash_block()?);
+                }
+                Token::Test => {
+                    test = Some(self.parse_test_block()?);
+                }
+                _ => {
+                    body.push(self.parse_stmt()?);
+                }
+            }
+        }
+        self.expect(&Token::RBrace)?;
+
+        Ok(FnDef {
+            name,
+            is_pub,
+            doc: None,
+            type_params,
+            params,
+            return_type,
+            returns_err,
+            errors: Vec::new(),
+            body,
+            crash,
+            test,
+        })
+    }
+
+    /// Parse a statement
+    pub fn parse_stmt(&mut self) -> ParseResult<Stmt> {
+        match self.peek().clone() {
+            Token::Const => {
+                self.advance();
+                let name = self.expect_ident()?;
+                let type_ann = if self.eat(&Token::Colon) {
+                    Some(self.parse_type_ref()?)
+                } else {
+                    None
+                };
+                self.expect(&Token::Assign)?;
+                let value = self.parse_expr()?;
+                Ok(Stmt::Const { name, type_ann, value })
+            }
+            Token::Let => {
+                self.advance();
+                let name = self.expect_ident()?;
+
+                // Check for destructuring: let name, err = expr OR let a, b, failed = wait all { }
+                if self.eat(&Token::Comma) {
+                    let mut names = vec![name.clone()];
+                    // Collect all names separated by commas
+                    loop {
+                        let next_name = match self.advance() {
+                            Token::Ident(s) => s,
+                            Token::Err => "err".to_string(),
+                            other => return Err(self.err(format!("expected identifier after comma in let, got {:?}", other))),
+                        };
+                        names.push(next_name);
+                        if !self.eat(&Token::Comma) { break; }
+                    }
+                    self.expect(&Token::Assign)?;
+
+                    // Last name is the error/failed name
+                    let failed_name = names.pop().unwrap();
+                    let result_names = names;
+
+                    if self.at(&Token::Wait) || self.at(&Token::All) || self.at(&Token::First) {
+                        return self.parse_wait_stmt(result_names, failed_name);
+                    }
+
+                    // Regular destructure — only supports 1 result name
+                    let value = self.parse_expr()?;
+                    return Ok(Stmt::LetResult { name: result_names.into_iter().next().unwrap_or_default(), err_name: failed_name, value });
+                }
+
+                let type_ann = if self.eat(&Token::Colon) {
+                    Some(self.parse_type_ref()?)
+                } else {
+                    None
+                };
+                self.expect(&Token::Assign)?;
+                let value = self.parse_expr()?;
+                Ok(Stmt::Let { name, type_ann, value })
+            }
+            Token::Return => {
+                self.advance();
+                // Check for return err.name
+                if self.at(&Token::Err) {
+                    self.advance();
+                    self.expect(&Token::Dot)?;
+                    let err_name = self.expect_ident()?;
+                    // Optional custom message: return err.name("custom")
+                    let custom_message = if self.at(&Token::LParen) {
+                        self.advance();
+                        let msg = self.parse_expr()?;
+                        self.expect(&Token::RParen)?;
+                        Some(msg)
+                    } else {
+                        None
+                    };
+                    return Ok(Stmt::ReturnErr { name: err_name, custom_message });
+                }
+                let value = self.parse_expr()?;
+                Ok(Stmt::Return(value))
+            }
+            Token::If => {
+                self.advance();
+                let condition = self.parse_expr()?;
+                self.expect(&Token::LBrace)?;
+                let mut then_body = Vec::new();
+                while !self.at(&Token::RBrace) && !self.at(&Token::EOF) {
+                    then_body.push(self.parse_stmt()?);
+                }
+                self.expect(&Token::RBrace)?;
+
+                let else_body = if self.eat(&Token::Else) {
+                    self.expect(&Token::LBrace)?;
+                    let mut body = Vec::new();
+                    while !self.at(&Token::RBrace) && !self.at(&Token::EOF) {
+                        body.push(self.parse_stmt()?);
+                    }
+                    self.expect(&Token::RBrace)?;
+                    Some(body)
+                } else {
+                    None
+                };
+
+                Ok(Stmt::If {
+                    condition,
+                    then_body,
+                    else_body,
+                })
+            }
+            Token::Break => {
+                self.advance();
+                Ok(Stmt::Break)
+            }
+            Token::Continue => {
+                self.advance();
+                Ok(Stmt::Continue)
+            }
+            Token::While => {
+                self.advance();
+                let condition = self.parse_expr()?;
+                self.expect(&Token::LBrace)?;
+                let mut body = Vec::new();
+                while !self.at(&Token::RBrace) && !self.at(&Token::EOF) {
+                    body.push(self.parse_stmt()?);
+                }
+                self.expect(&Token::RBrace)?;
+                Ok(Stmt::While { condition, body })
+            }
+            Token::For => {
+                self.advance();
+                let binding = self.expect_ident()?;
+                self.expect(&Token::In)?;
+                let iter = self.parse_expr()?;
+                self.expect(&Token::LBrace)?;
+                let mut body = Vec::new();
+                while !self.at(&Token::RBrace) && !self.at(&Token::EOF) {
+                    body.push(self.parse_stmt()?);
+                }
+                self.expect(&Token::RBrace)?;
+                Ok(Stmt::For { binding, iter, body })
+            }
+            // Field assignment: self.field = value  or  target.field = value
+            Token::SelfKw if matches!(self.peek_ahead(1), Token::Dot)
+                && matches!(self.peek_ahead(2), Token::Ident(_))
+                && matches!(self.peek_ahead(3), Token::Assign) => {
+                self.advance(); // self
+                self.expect(&Token::Dot)?;
+                let field = self.expect_ident()?;
+                self.expect(&Token::Assign)?;
+                let value = self.parse_expr()?;
+                Ok(Stmt::FieldAssign {
+                    target: Expr::SelfRef,
+                    field,
+                    value,
+                })
+            }
+            // Assignment or expression statement
+            Token::Ident(_name) if matches!(self.peek_ahead(1), Token::Assign) => {
+                let name = self.expect_ident()?;
+                self.expect(&Token::Assign)?;
+                let value = self.parse_expr()?;
+                Ok(Stmt::Assign { name, value })
+            }
+            // Field assignment on variable: x.field = value
+            Token::Ident(_) if matches!(self.peek_ahead(1), Token::Dot)
+                && matches!(self.peek_ahead(2), Token::Ident(_))
+                && matches!(self.peek_ahead(3), Token::Assign) => {
+                let target_name = self.expect_ident()?;
+                self.expect(&Token::Dot)?;
+                let field = self.expect_ident()?;
+                self.expect(&Token::Assign)?;
+                let value = self.parse_expr()?;
+                Ok(Stmt::FieldAssign {
+                    target: Expr::Ident(target_name),
+                    field,
+                    value,
+                })
+            }
+            _ => {
+                let expr = self.parse_expr()?;
+                Ok(Stmt::Expr(expr))
+            }
+        }
+    }
+
+    /// Parse: wait call() | wait all { calls } | wait first { calls }
+    fn parse_wait_stmt(&mut self, names: Vec<String>, failed_name: String) -> ParseResult<Stmt> {
+        let kind = match self.peek() {
+            Token::Wait => {
+                self.advance();
+                WaitKind::Single(self.parse_expr()?)
+            }
+            Token::All | Token::First => {
+                let is_all = self.peek() == &Token::All;
+                self.advance();
+                self.expect(&Token::LBrace)?;
+                let mut calls = Vec::new();
+                while !self.at(&Token::RBrace) && !self.at(&Token::EOF) {
+                    calls.push(self.parse_expr()?);
+                }
+                self.expect(&Token::RBrace)?;
+                if is_all { WaitKind::All(calls) } else { WaitKind::First(calls) }
+            }
+            other => return Err(self.err(format!("expected wait, waitAll, or waitFirst, got {:?}", other))),
+        };
+
+        Ok(Stmt::Wait { names, failed_name, kind })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tokenize;
+
+    #[test]
+    fn parse_simple_function() {
+        let src = r#"fn add(a: Number, b: Number) -> Number {
+            return a + b
+            test { self(1, 2) == 3 }
+        }"#;
+        let mut p = Parser::new(tokenize(src));
+        let f = p.parse_function(false).unwrap();
+        assert_eq!(f.name, "add");
+        assert_eq!(f.params.len(), 2);
+        assert_eq!(f.return_type, TypeRef::Number);
+        assert!(!f.is_pub);
+        assert!(f.test.is_some());
+        assert_eq!(f.body.len(), 1);
+    }
+
+    #[test]
+    fn parse_pub_function() {
+        let src = r#"fn greet(name: String) -> String {
+            return "Hello " + name
+            test { self("cam") == "Hello cam" }
+        }"#;
+        let mut p = Parser::new(tokenize(src));
+        let f = p.parse_function(true).unwrap();
+        assert_eq!(f.name, "greet");
+        assert!(f.is_pub);
+    }
+
+    #[test]
+    fn parse_function_with_crash() {
+        let src = r#"fn save(data: String, db: Database) -> Ok, err {
+            db.save(data)
+            return Ok
+
+            crash {
+                db.save -> retry(1, 500)
+            }
+
+            test {
+                self("hello", db) is Ok
+            }
+        }"#;
+        let mut p = Parser::new(tokenize(src));
+        let f = p.parse_function(false).unwrap();
+        assert!(f.crash.is_some());
+        assert!(f.test.is_some());
+        assert!(f.returns_err);
+    }
+
+    #[test]
+    fn parse_if_statement() {
+        let src = r#"fn check(x: Number) -> Bool {
+            if x > 0 { return true } else { return false }
+            test { self(1) == true }
+        }"#;
+        let mut p = Parser::new(tokenize(src));
+        let f = p.parse_function(false).unwrap();
+        assert!(matches!(f.body[0], Stmt::If { .. }));
+    }
+
+    #[test]
+    fn parse_let_result() {
+        let src = r#"fn wrap(s: String) -> Email, err {
+            let e, err = Email.validate(s)
+            return e
+            crash { Email.validate -> halt }
+            test { self("a@b.com") is Ok }
+        }"#;
+        let mut p = Parser::new(tokenize(src));
+        let f = p.parse_function(false).unwrap();
+        assert!(matches!(f.body[0], Stmt::LetResult { .. }));
+    }
+
+    #[test]
+    fn parse_return_err() {
+        let src = r#"fn check(s: String) -> String, err {
+            if s == "" { return err.missing }
+            return s
+            test { self("a") == "a" self("") is err.missing }
+        }"#;
+        let mut p = Parser::new(tokenize(src));
+        let f = p.parse_function(false).unwrap();
+        if let Stmt::If { then_body, .. } = &f.body[0] {
+            assert!(matches!(then_body[0], Stmt::ReturnErr { .. }));
+        }
+    }
+}

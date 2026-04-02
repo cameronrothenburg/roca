@@ -1672,29 +1672,150 @@ dependencies = [
 ]
 
 [[package]]
-name = "rocalang"
+name = "roca-ast"
+version = "0.3.0"
+
+[[package]]
+name = "roca-check"
 version = "0.3.0"
 dependencies = [
- "base64",
+ "roca-ast",
+ "roca-errors",
+ "roca-parse",
+ "roca-resolve",
+]
+
+[[package]]
+name = "roca-cli"
+version = "0.3.0"
+dependencies = [
+ "oxc_allocator",
+ "oxc_ast",
+ "oxc_parser",
+ "oxc_span",
+ "roca-ast",
+ "roca-check",
+ "roca-errors",
+ "roca-js",
+ "roca-native",
+ "roca-parse",
+ "roca-resolve",
+ "serde_json",
+]
+
+[[package]]
+name = "roca-cranelift"
+version = "0.3.0"
+dependencies = [
+ "cranelift-codegen",
+ "cranelift-frontend",
+ "cranelift-jit",
+ "cranelift-module",
+ "roca-ast",
+ "roca-runtime",
+ "roca-types",
+]
+
+[[package]]
+name = "roca-errors"
+version = "0.3.0"
+
+[[package]]
+name = "roca-js"
+version = "0.3.0"
+dependencies = [
+ "oxc_allocator",
+ "oxc_ast",
+ "oxc_codegen",
+ "oxc_span",
+ "roca-ast",
+ "roca-parse",
+]
+
+[[package]]
+name = "roca-lsp"
+version = "0.3.0"
+dependencies = [
+ "dashmap 6.1.0",
+ "roca-ast",
+ "roca-check",
+ "roca-errors",
+ "roca-parse",
+ "roca-resolve",
+ "tokio",
+ "tower-lsp",
+]
+
+[[package]]
+name = "roca-native"
+version = "0.3.0"
+dependencies = [
  "cranelift-codegen",
  "cranelift-frontend",
  "cranelift-jit",
  "cranelift-module",
  "cranelift-native",
  "cranelift-object",
- "dashmap 6.1.0",
- "oxc_allocator",
- "oxc_ast",
- "oxc_codegen",
- "oxc_parser",
- "oxc_span",
+ "roca-ast",
+ "roca-cranelift",
+ "roca-parse",
+ "roca-runtime",
+ "roca-types",
+]
+
+[[package]]
+name = "roca-parse"
+version = "0.3.0"
+dependencies = [
+ "roca-ast",
+ "roca-errors",
+]
+
+[[package]]
+name = "roca-resolve"
+version = "0.3.0"
+dependencies = [
+ "roca-ast",
+ "roca-parse",
+]
+
+[[package]]
+name = "roca-runtime"
+version = "0.3.0"
+dependencies = [
+ "base64",
  "reqwest",
  "serde_json",
  "sha2",
  "tokio",
- "tower-lsp",
  "url",
  "uuid",
+]
+
+[[package]]
+name = "roca-types"
+version = "0.3.0"
+dependencies = [
+ "roca-ast",
+]
+
+[[package]]
+name = "rocalang"
+version = "0.3.0"
+dependencies = [
+ "roca-ast",
+ "roca-check",
+ "roca-cli",
+ "roca-cranelift",
+ "roca-errors",
+ "roca-js",
+ "roca-lsp",
+ "roca-native",
+ "roca-parse",
+ "roca-resolve",
+ "roca-runtime",
+ "roca-types",
+ "tokio",
 ]
 
 [[package]]

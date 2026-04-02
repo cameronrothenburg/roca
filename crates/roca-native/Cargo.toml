@@ -1,0 +1,22 @@
+[package]
+name = "roca-native"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Cranelift JIT compilation and proof test runner for the Roca compiler"
+repository.workspace = true
+
+[dependencies]
+roca-ast.workspace = true
+roca-types.workspace = true
+roca-runtime.workspace = true
+roca-cranelift.workspace = true
+cranelift-codegen.workspace = true
+cranelift-frontend.workspace = true
+cranelift-module.workspace = true
+cranelift-jit.workspace = true
+cranelift-native.workspace = true
+cranelift-object.workspace = true
+
+[dev-dependencies]
+roca-parse.workspace = true
