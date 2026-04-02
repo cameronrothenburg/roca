@@ -107,23 +107,21 @@ fn run_equals_test(
 ) {
     let ret_type = RocaType::from(&func.return_type);
     let label = format_test_label(func, args);
-    let ptr = match module.get_function_ptr(&func.name) {
+    let shim_name = format!("{}__shim", func.name);
+    let ptr = match module.get_function_ptr(&shim_name) {
         Some(p) => p,
         None => {
-            output.push_str(&format!("  ✗ {} (function not found)\n", label));
+            output.push_str(&format!("  ✗ {} (shim not found)\n", label));
             *failed += 1;
             return;
         }
     };
 
+    let (result_bits, _err) = call_fn(ptr, func, false, args);
+
     match ret_type {
         RocaType::Number => {
-            let result = if func.returns_err {
-                let (val, _err) = call_with_err(ptr, func, args);
-                val
-            } else {
-                call_f64_fn(ptr, func.params.len(), args)
-            };
+            let result = f64::from_bits(result_bits);
             let exp = expr_to_f64(expected);
             if (result - exp).abs() < 1e-10 {
                 output.push_str(&format!("  ✓ {} == {}\n", label, exp));
@@ -134,7 +132,7 @@ fn run_equals_test(
             }
         }
         RocaType::Bool => {
-            let result = call_bool_fn(ptr, func.params.len(), args);
+            let result = result_bits != 0;
             let exp = expr_to_bool(expected);
             if result == exp {
                 output.push_str(&format!("  ✓ {} == {}\n", label, exp));
@@ -145,14 +143,7 @@ fn run_equals_test(
             }
         }
         _ => {
-            // String/struct/array return (I64 pointer)
-            let result = if func.returns_err {
-                let (val_bits, _err) = call_with_err(ptr, func, args);
-                read_cstr_safe(val_bits as i64 as *const u8)
-            } else {
-                let result_ptr = call_str_fn(ptr, func.params.len(), args);
-                read_cstr_safe(result_ptr)
-            };
+            let result = read_cstr_safe(result_bits as i64 as *const u8);
             let exp = expr_to_string(expected);
             if result == exp {
                 output.push_str(&format!("  ✓ {} == \"{}\"\n", label, exp));
@@ -175,16 +166,17 @@ fn run_ok_test(
 ) {
     if !func.returns_err { return; }
     let label = format_test_label(func, args);
-    let ptr = match module.get_function_ptr(&func.name) {
+    let shim_name = format!("{}__shim", func.name);
+    let ptr = match module.get_function_ptr(&shim_name) {
         Some(p) => p,
         None => {
-            output.push_str(&format!("  ✗ {} (function not found)\n", label));
+            output.push_str(&format!("  ✗ {} (shim not found)\n", label));
             *failed += 1;
             return;
         }
     };
 
-    let (_val, err) = call_with_err(ptr, func, args);
+    let (_val, err) = call_fn(ptr, func, false, args);
     if err == 0 {
         output.push_str(&format!("  ✓ {} is Ok\n", label));
         *passed += 1;
@@ -205,16 +197,17 @@ fn run_err_test(
 ) {
     if !func.returns_err { return; }
     let label = format_test_label(func, args);
-    let ptr = match module.get_function_ptr(&func.name) {
+    let shim_name = format!("{}__shim", func.name);
+    let ptr = match module.get_function_ptr(&shim_name) {
         Some(p) => p,
         None => {
-            output.push_str(&format!("  ✗ {} (function not found)\n", label));
+            output.push_str(&format!("  ✗ {} (shim not found)\n", label));
             *failed += 1;
             return;
         }
     };
 
-    let (_val, err) = call_with_err(ptr, func, args);
+    let (_val, err) = call_fn(ptr, func, false, args);
     if err != 0 {
         output.push_str(&format!("  ✓ {} is err.{}\n", label, _err_name));
         *passed += 1;
@@ -231,109 +224,51 @@ pub(super) fn format_test_label(func: &ast::FnDef, args: &[Expr]) -> String {
     format!("{}({})", func.name, args_str.join(", "))
 }
 
-pub(super) fn call_f64_fn(ptr: *const u8, param_count: usize, args: &[Expr]) -> f64 {
-    unsafe {
-        match param_count {
-            0 => std::mem::transmute::<_, fn() -> f64>(ptr)(),
-            1 => {
-                let a = expr_to_f64(&args[0]);
-                std::mem::transmute::<_, fn(f64) -> f64>(ptr)(a)
+/// Universal shim caller — packs args into a u64 array and calls the test shim.
+///
+/// Returns `(result_bits, err_tag)` where:
+/// - `result_bits` for Number return: `f64::to_bits()` (bitcasted back via `f64::from_bits`)
+/// - `result_bits` for String/Struct return: pointer as u64 (cast to `*const u8`)
+/// - `result_bits` for Bool return: 0 or 1
+/// - `err_tag`: 0 = Ok, non-zero = error (only meaningful when `func.returns_err`)
+///
+/// If `is_method` is true, a zero self-pointer is prepended to the packed args array.
+pub(super) fn call_fn(
+    ptr: *const u8,
+    func: &ast::FnDef,
+    is_method: bool,
+    args: &[Expr],
+) -> (u64, u8) {
+    let mut string_pool: Vec<std::ffi::CString> = Vec::new();
+    let mut packed: Vec<u64> = Vec::new();
+
+    if is_method {
+        packed.push(0u64); // dummy self pointer
+    }
+
+    for (arg, param) in args.iter().zip(func.params.iter()) {
+        let rtype = RocaType::from(&param.type_ref);
+        match rtype {
+            RocaType::Number => packed.push(expr_to_f64(arg).to_bits()),
+            RocaType::Bool   => packed.push(if expr_to_bool_raw(arg) { 1 } else { 0 }),
+            _ => {
+                let s = if let Expr::String(s) = arg { s.as_str() } else { "" };
+                let cstr = std::ffi::CString::new(s).unwrap_or_default();
+                packed.push(cstr.as_ptr() as u64);
+                string_pool.push(cstr);
             }
-            2 => {
-                let a = expr_to_f64(&args[0]);
-                let b = expr_to_f64(&args[1]);
-                std::mem::transmute::<_, fn(f64, f64) -> f64>(ptr)(a, b)
-            }
-            3 => {
-                let a = expr_to_f64(&args[0]);
-                let b = expr_to_f64(&args[1]);
-                let c = expr_to_f64(&args[2]);
-                std::mem::transmute::<_, fn(f64, f64, f64) -> f64>(ptr)(a, b, c)
-            }
-            _ => 0.0,
         }
     }
-}
 
-pub(super) fn call_str_fn(ptr: *const u8, param_count: usize, args: &[Expr]) -> *const u8 {
-    let mut pool = Vec::new();
     unsafe {
-        match param_count {
-            0 => std::mem::transmute::<_, fn() -> *const u8>(ptr)(),
-            1 => {
-                let a = expr_to_arg(&args[0], &mut pool);
-                match a {
-                    Arg::F64(v) => std::mem::transmute::<_, fn(f64) -> *const u8>(ptr)(v),
-                    Arg::Str(p) => std::mem::transmute::<_, fn(*const u8) -> *const u8>(ptr)(p),
-                }
-            }
-            2 => {
-                let a = expr_to_arg(&args[0], &mut pool);
-                let b = expr_to_arg(&args[1], &mut pool);
-                match (a, b) {
-                    (Arg::Str(a), Arg::Str(b)) => std::mem::transmute::<_, fn(*const u8, *const u8) -> *const u8>(ptr)(a, b),
-                    (Arg::Str(a), Arg::F64(b)) => std::mem::transmute::<_, fn(*const u8, f64) -> *const u8>(ptr)(a, b),
-                    (Arg::F64(a), Arg::Str(b)) => std::mem::transmute::<_, fn(f64, *const u8) -> *const u8>(ptr)(a, b),
-                    (Arg::F64(a), Arg::F64(b)) => std::mem::transmute::<_, fn(f64, f64) -> *const u8>(ptr)(a, b),
-                }
-            }
-            _ => std::ptr::null(),
+        if func.returns_err {
+            let f = std::mem::transmute::<_, fn(*const u64, usize) -> (i64, u8)>(ptr);
+            let (result, err) = f(packed.as_ptr(), packed.len());
+            (result as u64, err)
+        } else {
+            let f = std::mem::transmute::<_, fn(*const u64, usize) -> i64>(ptr);
+            (f(packed.as_ptr(), packed.len()) as u64, 0)
         }
-    }
-}
-
-pub(super) fn call_bool_fn(ptr: *const u8, param_count: usize, args: &[Expr]) -> bool {
-    let mut pool = Vec::new();
-    unsafe {
-        match param_count {
-            0 => std::mem::transmute::<_, fn() -> u8>(ptr)() != 0,
-            1 => {
-                let a = expr_to_arg(&args[0], &mut pool);
-                match a {
-                    Arg::F64(v) => std::mem::transmute::<_, fn(f64) -> u8>(ptr)(v) != 0,
-                    Arg::Str(p) => std::mem::transmute::<_, fn(*const u8) -> u8>(ptr)(p) != 0,
-                }
-            }
-            _ => false,
-        }
-    }
-}
-
-pub(super) fn call_with_err(ptr: *const u8, func: &ast::FnDef, args: &[Expr]) -> (f64, u8) {
-    unsafe {
-        match func.params.len() {
-            0 => std::mem::transmute::<_, fn() -> (f64, u8)>(ptr)(),
-            1 => {
-                let a = expr_to_f64(&args[0]);
-                std::mem::transmute::<_, fn(f64) -> (f64, u8)>(ptr)(a)
-            }
-            2 => {
-                let a = expr_to_f64(&args[0]);
-                let b = expr_to_f64(&args[1]);
-                std::mem::transmute::<_, fn(f64, f64) -> (f64, u8)>(ptr)(a, b)
-            }
-            _ => (0.0, 0),
-        }
-    }
-}
-
-pub(super) enum Arg {
-    F64(f64),
-    Str(*const u8),
-}
-
-/// Convert an Expr to a JIT-callable argument.
-/// String args are stored in `string_pool` to keep them alive for the call duration.
-pub(super) fn expr_to_arg<'a>(expr: &Expr, string_pool: &'a mut Vec<std::ffi::CString>) -> Arg {
-    match expr {
-        Expr::Number(n) => Arg::F64(*n),
-        Expr::String(s) => {
-            let cstr = std::ffi::CString::new(s.as_str()).unwrap_or_default();
-            let ptr = cstr.as_ptr() as *const u8;
-            string_pool.push(cstr);
-            Arg::Str(ptr)
-        }
-        _ => Arg::F64(0.0),
     }
 }
 
@@ -378,6 +313,11 @@ fn expr_to_bool(expr: &Expr) -> bool {
         Expr::Number(n) => *n != 0.0,
         _ => false,
     }
+}
+
+/// Bool conversion for packing into the args array (used by call_fn).
+pub(super) fn expr_to_bool_raw(expr: &Expr) -> bool {
+    expr_to_bool(expr)
 }
 
 fn read_cstr_safe(ptr: *const u8) -> String {

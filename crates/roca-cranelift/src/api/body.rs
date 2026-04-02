@@ -1027,6 +1027,42 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
         self.returned = true;
     }
 
+    // ─── Low-level IR ops (for test shim compilation) ──────────────────────
+
+    /// Load an I64 value from a pointer at `byte_offset` bytes.
+    /// Used by test shims to unpack args from the args array.
+    pub fn load_ptr_i64(&mut self, ptr: Value, byte_offset: i32) -> Value {
+        use cranelift_codegen::ir::MemFlags;
+        self.ir.raw().ins().load(types::I64, MemFlags::trusted(), ptr, byte_offset)
+    }
+
+    /// Reinterpret I64 bits as F64 (no numeric conversion).
+    pub fn bitcast_i64_to_f64(&mut self, bits: Value) -> Value {
+        use cranelift_codegen::ir::MemFlags;
+        self.ir.raw().ins().bitcast(types::F64, MemFlags::new(), bits)
+    }
+
+    /// Reinterpret F64 bits as I64 (no numeric conversion).
+    pub fn bitcast_f64_to_i64(&mut self, f: Value) -> Value {
+        use cranelift_codegen::ir::MemFlags;
+        self.ir.raw().ins().bitcast(types::I64, MemFlags::new(), f)
+    }
+
+    /// Truncate an I64 to I8 (for bool params received as u64 in args array).
+    pub fn narrow_to_bool(&mut self, val: Value) -> Value {
+        self.ir.raw().ins().ireduce(types::I8, val)
+    }
+
+    /// Return with an explicit error tag forwarded from a callee.
+    /// Claims the result value from temps, flushes remaining, does scope cleanup.
+    pub fn return_with_err_val(&mut self, result: Value, err_tag: Value) {
+        self.claim_temp(result);
+        self.flush_temps_inner();
+        emit_scope_cleanup(self.ir, &self.ctx, None);
+        self.ir.ret_with_err(result, err_tag);
+        self.returned = true;
+    }
+
     /// Bind a named variable to a value with a given type in the current scope.
     pub fn bind_var(&mut self, name: &str, val: Value, kind: RocaType) {
         let cl_type = kind.to_cranelift();

@@ -4,7 +4,6 @@
 use roca_ast as ast;
 use roca_cranelift::JitModule;
 use roca_ast::{Expr, TypeRef, Constraint};
-use roca_types::RocaType;
 use super::test_runner::*;
 
 
@@ -86,41 +85,15 @@ fn run_property(
     is_method: bool,
     args: &[Expr],
 ) -> PropertyResult {
-    let ptr = match module.get_function_ptr(jit_name) {
+    let shim_name = format!("{}__shim", jit_name);
+    let ptr = match module.get_function_ptr(&shim_name) {
         Some(p) => p,
-        None => return PropertyResult::Crashed(format!("function not found: {}", jit_name)),
+        None => return PropertyResult::Crashed(format!("shim not found: {}", shim_name)),
     };
-
-    let call_args: Vec<Expr> = if is_method {
-        let mut v = vec![Expr::Number(0.0)];
-        v.extend(args.iter().cloned());
-        v
-    } else {
-        args.to_vec()
-    };
-    let param_count = call_args.len();
 
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        if func.returns_err {
-            let arity_func = ast::FnDef {
-                params: (0..param_count).map(|i| ast::Param {
-                    name: format!("p{}", i), type_ref: TypeRef::Number, constraints: vec![],
-                }).collect(),
-                name: String::new(), is_pub: false, doc: None, type_params: vec![],
-                return_type: func.return_type.clone(), returns_err: true,
-                errors: vec![], body: vec![], crash: None, test: None,
-            };
-            let (_val, err_tag) = call_with_err(ptr, &arity_func, &call_args);
-            err_tag != 0
-        } else {
-            let ret_type = RocaType::from(&func.return_type);
-            match ret_type {
-                RocaType::Number => { let _ = call_f64_fn(ptr, param_count, &call_args); }
-                RocaType::Bool => { let _ = call_bool_fn(ptr, param_count, &call_args); }
-                _ => { let _ = call_str_fn(ptr, param_count, &call_args); }
-            }
-            false
-        }
+        let (_result_bits, err_tag) = call_fn(ptr, func, is_method, args);
+        err_tag != 0
     }));
 
     match result {

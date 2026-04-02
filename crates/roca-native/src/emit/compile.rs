@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use roca_ast::{self as roca};
 use roca_cranelift::api::Function;
-use roca_cranelift::{Module, FuncId, FnDecl, CompiledFuncs};
+use roca_cranelift::{Module, FuncId, FnDecl, CompiledFuncs, Value as CraneliftValue};
 use roca_types::RocaType;
 use crate::runtime::RuntimeFuncs;
 use super::context::NativeCtx;
@@ -345,6 +345,93 @@ pub fn compile_extern_fn_stub<M: Module>(
         let val = emit_expr(body, &nctx, &default_expr);
         body.return_val(val);
     })
+}
+
+/// Compile a test shim for a function.
+///
+/// The shim has a fixed 2-param calling convention: `fn(args_ptr: i64, args_len: i64) -> i64`
+/// (or `-> (i64, i8)` for error-returning functions). The test runner packs all args into a
+/// `Vec<u64>` and passes a pointer + length — one code path for any param count and any type mix.
+///
+/// The shim unpacks each arg from the array (loading 8 bytes at each slot), converts to the
+/// real param type (bitcast for f64, narrow for bool, identity for string/struct), then calls
+/// the real function and returns the result unified as i64.
+pub fn compile_test_shim<M: Module>(
+    module: &mut M,
+    func: &roca::FnDef,
+    struct_name: Option<&str>,
+    rt: &RuntimeFuncs,
+    compiled: &mut CompiledFuncs,
+) -> Result<(), String> {
+    let real_name = match struct_name {
+        Some(sn) => format!("{}.{}", sn, func.name),
+        None => func.name.clone(),
+    };
+    let shim_name = format!("{}__shim", real_name);
+    if compiled.has(&shim_name) { return Ok(()); }
+
+    let param_types: Vec<RocaType> = func.params.iter()
+        .map(|p| RocaType::from(&p.type_ref))
+        .collect();
+    let ret_type = RocaType::from(&func.return_type);
+    let returns_err = func.returns_err;
+    let has_self = struct_name.is_some();
+
+    // Shim signature: (args_ptr: I64, args_len: I64) -> I64 [+ I8 if err]
+    // RocaType::String maps to I64 — used for both params and the unified i64 return.
+    Function::new(&shim_name)
+        .param("args_ptr", RocaType::String)
+        .param("args_len", RocaType::String)
+        .returns(RocaType::String)
+        .returns_err_if(returns_err)
+        .build(module, rt, compiled, move |body| {
+            let args_ptr = body.var("args_ptr");
+
+            // Unpack args from the array. Layout: [self?, param0, param1, ...]
+            let mut call_args: Vec<CraneliftValue> = Vec::new();
+            let mut slot = 0i32;
+
+            if has_self {
+                call_args.push(body.load_ptr_i64(args_ptr, slot));
+                slot += 8;
+            }
+
+            for pt in &param_types {
+                let bits = body.load_ptr_i64(args_ptr, slot);
+                let arg = match pt {
+                    RocaType::Number => body.bitcast_i64_to_f64(bits),
+                    RocaType::Bool   => body.narrow_to_bool(bits),
+                    _                => bits,
+                };
+                call_args.push(arg);
+                slot += 8;
+            }
+
+            if returns_err {
+                let results = body.call_multi(&real_name, &call_args);
+                let (raw_result, err_tag) = if results.len() >= 2 {
+                    (results[0], results[1])
+                } else {
+                    (body.int(0), body.int(0))
+                };
+                let result_i64 = match ret_type {
+                    RocaType::Number => body.bitcast_f64_to_i64(raw_result),
+                    RocaType::Bool   => body.extend_bool(raw_result),
+                    _                => raw_result,
+                };
+                body.return_with_err_val(result_i64, err_tag);
+            } else {
+                let raw_result = body.call(&real_name, &call_args);
+                let result_i64 = match ret_type {
+                    RocaType::Number => body.bitcast_f64_to_i64(raw_result),
+                    RocaType::Bool   => body.extend_bool(raw_result),
+                    _                => raw_result,
+                };
+                body.return_val(result_i64);
+            }
+        })?;
+
+    Ok(())
 }
 
 /// Compile auto-stubs for all methods in an extern contract.

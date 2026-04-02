@@ -375,6 +375,38 @@ fn native_test_runner_failing() {
 }
 
 #[test]
+fn three_param_function_proof_tests_pass() {
+    // Regression test for #63: functions with 3+ params silently returned defaults.
+    let source = roca_parse::parse(r#"
+        pub fn three(a: String, b: String, c: String) -> String {
+            if a == "x" { return "X: " + b }
+            return a + c
+        test {
+            self("x", "val", "") == "X: val"
+            self("a", "b", "c") == "ac"
+        }}
+    "#);
+    let result = test_runner::run_tests(&source);
+    assert_eq!(result.failed, 0, "3-param test failed: {}", result.output);
+    assert!(result.passed >= 2, "expected >= 2 passed, got {}: {}", result.passed, result.output);
+}
+
+#[test]
+fn four_param_number_function_proof_tests_pass() {
+    let source = roca_parse::parse(r#"
+        pub fn sum4(a: Number, b: Number, c: Number, d: Number) -> Number {
+            return a + b + c + d
+        test {
+            self(1, 2, 3, 4) == 10
+            self(0, 0, 0, 0) == 0
+        }}
+    "#);
+    let result = test_runner::run_tests(&source);
+    assert_eq!(result.failed, 0, "4-param test failed: {}", result.output);
+    assert!(result.passed >= 2, "expected >= 2 passed, got {}: {}", result.passed, result.output);
+}
+
+#[test]
 fn auto_stub_extern_fn() {
     // Auto-stub returns default for Number (0.0)
     let mut m = jit(r#"
