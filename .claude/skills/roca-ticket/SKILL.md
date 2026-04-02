@@ -26,34 +26,37 @@ Fetch the issue details using `gh issue view <number>`. Extract:
 
 If the issue is closed, stop and tell the user.
 
-### Step 2: Verify it's reproducible
+### Step 2: Create ticket team
 
-Launch the **roca-ticket-verify** agent with the issue context. This agent:
-- Attempts to reproduce the bug using the steps in the issue
-- If already fixed on master, closes the issue with a comment and stops
-- If reproducible, labels it as verified and continues
+Create an agent team named `ticket-<number>` with a verifier and fixer teammate. The verifier works first, then hands off to the fixer with its findings.
 
-If verification fails (can't reproduce, unclear steps), ask the user for guidance before proceeding.
+```
+Create an agent team named "ticket-<number>" to fix GitHub issue #<number>.
+Spawn two teammates:
 
-### Step 3: Identify the affected crate(s)
+- "verifier" teammate using the roca-ticket-verify agent type:
+  Verify that issue #<number> is still reproducible. If already fixed, close it.
+  If reproducible, identify the affected crate and share findings with the fixer.
 
-From the issue description, error messages, and reproduction:
-- Map the problem to one or more crates
-- Read the crate-scoped skill(s) for boundary context
-- Identify the scope of the fix — single crate or cross-crate
+- "fixer" teammate using the roca-ticket-fix agent type:
+  Wait for the verifier to confirm the issue is real.
+  Fix the issue scoped to the identified crate.
+  Read the crate-scoped skill for boundaries.
+  Depends on: verifier completing.
+```
 
-### Step 4: Fix in a worktree
+The verifier can message the fixer directly with reproduction details, affected crate, and specific error output — giving the fixer richer context than a subagent handoff.
 
-Launch the **roca-ticket-fix** agent. It:
-- Works in an isolated git worktree
-- Scopes the fix to the identified crate(s)
-- Respects crate boundaries from the skills
-- Adds or updates tests to cover the fix
-- Creates commits following the conventional commit format
+### Step 3: Monitor and intervene
 
-### Step 5: Run tests
+Wait for the team to work through the issue:
+- If the verifier can't reproduce (unclear steps), it messages the lead. Ask the user for guidance.
+- If the verifier confirms it's already fixed, it closes the issue. Clean up the team and stop.
+- If the fixer discovers the fix requires multiple crates, it messages the lead. Decide whether to expand scope or split into multiple tickets.
 
-Run the test suites for all affected crates:
+### Step 4: Run tests
+
+After the fixer completes, run test suites for all affected crates:
 
 ```bash
 cargo test --release -p <crate-name>
@@ -64,11 +67,11 @@ If emitter, checker, or .roca files were touched:
 cd tests/js && ROCA_BIN=../../target/release/roca bun test
 ```
 
-If tests fail, fix and re-run. Do not proceed until green.
+If tests fail, message the fixer with the failures.
 
-### Step 6: Review
+### Step 5: Review
 
-Run `/roca-review` to validate:
+Clean up the ticket team, then run `/roca-review` to validate:
 - Crate boundaries respected
 - KISS/SOLID/YAGNI principles followed
 - Rust quality checks pass
@@ -77,7 +80,7 @@ Run `/roca-review` to validate:
 
 If review finds blocking issues, fix them and re-review.
 
-### Step 7: Create PR
+### Step 6: Create PR
 
 Create a pull request that:
 - References the issue: `Fixes #<number>`

@@ -28,15 +28,31 @@ cd tests/js && ROCA_BIN=../../target/release/roca bun test
 ./target/release/roca check tests/js/projects/api
 ```
 
-### Step 2: Run review agents in parallel
+### Step 2: Create review team
 
-Launch these three agents concurrently:
+Create an agent team named `review-<branch>` with three reviewer teammates. Each reviewer works independently but can challenge each other's findings directly.
 
-1. **code-reviewer** — crate boundaries, KISS/SOLID/YAGNI, Rust quality, cross-crate consistency
-2. **spec-guardian** — verify changes match the language spec
-3. **memory-tracker** — check for leaks, double frees, untracked allocations (only if roca-cranelift, roca-native, or roca-runtime changed)
+```
+Create an agent team named "review-<branch>" to review changes on this branch.
+Spawn three teammates:
 
-Wait for all to complete.
+- "boundaries" teammate using the code-reviewer agent type:
+  Focus on crate boundary violations, KISS/SOLID/YAGNI, Rust quality, and cross-crate consistency.
+
+- "spec" teammate using the spec-guardian agent type:
+  Verify changes match the language spec. Check for breaking changes.
+
+- "memory" teammate using the memory-tracker agent type:
+  Check for leaks, double frees, untracked allocations, ABI mismatches.
+  (Only spawn if roca-cranelift, roca-native, or roca-runtime changed.)
+
+Have them review in parallel, then share and challenge each other's findings
+before reporting a final verdict.
+```
+
+The reviewers can message each other to cross-reference findings — e.g., the spec reviewer finds a semantic change and asks the memory reviewer if it affects allocation patterns. This produces better reviews than isolated subagents.
+
+Wait for all to complete and synthesize their reports.
 
 ### Step 3: Run /coderabbit:review
 
@@ -48,7 +64,7 @@ Check changed files for unnecessary complexity and duplication.
 
 ### Step 5: Report and verdict
 
-Compile a unified report:
+Clean up the review team, then compile a unified report:
 
 ```
 ## Roca Review Report
@@ -57,7 +73,7 @@ Compile a unified report:
 [pass/fail summary, which suites ran]
 
 ### Crate Boundaries
-[any boundary violations found by code-reviewer]
+[any boundary violations found by boundaries reviewer]
 
 ### KISS / SOLID / YAGNI
 [any principle violations]
@@ -66,10 +82,10 @@ Compile a unified report:
 [type safety, unwrap usage, error handling]
 
 ### Spec Compliance
-[summary from spec-guardian]
+[summary from spec reviewer]
 
 ### Memory Safety
-[summary from memory-tracker, or "N/A — no native changes"]
+[summary from memory reviewer, or "N/A — no native changes"]
 
 ### CodeRabbit
 [summary]

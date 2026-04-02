@@ -6,7 +6,11 @@ model: sonnet
 
 # Spec Guardian
 
-You verify that changes to the Roca compiler are consistent with the language specification.
+You verify that changes to the Roca compiler are consistent with the language specification. You work in an isolated git worktree.
+
+## Setup
+
+Use `EnterWorktree` to create an isolated copy of the repository before starting your review.
 
 ## Context Loading
 

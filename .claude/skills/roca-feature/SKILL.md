@@ -1,11 +1,11 @@
 ---
 name: roca-feature
-description: "Spec-driven feature development pipeline. TRIGGER when: user asks to add a new language feature, implement a spec section, or build a new construct (e.g. 'add pattern matching', 'implement guards', 'build the enum spread syntax'). Takes an idea, spec reference, or issue number. Generates failing tests first, then implements across crates in parallel via agents."
+description: "Spec-driven feature development pipeline. TRIGGER when: user asks to add a new language feature, implement a spec section, or build a new construct (e.g. 'add pattern matching', 'implement guards', 'build the enum spread syntax'). Takes an idea, spec reference, or issue number. Generates failing tests first, then implements across crates via an agent team."
 ---
 
 # Roca Feature
 
-Spec-driven, test-first feature development across the Roca compiler workspace.
+Spec-driven, test-first feature development across the Roca compiler workspace using agent teams.
 
 ## Usage
 
@@ -159,47 +159,87 @@ cd tests/js && ROCA_BIN=../../target/release/roca bun test verify.test.js
 
 Report the failure count. If any pass, the feature is already partially implemented — adjust scope.
 
-### Phase 4: Implementation via Crate Agents
+### Phase 4: Create Agent Team for Implementation
 
-Spawn `roca-feature-crate` agents in wave order. Each agent receives:
+Create an agent team to implement the feature across crates. Teammates use the `roca-feature-crate` agent type and can communicate cross-crate issues to each other directly.
+
+#### Team structure
+
+Create a team named `feature-<short-name>` with one teammate per affected crate. Each teammate receives:
 - The feature spec section
 - Its crate name and scoped skill path
 - The specific changes needed
 - The test names it must make pass
 
-#### Wave 0 — Foundation (parallel)
+```
+Create an agent team named "feature-<name>" to implement <feature> across the compiler.
+Spawn teammates using the roca-feature-crate agent type:
 
-Spawn agents for: `roca-ast`, `roca-errors`, `roca-types` (only those affected).
+- "ast" teammate: add new node types to roca-ast. Changes: <list>. Tests to pass: <list>.
+  Read .claude/skills/roca-foundation-crate/SKILL.md for boundaries.
 
-After completion:
+- "parse" teammate: add parser support in roca-parse. Changes: <list>. Tests to pass: <list>.
+  Read .claude/skills/roca-parse-crate/SKILL.md for boundaries.
+  Depends on: ast teammate completing.
+
+- "check" teammate: add checker rules in roca-check. Changes: <list>. Tests to pass: <list>.
+  Read .claude/skills/roca-check-crate/SKILL.md for boundaries.
+  Depends on: ast teammate completing.
+
+- "js" teammate: add JS emission in roca-js. Changes: <list>. Tests to pass: <list>.
+  Read .claude/skills/roca-js-crate/SKILL.md for boundaries.
+  Depends on: parse teammate completing.
+
+- "native" teammate: add native compilation in roca-native. Changes: <list>. Tests to pass: <list>.
+  Read .claude/skills/roca-native-crate/SKILL.md for boundaries.
+  Depends on: parse teammate completing.
+
+Require plan approval before teammates make changes.
+```
+
+Only spawn teammates for crates that are actually affected. Skip crates that don't need changes.
+
+#### Task dependencies enforce wave order
+
+Use task dependencies so the team self-coordinates:
+- Wave 0 tasks (ast, errors, types) have no dependencies — teammates start immediately
+- Wave 1 tasks (parse, check) depend on Wave 0 tasks completing
+- Wave 2 tasks (js, native) depend on Wave 1 tasks completing
+
+Teammates will automatically pick up work as their dependencies resolve.
+
+#### Cross-crate communication
+
+Unlike subagents, teammates can message each other when they discover cross-crate issues:
+- Native teammate discovers a missing Body API method → messages the cranelift teammate
+- Parse teammate adds a new AST variant → broadcasts to check, js, and native teammates
+- Check teammate finds a new error case → messages the spec lead
+
+This is the key advantage over subagents — crate agents collaborate instead of working in isolation.
+
+#### Verification between waves
+
+After each wave completes:
+
+**Wave 0:**
 ```bash
 cargo build --release
 ```
-Expect downstream match-arm errors — this confirms the AST changes rippled correctly.
+Expect downstream match-arm errors — confirms AST changes rippled correctly.
 
-#### Wave 1 — Parser + Checker (parallel)
-
-Spawn agents for: `roca-parse`, `roca-check` (only those affected).
-
-After completion:
+**Wave 1:**
 ```bash
 cargo test --release -p roca-parse -- <feature>
 cargo test --release -p roca-check -- <feature>
 ```
 
-#### Wave 2 — Backends (parallel)
-
-Spawn agents for: `roca-js`, `roca-native`, and optionally `roca-cranelift` (only if new Body API methods are needed).
-
-After completion:
+**Wave 2:**
 ```bash
 cargo test --release
 cd tests/js && ROCA_BIN=../../target/release/roca bun test
 ```
 
-#### Failure handling
-
-If a wave's tests fail after agents complete, re-spawn the failing crate's agent with the error output. Do not proceed to the next wave until the current wave is green.
+If tests fail after a wave, message the responsible teammate with the error output.
 
 ### Phase 5: Integration Verification
 
@@ -221,6 +261,7 @@ Confirm all originally-failing tests from Phase 3 now pass. Report any remaining
 3. **Patterns** (`src/patterns.txt`) — add a pattern if the feature introduces new coding idioms
 4. **Integration test** (`tests/integration/`) — add a `.roca` file demonstrating the feature in a realistic scenario
 
-### Phase 7: Review
+### Phase 7: Clean Up and Review
 
-Run `/roca-review`. If blocking issues are found, fix them and re-review until PASS.
+1. Clean up the agent team.
+2. Run `/roca-review`. If blocking issues are found, fix them and re-review until PASS.

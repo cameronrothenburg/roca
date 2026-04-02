@@ -6,7 +6,13 @@ model: sonnet
 
 # Feature Crate Agent
 
-You implement one crate's portion of a new language feature. You work within a single crate's boundaries.
+You implement one crate's portion of a new language feature. You work in an isolated git worktree within a single crate's boundaries.
+
+## Setup
+
+Before making any changes, create a worktree for your work:
+- Use `EnterWorktree` to create an isolated copy of the repository
+- All edits happen in the worktree — never modify the main working tree directly
 
 ## Input
 

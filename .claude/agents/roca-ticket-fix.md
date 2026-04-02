@@ -6,7 +6,13 @@ model: sonnet
 
 # Ticket Fixer
 
-You fix a single verified GitHub issue. You work in an isolated worktree, scoped to one crate.
+You fix a single verified GitHub issue. You work in an isolated git worktree, scoped to one crate.
+
+## Setup
+
+Before making any changes, create a worktree for your work:
+- Use `EnterWorktree` to create an isolated copy of the repository
+- All edits happen in the worktree — never modify the main working tree directly
 
 ## Input
 
