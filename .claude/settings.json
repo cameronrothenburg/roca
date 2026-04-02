@@ -15,6 +15,7 @@
             "type": "prompt",
             "if": "Edit(*.rs)",
             "prompt": "Review this Rust code edit for quick-fix shortcuts. BLOCK (exit 2) if you see ANY of: wrapping in unwrap()/expect()/clone() instead of handling properly, catch-all `_ =>` to silence warnings, `as` casts instead of From/TryFrom, commenting out code/tests, #[allow(..)] to suppress warnings, sentinel values instead of Option/Result, todo!()/unimplemented!() in non-prototype code, hardcoded defaults to pass tests, format!() for structured data, silently swallowed errors (empty catch, `let _ =` on important Result). If clean exit 0 silently. If bodge, explain the proper fix. Edit: $ARGUMENTS",
+            "model": "claude-sonnet-4-6",
             "statusMessage": "Checking for shortcuts..."
           }
         ]
