@@ -63,13 +63,17 @@ After the fixer completes, spawn verification teammates in parallel:
 
 Any failures or divergences must be fixed before proceeding.
 
-### Step 5: Run tests
+### Step 5: Proof verification
 
-Run `/run-ci-local` to execute the full CI pipeline. This catches regressions across the entire workspace, not just the affected crate.
+Spawn a **proof-agent** teammate. It receives the original GitHub issue and the current branch. It extracts every claim from the issue (bug behavior, expected behavior, edge cases) and verifies each one has a direct, passing test. Any gaps get filled with `proof_` tests.
+
+### Step 6: Run tests
+
+Run `/run-ci-local` to execute the full CI pipeline. This catches regressions across the entire workspace.
 
 If tests fail, message the fixer with the failures.
 
-### Step 6: Review
+### Step 7: Review
 
 Clean up the ticket team, then run `/roca-review` to validate:
 - Crate boundaries respected
@@ -80,7 +84,7 @@ Clean up the ticket team, then run `/roca-review` to validate:
 
 If review finds blocking issues, fix them and re-review.
 
-### Step 7: Create PR
+### Step 8: Create PR
 
 Create a pull request that:
 - References the issue: `Fixes #<number>`

@@ -251,13 +251,23 @@ Spawn three verification teammates in parallel:
 
 All three work in parallel. Any failures from stress-tester or divergences from cross-target-verifier must be fixed before proceeding. Docs-keeper updates are committed alongside the feature.
 
-### Phase 6: Integration Verification
+### Phase 6: Proof Verification
+
+Spawn a **proof-agent** teammate. It receives the original request (the feature spec from Phase 0/1) and the current branch. It:
+- Extracts every discrete requirement from the spec
+- Finds or writes a test that directly proves each one
+- Disqualifies tests that pass by coincidence, use workarounds, or don't assert the specific claim
+- Reports PROVEN / WEAK / MISSING for each requirement
+
+Any MISSING requirements must have proof tests written before proceeding. WEAK tests must be strengthened or replaced.
+
+### Phase 7: Integration Verification
 
 Run `/run-ci-local` to execute the full CI pipeline (build, workspace tests, smoke test, JS integration tests). This mirrors `.github/workflows/ci.yml` exactly.
 
-Confirm all originally-failing tests from Phase 3 now pass, plus any new stress tests. Report any remaining failures.
+Confirm all originally-failing tests from Phase 3 plus all proof tests now pass.
 
-### Phase 7: Clean Up and Review
+### Phase 8: Clean Up and Review
 
 1. Clean up the agent team.
 2. Run `/roca-review`. If blocking issues are found, fix them and re-review until PASS.
