@@ -10,6 +10,12 @@
           {
             "type": "command",
             "command": "file=\"$CLAUDE_FILE\"; if [ -n \"$file\" ] && [[ \"$file\" == *.rs ]]; then rustfmt \"$file\" 2>/dev/null; fi"
+          },
+          {
+            "type": "prompt",
+            "if": "Edit(*.rs)",
+            "prompt": "Review this Rust code edit for quick-fix shortcuts. BLOCK (exit 2) if you see ANY of these patterns:\n\n- Wrapping a problem in unwrap(), expect(), or clone() instead of handling it properly\n- Adding a catch-all `_ =>` match arm to silence a compiler warning instead of handling new variants\n- Using `as` casts to force type conversions instead of proper From/Into/TryFrom\n- Commenting out code or tests instead of fixing them\n- Adding #[allow(...)] to suppress warnings instead of fixing the cause\n- Using sentinel values (0, -1, empty string) instead of Option/Result\n- Adding a todo!() or unimplemented!() in non-prototype code\n- Returning a hardcoded default to make a test pass instead of implementing the logic\n- Using format!() string manipulation for structured data instead of proper types\n- Suppressing errors silently (empty catch, `let _ = ...` on a Result that matters)\n\nIf the edit is clean, say nothing and exit 0. If it's a bodge, explain what the proper fix should be.\n\nEdit details: $ARGUMENTS",
+            "statusMessage": "Checking for quick-fix shortcuts..."
           }
         ]
       }
