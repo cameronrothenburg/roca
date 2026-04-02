@@ -14,8 +14,8 @@
           {
             "type": "prompt",
             "if": "Edit(*.rs)",
-            "prompt": "Review this Rust code edit for quick-fix shortcuts. BLOCK (exit 2) if you see ANY of these patterns:\n\n- Wrapping a problem in unwrap(), expect(), or clone() instead of handling it properly\n- Adding a catch-all `_ =>` match arm to silence a compiler warning instead of handling new variants\n- Using `as` casts to force type conversions instead of proper From/Into/TryFrom\n- Commenting out code or tests instead of fixing them\n- Adding #[allow(...)] to suppress warnings instead of fixing the cause\n- Using sentinel values (0, -1, empty string) instead of Option/Result\n- Adding a todo!() or unimplemented!() in non-prototype code\n- Returning a hardcoded default to make a test pass instead of implementing the logic\n- Using format!() string manipulation for structured data instead of proper types\n- Suppressing errors silently (empty catch, `let _ = ...` on a Result that matters)\n\nIf the edit is clean, say nothing and exit 0. If it's a bodge, explain what the proper fix should be.\n\nEdit details: $ARGUMENTS",
-            "statusMessage": "Checking for quick-fix shortcuts..."
+            "prompt": "Review this Rust code edit for quick-fix shortcuts. BLOCK (exit 2) if you see ANY of: wrapping in unwrap()/expect()/clone() instead of handling properly, catch-all `_ =>` to silence warnings, `as` casts instead of From/TryFrom, commenting out code/tests, #[allow(..)] to suppress warnings, sentinel values instead of Option/Result, todo!()/unimplemented!() in non-prototype code, hardcoded defaults to pass tests, format!() for structured data, silently swallowed errors (empty catch, `let _ =` on important Result). If clean exit 0 silently. If bodge, explain the proper fix. Edit: $ARGUMENTS",
+            "statusMessage": "Checking for shortcuts..."
           }
         ]
       }
@@ -27,6 +27,12 @@
           {
             "type": "command",
             "command": "if [ -n \"$CLAUDE_FILE\" ] && echo \"$CLAUDE_FILE\" | grep -qE '(Cargo\\.lock|bun\\.lock)$'; then echo 'BLOCK: Do not edit lock files directly'; exit 2; fi"
+          },
+          {
+            "type": "prompt",
+            "if": "Edit(*.rs)|Write(*.rs)",
+            "prompt": "Check the assistant's RECENT MESSAGE TEXT (not code) for language signaling a shortcut. BLOCK (exit 2) if you see: 'for now', 'quick fix', 'simple fix', 'as a workaround', 'temporarily', 'temp fix', 'placeholder', 'we can come back to this', 'revisit later', 'clean up later', 'to keep things simple' (when cutting corners), 'this should work', 'good enough', 'let's just', 'we'll just', 'to avoid dealing with', 'to sidestep', 'hacky but', 'not ideal but', 'ugly but'. These mean the assistant KNOWS the proper fix but is choosing a shortcut. Block and tell it to implement the correct approach. If no such language, exit 0 silently. Context: $ARGUMENTS",
+            "statusMessage": "Checking intent..."
           }
         ]
       }
