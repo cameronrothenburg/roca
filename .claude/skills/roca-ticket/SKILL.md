@@ -54,9 +54,14 @@ Wait for the team to work through the issue:
 - If the verifier confirms it's already fixed, it closes the issue. Clean up the team and stop.
 - If the fixer discovers the fix requires multiple crates, it messages the lead. Decide whether to expand scope or split into multiple tickets.
 
-### Step 4: Stress test
+### Step 4: Verify the fix
 
-After the fixer completes, spawn a `stress-tester` teammate to try to break the fix. It receives the issue context, the fix description, and the affected crate. Any failures must be fixed before proceeding.
+After the fixer completes, spawn verification teammates in parallel:
+
+- **stress-tester** — tries to break the fix with edge cases and adversarial inputs
+- **cross-target-verifier** — confirms JS and native backends produce identical results for the fixed behavior
+
+Any failures or divergences must be fixed before proceeding.
 
 ### Step 5: Run tests
 
