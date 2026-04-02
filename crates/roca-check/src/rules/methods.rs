@@ -338,11 +338,11 @@ fn check_method_call(type_name: &str, field: &str, args: &[Expr], ctx: &ExprCont
     let registry = ctx.check.registry;
     let qn = &ctx.func.qualified_name;
 
-    if type_name.ends_with('?') {
-        errors.push(RuleError::new(errors::NULLABLE_ACCESS, format!("cannot call .{}() on nullable type '{}'", field, type_name.trim_end_matches('?')), Some(qn.clone())));
+    if type_is_nullable(type_name) {
+        errors.push(RuleError::new(errors::NULLABLE_ACCESS, format!("cannot call .{}() on nullable type '{}'", field, type_base(type_name)), Some(qn.clone())));
     }
 
-    let trimmed = type_name.trim_end_matches('?');
+    let trimmed = type_base(type_name);
     if !registry.has_method(trimmed, field) {
         let available = registry.available_methods(trimmed);
         let hint = if available.is_empty() { String::new() }
@@ -356,7 +356,7 @@ fn check_method_call(type_name: &str, field: &str, args: &[Expr], ctx: &ExprCont
         }
     }
 
-    if trimmed.contains('<') {
+    if type_is_generic(trimmed) {
         if let Some((sig, subs)) = registry.get_method(trimmed, field) {
             if !subs.is_empty() {
                 for (i, param) in sig.params.iter().enumerate() {
@@ -376,6 +376,21 @@ fn check_method_call(type_name: &str, field: &str, args: &[Expr], ctx: &ExprCont
             errors.push(RuleError::new(errors::CONSTRAINT_VIOLATION, format!("'{}' does not satisfy constraint '{}' required by {}", arg, constraint, full_type), Some(qn.clone())));
         }
     }
+}
+
+/// Returns true if the type string represents a nullable type (ends with `?`).
+fn type_is_nullable(type_name: &str) -> bool {
+    type_name.ends_with('?')
+}
+
+/// Strips the nullable suffix from a type name, returning the base type string.
+fn type_base(type_name: &str) -> &str {
+    type_name.trim_end_matches('?')
+}
+
+/// Returns true if the type string represents a generic/parameterised type (contains `<`).
+fn type_is_generic(type_name: &str) -> bool {
+    type_name.contains('<')
 }
 
 fn check_binop(left: &Expr, op: &BinOp, right: &Expr, ctx: &ExprContext, errors: &mut Vec<RuleError>) {

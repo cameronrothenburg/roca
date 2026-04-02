@@ -27,6 +27,22 @@ pub fn type_ref_to_name(t: &TypeRef) -> String {
     }
 }
 
+/// Get the base type name, stripping nullable wrappers, generic args, and fn return types.
+/// Used for registry lookups where only the struct/contract name matters.
+/// e.g. `Optional<KvStore>` → "KvStore", `Email?` → "Email", `fn() -> User` → "User"
+pub fn type_ref_base_name(t: &TypeRef) -> String {
+    match t {
+        TypeRef::String => "String".into(),
+        TypeRef::Number => "Number".into(),
+        TypeRef::Bool => "Bool".into(),
+        TypeRef::Ok => "Ok".into(),
+        TypeRef::Named(n) => n.clone(),
+        TypeRef::Generic(n, _) => n.clone(),
+        TypeRef::Nullable(inner) => type_ref_base_name(inner),
+        TypeRef::Fn(_, ret) => type_ref_base_name(ret),
+    }
+}
+
 /// Get just the type name from scope (convenience for existing code)
 pub fn scope_type(scope: &Scope, name: &str) -> Option<String> {
     scope.get(name).map(|v| v.type_name.clone())
@@ -94,7 +110,11 @@ pub fn infer_type_with_registry(expr: &Expr, scope: &Scope, registry: Option<&Co
                             "includes" | "startsWith" | "endsWith" => Some("Bool".to_string()),
                             "indexOf" | "charCodeAt" | "length" => Some("Number".to_string()),
                             "split" => Some("Array".to_string()),
-                            _ => Some("String".to_string()),
+                            // Known String → String methods
+                            "trim" | "toUpperCase" | "toLowerCase" | "slice" | "replace"
+                            | "concat" | "padStart" | "padEnd" | "repeat" | "at"
+                            | "substring" | "trimStart" | "trimEnd" => Some("String".to_string()),
+                            _ => None,
                         };
                     }
                     // Check registry for method return type on any resolved type
@@ -313,7 +333,17 @@ fn walk_expr(expr: &Expr, check: &CheckContext, fn_ctx: &FnContext, scope: &Scop
         }
         Expr::Not(inner) | Expr::Await(inner) => walk_expr(inner, check, fn_ctx, scope, rules, errors),
         Expr::Closure { body, .. } => walk_expr(body, check, fn_ctx, scope, rules, errors),
-        _ => {}
+        Expr::EnumVariant { args, .. } => {
+            for a in args { walk_expr(a, check, fn_ctx, scope, rules, errors); }
+        }
+        Expr::StringInterp(parts) => {
+            for part in parts {
+                if let StringPart::Expr(e) = part { walk_expr(e, check, fn_ctx, scope, rules, errors); }
+            }
+        }
+        // Leaf expressions — no sub-expressions to walk
+        Expr::Ident(_) | Expr::String(_) | Expr::Number(_) | Expr::Bool(_)
+        | Expr::Null | Expr::SelfRef => {}
     }
 }
 

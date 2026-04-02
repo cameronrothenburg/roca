@@ -1,6 +1,7 @@
 //! Rule: missing-crash, crash-on-safe, panic-warning
 //! Validates crash block presence and strategy correctness.
 
+use std::collections::HashSet;
 use roca_ast::*;
 use roca_errors as errors;
 use roca_errors::RuleError;
@@ -299,9 +300,9 @@ impl Rule for CrashRule {
                 }
             };
 
-            let handled: Vec<&str> = crash.handlers.iter().map(|h| h.call.as_str()).collect();
+            let handled: HashSet<&str> = crash.handlers.iter().map(|h| h.call.as_str()).collect();
             for call in &err_calls {
-                if !handled.iter().any(|h| *h == call.as_str()) {
+                if !handled.contains(call.as_str()) {
                     errors.push(RuleError::new(errors::UNHANDLED_CALL, format!("'{}' returns errors but has no crash handler in '{}'", call, f.name), Some(ctx.func.qualified_name.clone())));
                 }
             }
@@ -330,12 +331,12 @@ impl Rule for CrashRule {
             // Check chain validity: nonterminal ending + panic warning in one pass
             let (ends_nonterminal, has_panic) = match &handler.strategy {
                 CrashHandlerKind::Simple(chain) => (
-                    chain.last().map_or(false, |s| matches!(s, CrashStep::Log | CrashStep::Retry { .. })),
+                    chain.last().map_or(false, is_non_terminal),
                     chain.iter().any(|s| matches!(s, CrashStep::Panic)),
                 ),
                 CrashHandlerKind::Detailed { arms, default } => {
-                    let nt = arms.iter().any(|a| a.chain.last().map_or(false, |s| matches!(s, CrashStep::Log | CrashStep::Retry { .. })))
-                        || default.as_ref().map_or(false, |c| c.last().map_or(false, |s| matches!(s, CrashStep::Log | CrashStep::Retry { .. })));
+                    let nt = arms.iter().any(|a| a.chain.last().map_or(false, is_non_terminal))
+                        || default.as_ref().map_or(false, |c| c.last().map_or(false, is_non_terminal));
                     let p = arms.iter().any(|a| a.chain.iter().any(|s| matches!(s, CrashStep::Panic)))
                         || default.as_ref().map_or(false, |c| c.iter().any(|s| matches!(s, CrashStep::Panic)));
                     (nt, p)
@@ -351,6 +352,12 @@ impl Rule for CrashRule {
 
         errors
     }
+}
+
+/// Returns true if a crash step is "non-terminal" — it does not fully resolve the error.
+/// A chain ending in a non-terminal step is invalid: must end with halt, fallback, skip, or panic.
+fn is_non_terminal(step: &CrashStep) -> bool {
+    matches!(step, CrashStep::Log | CrashStep::Retry { .. })
 }
 
 /// Build a scope mapping variable names to type names from params and local declarations.

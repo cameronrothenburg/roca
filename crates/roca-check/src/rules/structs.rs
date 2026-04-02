@@ -1,6 +1,7 @@
 //! Rule: empty-struct, missing-impl, sig-mismatch, undeclared-method
 //! Validates struct definitions, method implementations, and signature consistency.
 
+use std::collections::{HashMap, HashSet};
 use roca_ast::*;
 use roca_errors as errors;
 use roca_errors::RuleError;
@@ -93,13 +94,19 @@ impl Rule for StructsRule {
                     return errors;
                 }
             }
+            // Pre-build sets/maps for O(1) cross-checks instead of O(n²) nested loops
+            let method_names: HashSet<&str> = s.methods.iter().map(|m| m.name.as_str()).collect();
+            let sig_by_name: HashMap<&str, &FnSignature> = s.signatures.iter()
+                .map(|sig| (sig.name.as_str(), sig))
+                .collect();
+
             for sig in &s.signatures {
-                if !s.methods.iter().any(|m| m.name == sig.name) {
+                if !method_names.contains(sig.name.as_str()) {
                     errors.push(RuleError::new(errors::MISSING_IMPL, format!("struct '{}' declares '{}' in contract but has no implementation", s.name, sig.name), None));
                 }
             }
             for method in &s.methods {
-                match s.signatures.iter().find(|sig| sig.name == method.name) {
+                match sig_by_name.get(method.name.as_str()) {
                     Some(sig) => {
                         if sig.params.len() != method.params.len() {
                             errors.push(RuleError::new(errors::SIG_MISMATCH, format!("'{}.{}' has {} params but contract declares {}", s.name, method.name, method.params.len(), sig.params.len()), None));

@@ -48,11 +48,13 @@ impl Rule for OwnershipRule {
                 }
             }
 
-            // Check each field for direct or indirect cycles
+            // Check each field for direct or indirect cycles.
+            // known_acyclic caches structs proven cycle-free to avoid re-traversing shared subgraphs.
+            let mut known_acyclic: HashSet<String> = HashSet::new();
             for field in &s.fields {
                 let mut visited = HashSet::new();
                 visited.insert(s.name.clone());
-                if has_cycle(&field.type_ref, &struct_map, &mut visited) {
+                if has_cycle(&field.type_ref, &struct_map, &mut visited, &mut known_acyclic) {
                     errors.push(RuleError::new(
                         errors::RECURSIVE_CYCLE,
                         format!("struct '{}' field '{}' creates a recursive cycle — use Optional<{}> to break it",
@@ -69,21 +71,26 @@ impl Rule for OwnershipRule {
 
 /// Walk the type graph checking for cycles. Returns true if a cycle is found.
 /// `visited` tracks which struct names we've already seen on this path.
+/// `known_acyclic` caches structs already proven cycle-free so they aren't re-traversed.
 /// Optional<T>, Array<T>, and other Generic types break the cycle (heap indirection).
-fn has_cycle(ty: &TypeRef, structs: &HashMap<String, &[Field]>, visited: &mut HashSet<String>) -> bool {
+fn has_cycle(ty: &TypeRef, structs: &HashMap<String, &[Field]>, visited: &mut HashSet<String>, known_acyclic: &mut HashSet<String>) -> bool {
     match ty {
         TypeRef::Named(name) => {
             // If we've seen this struct before on this path, it's a cycle
             if visited.contains(name) { return true; }
+            // Already proven acyclic on a prior traversal
+            if known_acyclic.contains(name) { return false; }
             // If it's a known struct, walk its fields
             if let Some(fields) = structs.get(name) {
                 visited.insert(name.clone());
                 for field in *fields {
-                    if has_cycle(&field.type_ref, structs, visited) {
+                    if has_cycle(&field.type_ref, structs, visited, known_acyclic) {
                         return true;
                     }
                 }
                 visited.remove(name);
+                // All fields checked with no cycle — cache as acyclic
+                known_acyclic.insert(name.clone());
             }
             false
         }

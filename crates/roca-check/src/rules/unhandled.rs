@@ -1,11 +1,13 @@
 //! Rule: unhandled-error
 //! Detects calls to error-returning functions that lack crash block coverage.
 
+use std::collections::HashMap;
 use roca_ast::*;
 use roca_errors as errors;
 use roca_errors::RuleError;
 use crate::rule::Rule;
 use crate::context::FnCheckContext;
+use crate::walker::type_ref_base_name;
 
 pub struct UnhandledErrorsRule;
 
@@ -37,11 +39,20 @@ impl Rule for UnhandledErrorsRule {
             None => return errors,
         };
 
-        let own_errors = self.own_error_names(ctx);
+        // Pre-index file functions by name for O(1) lookup in lookup_callee_errors
+        let fn_index: HashMap<&str, Vec<String>> = ctx.check.file.items.iter().filter_map(|item| {
+            match item {
+                Item::Function(f) => Some((f.name.as_str(), f.errors.iter().map(|e| e.name.clone()).collect())),
+                Item::ExternFn(f) => Some((f.name.as_str(), f.errors.iter().map(|e| e.name.clone()).collect())),
+                _ => None,
+            }
+        }).collect();
+
+        let own_errors = self.own_error_names(ctx, &fn_index);
 
         // For each handler that ends in halt, look up the callee's errors
         for handler in &crash.handlers {
-            let halting_err_names = self.halting_error_names(handler, ctx);
+            let halting_err_names = self.halting_error_names(handler, ctx, &fn_index);
             for err_name in halting_err_names {
                 if !own_errors.contains(&err_name) {
                     errors.push(RuleError::new(errors::UNHANDLED_ERROR, format!("error '{}' propagates via halt in '{}' but is not declared", err_name, f.name), Some(ctx.func.qualified_name.clone())));
@@ -58,7 +69,7 @@ impl UnhandledErrorsRule {
     /// For struct methods: look up the parent struct's signature errors.
     /// For standalone fns: collect from ReturnErr statements in the body
     ///   (since FnDef.errors is always empty for parsed standalone fns).
-    fn own_error_names(&self, ctx: &FnCheckContext) -> Vec<String> {
+    fn own_error_names(&self, ctx: &FnCheckContext, fn_index: &HashMap<&str, Vec<String>>) -> Vec<String> {
         if let Some(parent) = ctx.func.parent_struct {
             // Struct method — look up the signature in the parent struct
             for item in &ctx.check.file.items {
@@ -79,7 +90,7 @@ impl UnhandledErrorsRule {
             if ctx.func.def.returns_err {
                 if let Some(crash) = &ctx.func.def.crash {
                     for handler in &crash.handlers {
-                        let halting = self.halting_error_names(handler, ctx);
+                        let halting = self.halting_error_names(handler, ctx, fn_index);
                         for e in halting {
                             if !names.contains(&e) {
                                 names.push(e);
@@ -95,8 +106,8 @@ impl UnhandledErrorsRule {
     /// For a given crash handler, return the error names that propagate via halt.
     /// If the handler is Simple and ends in halt, return ALL errors from the callee.
     /// If Detailed, only return errors from arms that end in halt (+ default if halt).
-    fn halting_error_names(&self, handler: &CrashHandler, ctx: &FnCheckContext) -> Vec<String> {
-        let callee_errors = self.lookup_callee_errors(&handler.call, ctx);
+    fn halting_error_names(&self, handler: &CrashHandler, ctx: &FnCheckContext, fn_index: &HashMap<&str, Vec<String>>) -> Vec<String> {
+        let callee_errors = self.lookup_callee_errors(&handler.call, ctx, fn_index);
 
         match &handler.strategy {
             CrashHandlerKind::Simple(chain) => {
@@ -134,23 +145,16 @@ impl UnhandledErrorsRule {
     }
 
     /// Look up the declared errors of the function/method being called.
-    fn lookup_callee_errors(&self, call: &str, ctx: &FnCheckContext) -> Vec<String> {
+    /// Uses `fn_index` (pre-built HashMap) for O(1) top-level function lookup.
+    fn lookup_callee_errors(&self, call: &str, ctx: &FnCheckContext, fn_index: &HashMap<&str, Vec<String>>) -> Vec<String> {
         // call can be "fn_name" or "receiver.method" or "a.b.method"
         let parts: Vec<&str> = call.split('.').collect();
 
         if parts.len() == 1 {
             let name = parts[0];
-            // Check current file
-            for item in &ctx.check.file.items {
-                match item {
-                    Item::Function(f) if f.name == name => {
-                        return f.errors.iter().map(|e| e.name.clone()).collect();
-                    }
-                    Item::ExternFn(f) if f.name == name => {
-                        return f.errors.iter().map(|e| e.name.clone()).collect();
-                    }
-                    _ => {}
-                }
+            // O(1) lookup via pre-built index
+            if let Some(errs) = fn_index.get(name) {
+                return errs.clone();
             }
             // Check imported functions
             if let Some(resolved) = roca_resolve::find_imported_fn(name, ctx.check.file, ctx.check.source_dir.as_deref()) {
@@ -212,19 +216,6 @@ impl UnhandledErrorsRule {
         }
 
         vec![]
-    }
-}
-
-fn type_ref_base_name(t: &TypeRef) -> String {
-    match t {
-        TypeRef::String => "String".into(),
-        TypeRef::Number => "Number".into(),
-        TypeRef::Bool => "Bool".into(),
-        TypeRef::Ok => "Ok".into(),
-        TypeRef::Named(n) => n.clone(),
-        TypeRef::Generic(n, _) => n.clone(),
-        TypeRef::Nullable(inner) => type_ref_base_name(inner),
-        TypeRef::Fn(_, ret) => type_ref_base_name(ret),
     }
 }
 

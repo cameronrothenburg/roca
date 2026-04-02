@@ -56,9 +56,21 @@ mod tests {
 
 /// Substitute generic type params in a type reference.
 /// e.g. with map {T → User}, TypeRef::Named("T") becomes TypeRef::Named("User")
-fn substitute_type(ty: &roca_ast::TypeRef, map: &std::collections::HashMap<String, &roca_ast::TypeRef>) -> roca_ast::TypeRef {
+/// `memo` caches results keyed on the type's string representation to avoid repeated work.
+fn substitute_type(
+    ty: &roca_ast::TypeRef,
+    map: &std::collections::HashMap<String, &roca_ast::TypeRef>,
+    memo: &mut std::collections::HashMap<String, roca_ast::TypeRef>,
+) -> roca_ast::TypeRef {
     use roca_ast::TypeRef;
-    match ty {
+    use crate::walker::type_ref_to_name;
+
+    let key = type_ref_to_name(ty);
+    if let Some(cached) = memo.get(&key) {
+        return cached.clone();
+    }
+
+    let result = match ty {
         TypeRef::Named(name) => {
             if let Some(replacement) = map.get(name) {
                 (*replacement).clone()
@@ -67,14 +79,17 @@ fn substitute_type(ty: &roca_ast::TypeRef, map: &std::collections::HashMap<Strin
             }
         }
         TypeRef::Generic(name, args) => {
-            let subst_args: Vec<TypeRef> = args.iter().map(|a| substitute_type(a, map)).collect();
+            let subst_args: Vec<TypeRef> = args.iter().map(|a| substitute_type(a, map, memo)).collect();
             TypeRef::Generic(name.clone(), subst_args)
         }
         TypeRef::Nullable(inner) => {
-            TypeRef::Nullable(Box::new(substitute_type(inner, map)))
+            TypeRef::Nullable(Box::new(substitute_type(inner, map, memo)))
         }
         _ => ty.clone(),
-    }
+    };
+
+    memo.insert(key, result.clone());
+    result
 }
 
 pub struct SatisfiesRule;
@@ -99,6 +114,7 @@ impl Rule for SatisfiesRule {
                 .map(|(param, arg)| (param.name.clone(), arg))
                 .collect();
 
+            let mut subst_memo = std::collections::HashMap::new();
             for sig in &contract.functions {
                 match sat.methods.iter().find(|m| m.name == sig.name) {
                     None => {
@@ -109,7 +125,7 @@ impl Rule for SatisfiesRule {
                             errors.push(RuleError::new(errors::SATISFIES_MISMATCH, format!("'{}.{}' has {} params but '{}' requires {}", sat.struct_name, m.name, m.params.len(), sat.contract_name, sig.params.len()), None));
                         }
                         // Substitute generic type params before comparing return types
-                        let expected_return = substitute_type(&sig.return_type, &type_map);
+                        let expected_return = substitute_type(&sig.return_type, &type_map, &mut subst_memo);
                         if expected_return != m.return_type {
                             errors.push(RuleError::new(errors::SATISFIES_MISMATCH, format!("'{}.{}' returns {:?} but '{}' requires {:?}", sat.struct_name, m.name, m.return_type, sat.contract_name, expected_return), None));
                         }
