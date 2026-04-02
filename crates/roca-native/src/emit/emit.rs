@@ -545,6 +545,7 @@ pub fn emit_struct_field_constraints(
     field_defs: &[roca::Field],
 ) {
     for field_def in field_defs {
+        if field_def.constraints.is_empty() { continue; }
         let layout_idx = body.struct_field_index(struct_name, &field_def.name);
         if let Some(idx) = layout_idx {
             let is_string = matches!(field_def.type_ref, roca::TypeRef::String);

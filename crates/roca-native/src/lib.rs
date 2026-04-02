@@ -126,9 +126,9 @@ pub fn compile_all<M: Module>(
             _ => {}
         }
     }
-    // Compile test shims for functions and struct methods that have test blocks
-    // or are public (property tests). The shim provides a uniform
-    // (args_ptr: i64, args_len: i64) -> i64 interface regardless of param count.
+    // Compile test shims for functions, struct methods, and satisfies methods
+    // that have test blocks or are public (property tests). The shim provides a
+    // uniform (args_ptr: i64) -> i64 interface regardless of param count.
     for item in &source.items {
         match item {
             roca_ast::Item::Function(f) => {
@@ -140,6 +140,13 @@ pub fn compile_all<M: Module>(
                 for method in &s.methods {
                     if method.test.is_some() || method.is_pub {
                         emit::compile_test_shim(module, method, Some(&s.name), &rt, &mut compiled)?;
+                    }
+                }
+            }
+            roca_ast::Item::Satisfies(sat) => {
+                for method in &sat.methods {
+                    if method.test.is_some() || method.is_pub {
+                        emit::compile_test_shim(module, method, Some(&sat.struct_name), &rt, &mut compiled)?;
                     }
                 }
             }

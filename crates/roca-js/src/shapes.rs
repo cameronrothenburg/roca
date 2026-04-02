@@ -302,6 +302,52 @@ fn js_match<'a>(ast: &AstBuilder<'a>, value: &Expr, arms: &[roca::MatchArm]) -> 
 /// Above this arm count, emit an IIFE with if-else statements instead of nested ternaries.
 const MATCH_IIFE_THRESHOLD: usize = 8;
 
+/// Build the test expression for a variant match arm.
+fn build_variant_test<'a>(
+    ast: &AstBuilder<'a>,
+    value: &Expr,
+    enum_name: &str,
+    variant: &str,
+    bindings: &[String],
+) -> Expression<'a> {
+    let val = expr_to_js(ast, value);
+    if bindings.is_empty() {
+        let enum_variant = field_access(ast, ident(ast, enum_name), ast.str(variant));
+        binary(ast, val, BinaryOperator::StrictEquality, enum_variant)
+    } else {
+        let tag = field_access(ast, val, ast.str(TAG_FIELD));
+        let tag_str = string_lit(ast, variant);
+        binary(ast, tag, BinaryOperator::StrictEquality, tag_str)
+    }
+}
+
+/// Build the consequent expression for a variant match arm, wrapping in a destructuring
+/// IIFE when bindings are present.
+fn build_variant_consequent<'a>(
+    ast: &AstBuilder<'a>,
+    value: &Expr,
+    bindings: &[String],
+    arm_value: Expression<'a>,
+) -> Expression<'a> {
+    if bindings.is_empty() {
+        return arm_value;
+    }
+    let mut fn_params = ast.vec();
+    let mut call_args = ast.vec();
+    for (i, binding) in bindings.iter().enumerate() {
+        fn_params.push(param(ast, binding));
+        let field_name = positional_field(i);
+        let val = expr_to_js(ast, value);
+        call_args.push(Argument::from(field_access(ast, val, ast.str(&field_name))));
+    }
+    let params = formal_params(ast, fn_params);
+    let mut stmts = ast.vec();
+    stmts.push(return_stmt(ast, arm_value));
+    let body = function_body(ast, stmts);
+    let arrow = ast.expression_arrow_function(SPAN, false, false, NONE, params, NONE, body);
+    ast.expression_call(SPAN, arrow, NONE, call_args, false)
+}
+
 fn js_match_inner<'a>(ast: &AstBuilder<'a>, value: &Expr, arms: &[roca::MatchArm]) -> Expression<'a> {
     if arms.len() > MATCH_IIFE_THRESHOLD {
         return js_match_as_iife(ast, value, arms);
@@ -324,42 +370,9 @@ fn js_match_inner<'a>(ast: &AstBuilder<'a>, value: &Expr, arms: &[roca::MatchArm
                 result = Some(ast.expression_conditional(SPAN, test, arm_value, alternate));
             }
             Some(MatchPattern::Variant { enum_name, variant, bindings }) => {
-                let val = expr_to_js(ast, value);
                 let alternate = result.unwrap_or_else(|| ident(ast, "undefined"));
-
-                // For simple enum variants (no bindings), compare value === EnumName.variant.
-                // This works for string/number enums (primitive equality) and unit enums (singleton reference).
-                // For data enum variants (with bindings), compare value._tag === "variant" to match and destructure.
-                let test = if bindings.is_empty() {
-                    let enum_variant = field_access(ast, ident(ast, enum_name), ast.str(variant));
-                    binary(ast, val, BinaryOperator::StrictEquality, enum_variant)
-                } else {
-                    let tag = field_access(ast, val, ast.str(TAG_FIELD));
-                    let tag_str = string_lit(ast, variant);
-                    binary(ast, tag, BinaryOperator::StrictEquality, tag_str)
-                };
-
-                let consequent = if bindings.is_empty() {
-                    arm_value
-                } else {
-                    let mut fn_params = ast.vec();
-                    let mut call_args = ast.vec();
-                    for (i, binding) in bindings.iter().enumerate() {
-                        fn_params.push(param(ast, binding));
-                        let field_name = positional_field(i);
-                        let val2 = expr_to_js(ast, value);
-                        call_args.push(Argument::from(
-                            field_access(ast, val2, ast.str(&field_name))
-                        ));
-                    }
-                    let params = formal_params(ast, fn_params);
-                    let mut stmts = ast.vec();
-                    stmts.push(return_stmt(ast, arm_value));
-                    let body = function_body(ast, stmts);
-                    let arrow = ast.expression_arrow_function(SPAN, false, false, NONE, params, NONE, body);
-                    ast.expression_call(SPAN, arrow, NONE, call_args, false)
-                };
-
+                let test = build_variant_test(ast, value, enum_name, variant, bindings);
+                let consequent = build_variant_consequent(ast, value, bindings, arm_value);
                 result = Some(ast.expression_conditional(SPAN, test, consequent, alternate));
             }
         }
@@ -395,39 +408,10 @@ fn js_match_as_iife<'a>(ast: &AstBuilder<'a>, value: &Expr, arms: &[roca::MatchA
                 stmts.push(if_stmt(ast, test, block(ast, then_stmts), None));
             }
             Some(MatchPattern::Variant { enum_name, variant, bindings }) => {
-                let val = expr_to_js(ast, value);
-                let test = if bindings.is_empty() {
-                    let enum_variant = field_access(ast, ident(ast, enum_name), ast.str(variant));
-                    binary(ast, val, BinaryOperator::StrictEquality, enum_variant)
-                } else {
-                    let tag = field_access(ast, val, ast.str(TAG_FIELD));
-                    let tag_str = string_lit(ast, variant);
-                    binary(ast, tag, BinaryOperator::StrictEquality, tag_str)
-                };
-
-                let consequent_expr = if bindings.is_empty() {
-                    arm_value
-                } else {
-                    let mut fn_params = ast.vec();
-                    let mut call_args = ast.vec();
-                    for (i, binding) in bindings.iter().enumerate() {
-                        fn_params.push(param(ast, binding));
-                        let field_name = positional_field(i);
-                        let val2 = expr_to_js(ast, value);
-                        call_args.push(Argument::from(
-                            field_access(ast, val2, ast.str(&field_name))
-                        ));
-                    }
-                    let params = formal_params(ast, fn_params);
-                    let mut inner_stmts = ast.vec();
-                    inner_stmts.push(return_stmt(ast, arm_value));
-                    let body = function_body(ast, inner_stmts);
-                    let arrow = ast.expression_arrow_function(SPAN, false, false, NONE, params, NONE, body);
-                    ast.expression_call(SPAN, arrow, NONE, call_args, false)
-                };
-
+                let test = build_variant_test(ast, value, enum_name, variant, bindings);
+                let consequent = build_variant_consequent(ast, value, bindings, arm_value);
                 let mut then_stmts = ast.vec();
-                then_stmts.push(return_stmt(ast, consequent_expr));
+                then_stmts.push(return_stmt(ast, consequent));
                 stmts.push(if_stmt(ast, test, block(ast, then_stmts), None));
             }
         }

@@ -27,9 +27,9 @@ pub fn type_ref_to_name(t: &TypeRef) -> String {
     }
 }
 
-/// Get the base type name, stripping nullable wrappers, generic args, and fn return types.
+/// Get the base type name, stripping nullable wrappers and fn return types.
 /// Used for registry lookups where only the struct/contract name matters.
-/// e.g. `Optional<KvStore>` → "KvStore", `Email?` → "Email", `fn() -> User` → "User"
+/// e.g. `Optional<KvStore>` → "Optional", `Email?` → "Email", `fn() -> User` → "User"
 pub fn type_ref_base_name(t: &TypeRef) -> String {
     match t {
         TypeRef::String => "String".into(),
@@ -112,7 +112,7 @@ pub fn infer_type_with_registry(expr: &Expr, scope: &Scope, registry: Option<&Co
                             "split" => Some("Array".to_string()),
                             // Known String → String methods
                             "trim" | "toUpperCase" | "toLowerCase" | "slice" | "replace"
-                            | "concat" | "padStart" | "padEnd" | "repeat" | "at"
+                            | "concat" | "padStart" | "padEnd" | "repeat" | "at" | "charAt"
                             | "substring" | "trimStart" | "trimEnd" => Some("String".to_string()),
                             _ => None,
                         };

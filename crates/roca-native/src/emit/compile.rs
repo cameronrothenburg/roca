@@ -158,10 +158,10 @@ fn collect_closures(stmts: &[roca::Stmt], out: &mut Vec<(Vec<String>, roca::Expr
     }
 }
 
-/// Collect closures passed as arguments to a direct function call (e.g. `arr.map(|x| x + 1)`).
+/// Collect closures passed as arguments to function/method calls (e.g. `arr.map(|x| x + 1)`).
 fn collect_closures_from_call_args(expr: &roca::Expr, out: &mut Vec<(Vec<String>, roca::Expr)>) {
     if let roca::Expr::Call { target, args } = expr {
-        if matches!(target.as_ref(), roca::Expr::Ident(_)) {
+        if matches!(target.as_ref(), roca::Expr::Ident(_) | roca::Expr::FieldAccess { .. }) {
             for a in args {
                 if let roca::Expr::Closure { params, body } = a {
                     out.push((params.clone(), *body.clone()));
@@ -406,6 +406,17 @@ pub fn compile_test_shim<M: Module>(
                 slot += 8;
             }
 
+            // Unify raw result to i64 for the shim's uniform return type.
+            macro_rules! unify_to_i64 {
+                ($body:expr, $raw:expr) => {
+                    match ret_type {
+                        RocaType::Number => $body.bitcast_f64_to_i64($raw),
+                        RocaType::Bool   => $body.extend_bool($raw),
+                        _                => $raw,
+                    }
+                }
+            }
+
             if returns_err {
                 let results = body.call_multi(&real_name, &call_args);
                 let (raw_result, err_tag) = if results.len() >= 2 {
@@ -413,19 +424,11 @@ pub fn compile_test_shim<M: Module>(
                 } else {
                     (body.int(0), body.bool_val(false))
                 };
-                let result_i64 = match ret_type {
-                    RocaType::Number => body.bitcast_f64_to_i64(raw_result),
-                    RocaType::Bool   => body.extend_bool(raw_result),
-                    _                => raw_result,
-                };
+                let result_i64 = unify_to_i64!(body, raw_result);
                 body.return_with_err_val(result_i64, err_tag);
             } else {
                 let raw_result = body.call(&real_name, &call_args);
-                let result_i64 = match ret_type {
-                    RocaType::Number => body.bitcast_f64_to_i64(raw_result),
-                    RocaType::Bool   => body.extend_bool(raw_result),
-                    _                => raw_result,
-                };
+                let result_i64 = unify_to_i64!(body, raw_result);
                 body.return_val(result_i64);
             }
         })?;

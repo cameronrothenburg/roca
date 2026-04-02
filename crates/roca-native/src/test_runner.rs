@@ -62,11 +62,26 @@ fn run_tests_inner(source: &ast::SourceFile, with_property_tests: bool) -> Nativ
                 }
             }
             ast::Item::Struct(s) => {
-                if with_property_tests {
-                    for method in &s.methods {
-                        if method.is_pub && super::property_tests::all_params_generable(method) {
-                            super::property_tests::run_property_tests(&module, method, Some(&s.name), &mut passed, &mut failed, &mut output);
-                        }
+                for method in &s.methods {
+                    if let Some(test) = &method.test {
+                        let mut qualified = method.clone();
+                        qualified.name = format!("{}.{}", s.name, method.name);
+                        run_fn_tests(&module, &qualified, test, &mut passed, &mut failed, &mut output);
+                    }
+                    if with_property_tests && method.is_pub && super::property_tests::all_params_generable(method) {
+                        super::property_tests::run_property_tests(&module, method, Some(&s.name), &mut passed, &mut failed, &mut output);
+                    }
+                }
+            }
+            ast::Item::Satisfies(sat) => {
+                for method in &sat.methods {
+                    if let Some(test) = &method.test {
+                        let mut qualified = method.clone();
+                        qualified.name = format!("{}.{}", sat.struct_name, method.name);
+                        run_fn_tests(&module, &qualified, test, &mut passed, &mut failed, &mut output);
+                    }
+                    if with_property_tests && method.is_pub && super::property_tests::all_params_generable(method) {
+                        super::property_tests::run_property_tests(&module, method, Some(&sat.struct_name), &mut passed, &mut failed, &mut output);
                     }
                 }
             }

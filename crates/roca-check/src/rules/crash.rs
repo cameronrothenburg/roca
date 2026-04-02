@@ -357,7 +357,10 @@ impl Rule for CrashRule {
 /// Returns true if a crash step is "non-terminal" — it does not fully resolve the error.
 /// A chain ending in a non-terminal step is invalid: must end with halt, fallback, skip, or panic.
 fn is_non_terminal(step: &CrashStep) -> bool {
-    matches!(step, CrashStep::Log | CrashStep::Retry { .. })
+    match step {
+        CrashStep::Log | CrashStep::Retry { .. } => true,
+        CrashStep::Halt | CrashStep::Panic | CrashStep::Skip | CrashStep::Fallback(_) => false,
+    }
 }
 
 /// Build a scope mapping variable names to type names from params and local declarations.

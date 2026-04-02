@@ -12,7 +12,7 @@ pub struct Parser {
     pub tokens: Vec<Token>,
     pub pos: usize,
     /// Tracks recursive depth of `parse_type_ref` to prevent stack overflow.
-    pub type_depth: usize,
+    pub(crate) type_depth: usize,
 }
 
 impl Parser {

@@ -378,17 +378,14 @@ fn check_method_call(type_name: &str, field: &str, args: &[Expr], ctx: &ExprCont
     }
 }
 
-/// Returns true if the type string represents a nullable type (ends with `?`).
 fn type_is_nullable(type_name: &str) -> bool {
     type_name.ends_with('?')
 }
 
-/// Strips the nullable suffix from a type name, returning the base type string.
 fn type_base(type_name: &str) -> &str {
-    type_name.trim_end_matches('?')
+    type_name.strip_suffix('?').unwrap_or(type_name)
 }
 
-/// Returns true if the type string represents a generic/parameterised type (contains `<`).
 fn type_is_generic(type_name: &str) -> bool {
     type_name.contains('<')
 }
