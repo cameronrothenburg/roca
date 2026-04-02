@@ -121,7 +121,10 @@ pub fn parse_string_interp(s: &str) -> Expr {
             if trimmed.contains('.') {
                 let tokens = crate::tokenize(trimmed);
                 let mut p = Parser::new(tokens);
-                parts.push(StringPart::Expr(p.parse_expr().unwrap()));
+                match p.parse_expr() {
+                    Ok(expr) => parts.push(StringPart::Expr(expr)),
+                    Err(_) => parts.push(StringPart::Expr(Expr::Ident(trimmed.to_string()))),
+                }
             } else {
                 parts.push(StringPart::Expr(Expr::Ident(trimmed.to_string())));
             }

@@ -71,11 +71,11 @@ pub static MEM: MemTracker = MemTracker {
 
 impl MemTracker {
     pub fn set_debug(&self, on: bool) {
-        self.debug.store(on, Ordering::SeqCst);
+        self.debug.store(on, Ordering::Relaxed);
     }
 
     pub fn is_debug(&self) -> bool {
-        self.debug.load(Ordering::SeqCst)
+        self.debug.load(Ordering::Relaxed)
     }
 
     pub fn reset(&self) {

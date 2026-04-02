@@ -102,8 +102,11 @@ pub fn compile_all<M: Module>(
                 }
             }
             roca_ast::Item::Satisfies(sat) => {
+                let fields = struct_defs.get(&sat.struct_name)
+                    .map(|v| v.as_slice())
+                    .unwrap_or(&[]);
                 for method in &sat.methods {
-                    emit::compile_struct_method(module, method, &sat.struct_name, &[], &rt, &mut compiled, &func_return_kinds, &enum_variants, &struct_defs)?;
+                    emit::compile_struct_method(module, method, &sat.struct_name, fields, &rt, &mut compiled, &func_return_kinds, &enum_variants, &struct_defs)?;
                 }
             }
             _ => {}

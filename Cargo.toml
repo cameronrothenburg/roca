@@ -68,3 +68,6 @@ roca-js.workspace = true
 roca-native.workspace = true
 roca-lsp.workspace = true
 roca-cli.workspace = true
+roca-runtime.workspace = true
+roca-types.workspace = true
+roca-cranelift.workspace = true

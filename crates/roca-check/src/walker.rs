@@ -65,7 +65,7 @@ pub fn resolve_type(expr: &Expr, scope: &Scope) -> Option<String> {
     }
 }
 
-pub fn infer_type_with_registry(expr: &Expr, scope: &Scope, registry: Option<&roca_resolve::ContractRegistry>) -> Option<String> {
+pub fn infer_type_with_registry(expr: &Expr, scope: &Scope, registry: Option<&ContractRegistry>) -> Option<String> {
     match expr {
         Expr::Call { target, .. } => {
             if let Expr::Ident(name) = target.as_ref() {
@@ -307,7 +307,7 @@ fn walk_expr(expr: &Expr, check: &CheckContext, fn_ctx: &FnContext, scope: &Scop
         Expr::Match { value, arms } => {
             walk_expr(value, check, fn_ctx, scope, rules, errors);
             for arm in arms {
-                if let Some(roca_ast::MatchPattern::Value(p)) = &arm.pattern { walk_expr(p, check, fn_ctx, scope, rules, errors); }
+                if let Some(MatchPattern::Value(p)) = &arm.pattern { walk_expr(p, check, fn_ctx, scope, rules, errors); }
                 walk_expr(&arm.value, check, fn_ctx, scope, rules, errors);
             }
         }

@@ -469,6 +469,7 @@ fn collect_calls_in_expr(expr: &Expr, calls: &mut Vec<String>) {
             if let Some(name) = roca_ast::expr_to_dotted_name(target) {
                 if !calls.contains(&name) { calls.push(name); }
             }
+            collect_calls_in_expr(target, calls);
             for a in args { collect_calls_in_expr(a, calls); }
         }
         Expr::BinOp { left, right, .. } => {

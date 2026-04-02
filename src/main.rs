@@ -142,6 +142,10 @@ fn main() {
             let path_args: Vec<String> = args.iter().filter(|a| !a.starts_with("--")).cloned().collect();
             let path = resolve_path_arg(&path_args);
             if path.is_dir() {
+                if emit_only {
+                    eprintln!("error: --emit-only is not supported for directories");
+                    std::process::exit(1);
+                }
                 build_directory(&path);
             } else if emit_only {
                 roca_cli::build::emit_file(&path);

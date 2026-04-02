@@ -1806,12 +1806,15 @@ dependencies = [
  "roca-ast",
  "roca-check",
  "roca-cli",
+ "roca-cranelift",
  "roca-errors",
  "roca-js",
  "roca-lsp",
  "roca-native",
  "roca-parse",
  "roca-resolve",
+ "roca-runtime",
+ "roca-types",
  "tokio",
 ]
 

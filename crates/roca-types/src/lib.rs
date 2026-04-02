@@ -49,7 +49,11 @@ pub enum RocaType {
 
 impl RocaType {
     pub fn is_heap(&self) -> bool {
-        matches!(self, RocaType::String | RocaType::Array(_) | RocaType::Map(_, _) | RocaType::Struct(_) | RocaType::Enum(_))
+        match self {
+            RocaType::String | RocaType::Array(_) | RocaType::Map(_, _) | RocaType::Struct(_) | RocaType::Enum(_) => true,
+            RocaType::Optional(inner) => inner.is_heap(),
+            _ => false,
+        }
     }
     pub fn is_primitive(&self) -> bool {
         matches!(self, RocaType::Number | RocaType::Bool | RocaType::Void)

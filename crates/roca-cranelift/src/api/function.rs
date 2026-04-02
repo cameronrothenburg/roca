@@ -355,10 +355,11 @@ impl Satisfies {
         func_return_kinds: &HashMap<String, RocaType>,
         enum_variants: &HashMap<String, Vec<String>>,
         struct_defs: &HashMap<String, Vec<roca_ast::Field>>,
+        struct_fields: Option<&[(String, RocaType)]>,
     ) -> Result<(), String> {
         for method in self.methods {
             let qualified = format!("{}.{}", self.struct_name, method.name);
-            let func = Function::new(&qualified)
+            let mut func = Function::new(&qualified)
                 .params(&method.params)
                 .returns(method.return_type)
                 .returns_err_if(method.returns_err)
@@ -366,6 +367,12 @@ impl Satisfies {
                 .with_return_kinds(func_return_kinds.clone())
                 .with_enum_variants(enum_variants.clone())
                 .with_struct_defs(struct_defs.clone());
+
+            if let Some(fields) = struct_fields {
+                let layout = crate::StructLayout { fields: fields.to_vec() };
+                func = func.with_struct_layout(&self.struct_name, layout)
+                    .with_self_struct_type(&self.struct_name);
+            }
 
             if let Some(body_fn) = method.body_fn {
                 func.build(module, rt_funcs, compiled, body_fn)?;
@@ -462,13 +469,13 @@ impl ExternContract {
                 .collect();
             let rt_clone = return_type.clone();
 
-            let _ = Function::new(&qualified)
+            Function::new(&qualified)
                 .params(&params)
                 .returns(return_type.clone())
                 .returns_err_if(*returns_err)
                 .build(module, rt_funcs, compiled, |body| {
                     let dv = body.default_for(&rt_clone); body.return_val(dv);
-                });
+                })?;
         }
         Ok(())
     }
