@@ -1,4 +1,22 @@
-//! Native engine — Cranelift JIT compilation for proof tests and native execution.
+//! Native compiler backend — Cranelift JIT compilation for proof tests and
+//! optional AOT object-file emission.
+//!
+//! Depends on [`roca_ast`], [`roca_types`], [`roca_cranelift`] (IR builder),
+//! and [`roca_runtime`] (host functions). Consumed by `roca-cli` to execute
+//! inline `test {}` blocks before emitting JavaScript.
+//!
+//! # Key exports
+//!
+//! - [`compile_all()`] — compile every function, struct method, and satisfies
+//!   method in a [`roca_ast::SourceFile`] into a Cranelift module.
+//! - [`create_jit_module()`] — create a `JITModule` with all runtime symbols
+//!   pre-registered.
+//! - [`get_function_ptr()`] — look up a compiled function by name.
+//! - [`compile_to_object()`] — AOT path that produces a relocatable object file.
+//! - [`test_runner`] — executes proof tests against a finalized JIT module and
+//!   reports pass/fail results.
+//! - [`property_tests`] — fuzz-based property testing driven by parameter
+//!   constraints.
 
 pub mod runtime;
 pub mod emit;

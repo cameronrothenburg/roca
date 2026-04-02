@@ -1,5 +1,18 @@
-//! Abstract syntax tree for the Roca language.
-//! Re-exports all node types used by the parser, checker, and emitter.
+//! Abstract syntax tree definitions for the Roca language.
+//!
+//! This is a leaf crate with no internal dependencies. Nearly every other
+//! compiler crate depends on `roca-ast` — the parser produces it, and the
+//! checker, JS emitter, native backend, and LSP all consume it.
+//!
+//! # Key types
+//!
+//! - [`SourceFile`] / [`Item`] — top-level program structure (functions,
+//!   structs, contracts, imports, enums, satisfies, extern declarations).
+//! - [`Expr`], [`Stmt`] — expression and statement nodes.
+//! - [`TypeRef`] — source-level type references (resolved later by the checker).
+//! - [`CrashBlock`] / [`CrashHandler`] — error-recovery strategy trees.
+//! - [`TestBlock`] / [`TestCase`] — inline proof-test declarations.
+//! - [`ErrDecl`] — named error declarations on fallible functions.
 
 pub mod types;
 pub mod expr;

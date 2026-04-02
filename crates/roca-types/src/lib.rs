@@ -1,8 +1,29 @@
-//! Roca language model — shared across all compiler stages.
+//! Semantic type model for the Roca language, shared across all compiler stages.
 //!
-//! This crate holds the semantic types that both backends (JS + native) consume.
-//! It depends on roca-ast and provides From<AST> conversions.
-//! The type system is open — extern contracts and user-defined types are first-class.
+//! Depends on [`roca_ast`] and provides `From<AST>` conversions so that
+//! higher-level crates (`roca-cranelift`, `roca-native`) can work with
+//! resolved types instead of raw syntax nodes.
+//!
+//! # Key types
+//!
+//! - [`RocaType`] — the core type enum (`Number`, `String`, `Array(T)`,
+//!   `Struct(name)`, `Optional(T)`, `Fn(params, ret)`, etc.).
+//! - [`Param`] / [`Field`] — typed parameters and struct fields with
+//!   optional [`Constraint`]s (`Min`, `MaxLen`, `Pattern`, ...).
+//! - [`FnSignature`] — full function signature including errors, used in
+//!   contract definitions.
+//! - [`CrashBlock`] / [`TestBlock`] — semantic mirrors of the AST crash
+//!   and test nodes.
+//!
+//! # Example
+//!
+//! ```
+//! use roca_types::RocaType;
+//!
+//! let ty = RocaType::Array(Box::new(RocaType::String));
+//! assert!(ty.is_heap());
+//! assert_eq!(ty.base_name(), "Array");
+//! ```
 
 mod convert;
 

@@ -1,6 +1,21 @@
-//! Cranelift IR toolkit for the Roca compiler.
-//! Provides type mapping, IR helpers, emit context, memory management,
-//! and the runtime function registry.
+//! Cranelift IR builder API for the Roca compiler — maps Roca constructs to
+//! Cranelift IR and manages the runtime function registry.
+//!
+//! Depends on [`roca_ast`], [`roca_types`], and [`roca_runtime`]. Consumed by
+//! `roca-native`, which uses this crate's builder API to compile functions,
+//! structs, and methods into Cranelift IR for JIT or AOT execution.
+//!
+//! # Key exports
+//!
+//! - **Builder API** ([`api`] module) — [`Function`], [`Method`], [`Struct`],
+//!   [`Satisfies`], [`RocaEnum`], [`ExternFn`], [`ExternContract`], [`Body`]
+//!   provide a high-level interface for emitting IR without touching raw
+//!   Cranelift instructions.
+//! - [`EmitCtx`] / [`CompiledFuncs`] / [`StructLayout`] — compilation context
+//!   tracking declared functions, struct field layouts, and scope state.
+//! - [`RuntimeFuncs`] / [`register_symbols`] / [`declare_runtime`] — registry
+//!   that maps `roca_runtime` host functions into Cranelift function references.
+//! - [`CraneliftType`] — Roca-to-Cranelift type mapping.
 
 pub(crate) mod types;
 pub(crate) mod helpers;

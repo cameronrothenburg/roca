@@ -1,5 +1,16 @@
-//! Language Server Protocol implementation for Roca.
-//! Provides diagnostics, completions, and document symbols via `tower-lsp`.
+//! Language Server Protocol implementation for Roca, built on `tower-lsp`.
+//!
+//! Depends on [`roca_ast`], [`roca_parse`], [`roca_check`], [`roca_errors`],
+//! and [`roca_resolve`]. Provides real-time diagnostics, completions, and
+//! document symbols to editors that speak LSP.
+//!
+//! # Key exports
+//!
+//! - [`run()`] — start the LSP server on stdin/stdout (called by `roca lsp`).
+//!
+//! Internally, the server re-parses on every `textDocument/didChange` via
+//! [`safe_parse()`] (which swallows syntax errors to keep the server alive),
+//! then runs `roca_check` to produce diagnostics.
 
 mod backend;
 mod completion;

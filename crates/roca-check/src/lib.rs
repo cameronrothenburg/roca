@@ -1,5 +1,24 @@
-//! Static analysis and rule checking for Roca source files.
-//! Orchestrates all rules and walks the AST to produce diagnostics.
+//! Static analysis engine for Roca — walks the AST and runs 15 pluggable
+//! rules to produce diagnostics.
+//!
+//! Depends on [`roca_ast`], [`roca_errors`], and [`roca_resolve`]. Consumed by
+//! `roca-cli` (build/check commands) and `roca-lsp` (live diagnostics).
+//!
+//! # Key exports
+//!
+//! - [`check()`] — analyse a single [`roca_ast::SourceFile`] and return all
+//!   [`roca_errors::RuleError`]s.
+//! - [`check_with_registry()`] — same, but with a pre-built
+//!   [`roca_resolve::ContractRegistry`] (for multi-file projects).
+//! - [`check_with_registry_and_dir()`] — adds a source directory so the
+//!   checker can resolve cross-file imports.
+//!
+//! # Rules
+//!
+//! Each rule implements the [`rule::Rule`] trait and lives in its own file
+//! under `rules/` (contracts, structs, satisfies, crash, tests, types,
+//! variables, methods, unhandled, manual_err, docs, ownership, reserved,
+//! constraints, self_test).
 
 pub mod context;
 pub mod walker;

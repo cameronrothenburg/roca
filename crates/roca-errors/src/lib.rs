@@ -1,5 +1,24 @@
-//! Error types and diagnostic codes for the Roca compiler.
-//! Defines all rule error codes and the `RuleError`/`ParseError` structs.
+//! Shared error types and diagnostic codes for the Roca compiler.
+//!
+//! This is a leaf crate with no internal dependencies — every other compiler
+//! crate that produces or consumes diagnostics depends on `roca-errors`.
+//!
+//! # Key types
+//!
+//! - [`RuleError`] — a checker diagnostic with a machine-readable `code`, human
+//!   message, and optional source context.
+//! - [`ParseError`] — a syntax error with a token position.
+//! - **Error-code constants** (`MISSING_CRASH`, `NULLABLE_TYPE`, etc.) — the
+//!   single source of truth for every diagnostic code emitted by `roca-check`.
+//!
+//! # Example
+//!
+//! ```
+//! use roca_errors::{RuleError, MISSING_TEST};
+//!
+//! let err = RuleError::new(MISSING_TEST, "function `greet` has no test block", None);
+//! assert_eq!(err.code, "missing-test");
+//! ```
 
 // Rule error codes — single source of truth for all checker diagnostics.
 // Crash rules

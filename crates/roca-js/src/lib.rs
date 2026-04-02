@@ -1,6 +1,15 @@
-//! JavaScript code generation from the Roca AST.
-//! Converts checked Roca source files into valid JS modules with error tuples,
-//! contracts, structs, and optional test harnesses.
+//! JavaScript code generation backend — converts a checked Roca AST into ES
+//! module source code (`.js`) and TypeScript declarations (`.d.ts`).
+//!
+//! Depends only on [`roca_ast`] (and OXC for AST building / codegen).
+//! Consumed by `roca-cli` during `roca build`.
+//!
+//! # Key exports
+//!
+//! - [`emit()`] — takes a [`roca_ast::SourceFile`] and returns the generated
+//!   JavaScript string. Functions emit the error-tuple protocol (`{value, err}`),
+//!   structs become ES classes, and contracts emit runtime validators.
+//! - [`emit_dts()`] — generates the corresponding `.d.ts` declaration file.
 
 pub(crate) mod ast_helpers;
 mod helpers;

@@ -1,5 +1,21 @@
-//! Roca runtime — host implementations for JIT-compiled code.
-//! Provides stdlib functions, memory management (RC), and the memory tracker.
+//! Host runtime for JIT-compiled Roca code — provides stdlib functions,
+//! reference-counted memory management, and the memory tracker.
+//!
+//! This crate has no internal Roca dependencies (only `uuid`, `url`, `sha2`,
+//! etc.). It is consumed by `roca-cranelift` (which registers these functions
+//! as Cranelift imports) and `roca-native` (which links them into the JIT).
+//!
+//! # Key exports
+//!
+//! - **RC memory** — [`roca_rc_alloc`], [`roca_rc_retain`], [`roca_rc_release`]
+//!   manage a reference-counted heap with an `[rc, size, payload]` layout.
+//! - **Struct ops** — [`roca_struct_alloc`], `roca_struct_get_*`, `roca_struct_set_*`
+//!   for field-indexed struct storage.
+//! - **String helpers** — [`alloc_str`], [`read_cstr`] for C-string interop.
+//! - [`MEM`] / [`MemTracker`] — thread-local allocation counters used by tests
+//!   to assert zero-leak invariants.
+//! - **stdlib** (re-exported from `stdlib` module) — `roca_string_*`,
+//!   `roca_array_*`, `roca_map_*`, `roca_math_*`, `roca_json_*`, etc.
 
 pub mod stdlib;
 pub use stdlib::*;
