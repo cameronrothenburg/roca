@@ -132,7 +132,7 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
 
     pub fn string(&mut self, s: &str) -> Value {
         let static_ptr = self.ir.leak_cstr(s);
-        if let Some(&f) = self.ctx.get_func("__string_new") {
+        let val = if let Some(&f) = self.ctx.get_func("__string_new") {
             self.ir.call(f, &[static_ptr])
         } else {
             static_ptr
