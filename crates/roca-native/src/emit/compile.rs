@@ -377,11 +377,10 @@ pub fn compile_test_shim<M: Module>(
     let returns_err = func.returns_err;
     let has_self = struct_name.is_some();
 
-    // Shim signature: (args_ptr: I64, args_len: I64) -> I64 [+ I8 if err]
-    // RocaType::String maps to I64 — used for both params and the unified i64 return.
+    // Shim signature: (args_ptr: I64) -> I64 [+ I8 if err]
+    // RocaType::String maps to I64 — used for the pointer param and the unified i64 return.
     Function::new(&shim_name)
         .param("args_ptr", RocaType::String)
-        .param("args_len", RocaType::String)
         .returns(RocaType::String)
         .returns_err_if(returns_err)
         .build(module, rt, compiled, move |body| {
@@ -412,7 +411,7 @@ pub fn compile_test_shim<M: Module>(
                 let (raw_result, err_tag) = if results.len() >= 2 {
                     (results[0], results[1])
                 } else {
-                    (body.int(0), body.int(0))
+                    (body.int(0), body.bool_val(false))
                 };
                 let result_i64 = match ret_type {
                     RocaType::Number => body.bitcast_f64_to_i64(raw_result),

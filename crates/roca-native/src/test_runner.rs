@@ -262,12 +262,12 @@ pub(super) fn call_fn(
 
     unsafe {
         if func.returns_err {
-            let f = std::mem::transmute::<_, fn(*const u64, usize) -> (i64, u8)>(ptr);
-            let (result, err) = f(packed.as_ptr(), packed.len());
+            let f = std::mem::transmute::<_, fn(*const u64) -> (i64, u8)>(ptr);
+            let (result, err) = f(packed.as_ptr());
             (result as u64, err)
         } else {
-            let f = std::mem::transmute::<_, fn(*const u64, usize) -> i64>(ptr);
-            (f(packed.as_ptr(), packed.len()) as u64, 0)
+            let f = std::mem::transmute::<_, fn(*const u64) -> i64>(ptr);
+            (f(packed.as_ptr()) as u64, 0)
         }
     }
 }

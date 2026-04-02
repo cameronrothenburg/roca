@@ -1033,7 +1033,7 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
     /// Used by test shims to unpack args from the args array.
     pub fn load_ptr_i64(&mut self, ptr: Value, byte_offset: i32) -> Value {
         use cranelift_codegen::ir::MemFlags;
-        self.ir.raw().ins().load(types::I64, MemFlags::trusted(), ptr, byte_offset)
+        self.ir.raw().ins().load(types::I64, MemFlags::new(), ptr, byte_offset)
     }
 
     /// Reinterpret I64 bits as F64 (no numeric conversion).
@@ -1058,7 +1058,8 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
     pub fn return_with_err_val(&mut self, result: Value, err_tag: Value) {
         self.claim_temp(result);
         self.flush_temps_inner();
-        emit_scope_cleanup(self.ir, &self.ctx, None);
+        let skip = self.find_var_for_value(result);
+        emit_scope_cleanup(self.ir, &self.ctx, skip.as_deref());
         self.ir.ret_with_err(result, err_tag);
         self.returned = true;
     }
