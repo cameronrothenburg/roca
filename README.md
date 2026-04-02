@@ -2,17 +2,18 @@
 
 [![CI](https://github.com/cameronrothenburg/roca/actions/workflows/ci.yml/badge.svg)](https://github.com/cameronrothenburg/roca/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/@rocalang/runtime)](https://www.npmjs.com/package/@rocalang/runtime)
+![Crates.io Version](https://img.shields.io/crates/v/rocalang)
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![CodeRabbit Pull Request Reviews](https://img.shields.io/coderabbit/prs/github/cameronrothenburg/roca?utm_source=oss&utm_medium=github&utm_campaign=cameronrothenburg%2Froca&labelColor=171717&color=FF570A&link=https%3A%2F%2Fcoderabbit.ai&label=CodeRabbit+Reviews)](https://coderabbit.ai)
 
-*Roca -- Spanish for rock, stone, cliff. Firme como una roca -- as solid as a rock.*
+_Roca -- Spanish for rock, stone, cliff. Firme como una roca -- as solid as a rock._
 
 A contractual language that compiles to JavaScript. Code is proven correct natively via Cranelift JIT before JS emission. A language for the AI era.
 
 Our goal is simple: when you hear code was written in Roca, you trust it.
 
 ```bash
-curl -sL https://raw.githubusercontent.com/cameronrothenburg/roca/master/install.sh | sh
+cargo install rocalang
 roca init my-app && cd my-app
 roca build
 ```
@@ -55,16 +56,16 @@ The compiler checks the logic, runs the tests, and only then emits output. If so
 
 **[Language Specification](docs/src/spec/overview.md)** -- the definitive reference:
 
-| Section | Description |
-|---------|-------------|
-| [1. Lexical Grammar](docs/src/spec/lexical.md) | Tokens, keywords, literals, operators |
-| [2. Syntax](docs/src/spec/syntax.md) | Declarations, statements, expressions |
-| [3. Type System](docs/src/spec/types.md) | Primitives, contracts, structs, enums, generics |
-| [4. Module System](docs/src/spec/modules.md) | Imports, resolution, stdlib *(stub)* |
-| [5. Error Model](docs/src/spec/errors.md) | Error returns, crash blocks, strategies |
-| [6. Test Model](docs/src/spec/testing.md) | Test blocks, battle tests, auto-stubs |
-| [7. Compilation](docs/src/spec/compilation.md) | JS emit, native emit, target differences |
-| [8. Runtime](docs/src/spec/runtime.md) | Polyfills, memory model, concurrency |
+| Section                                        | Description                                     |
+| ---------------------------------------------- | ----------------------------------------------- |
+| [1. Lexical Grammar](docs/src/spec/lexical.md) | Tokens, keywords, literals, operators           |
+| [2. Syntax](docs/src/spec/syntax.md)           | Declarations, statements, expressions           |
+| [3. Type System](docs/src/spec/types.md)       | Primitives, contracts, structs, enums, generics |
+| [4. Module System](docs/src/spec/modules.md)   | Imports, resolution, stdlib _(stub)_            |
+| [5. Error Model](docs/src/spec/errors.md)      | Error returns, crash blocks, strategies         |
+| [6. Test Model](docs/src/spec/testing.md)      | Test blocks, battle tests, auto-stubs           |
+| [7. Compilation](docs/src/spec/compilation.md) | JS emit, native emit, target differences        |
+| [8. Runtime](docs/src/spec/runtime.md)         | Polyfills, memory model, concurrency            |
 
 **Quick start:** [Introduction](docs/src/introduction.md) | [Getting Started](docs/src/getting-started.md)
 

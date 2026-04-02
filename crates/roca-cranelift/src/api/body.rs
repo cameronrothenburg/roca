@@ -4,9 +4,10 @@
 
 use cranelift_codegen::ir::{self, types, InstBuilder, Value};
 use roca_ast::{self as roca, BinOp};
-use roca_types::{RocaType, CrashHandlerKind, CrashStep};
-use crate::builder::{IrBuilder, BlockId, VarSlot};
-use crate::context::{EmitCtx, StructLayout, VarInfo};
+use roca_ast::crash::CrashHandlerKind;
+use roca_types::RocaType;
+use crate::builder::{IrBuilder, VarSlot};
+use crate::context::{EmitCtx, StructLayout};
 use crate::cranelift_type::CraneliftType;
 use crate::emit_helpers::{
     FreeRefs, emit_scope_cleanup, emit_free_by_kind, emit_loop_body_cleanup,
@@ -249,15 +250,7 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
 
 impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
     /// Call a function by name, return first result.
-    /// Automatically applies crash handlers if registered.
     pub fn call(&mut self, name: &str, args: &[Value]) -> Value {
-        if let Some(ast_handler) = self.ctx.crash_handlers.get(name).cloned() {
-            if let Some(&func_ref) = self.ctx.get_func(name) {
-                let handler = roca_types::CrashHandlerKind::from(&ast_handler);
-                return self.emit_crash_call(func_ref, args, &handler);
-            }
-        }
-
         if let Some(&func_ref) = self.ctx.get_func(name) {
             let results = self.ir.call_multi(func_ref, args);
             if !results.is_empty() { results[0] } else { self.ir.null() }
@@ -449,12 +442,12 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
         crate::emit_helpers::emit_struct_set(self.ir, ptr, idx, val, &mut self.ctx);
     }
 
-    /// Struct literal with constraint validation.
+    /// Struct literal with layout registration.
     pub fn struct_lit_checked(
         &mut self,
         name: &str,
         fields: &[(&str, Value)],
-        field_defs: Option<&[roca::Field]>,
+        _field_defs: Option<&[roca::Field]>,
     ) -> Value {
         // Register layout if not present
         if !self.ctx.struct_layouts.contains_key(name) {
@@ -482,24 +475,6 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
         for (i, &(_, val)) in fields.iter().enumerate() {
             let idx_val = self.ir.const_i64(indices[i] as i64);
             crate::emit_helpers::emit_struct_set(self.ir, ptr, idx_val, val, &mut self.ctx);
-        }
-
-        // Constraint validation
-        if let Some(defs) = field_defs {
-            let layout = self.ctx.struct_layouts.get(name).cloned();
-            for field_def in defs {
-                if field_def.constraints.is_empty() { continue; }
-                let layout_idx = layout.as_ref().and_then(|l| l.field_index(&field_def.name));
-                if fields.iter().any(|(n, _)| *n == field_def.name) && layout_idx.is_some() {
-                    let is_string = matches!(field_def.type_ref, roca::TypeRef::String);
-                    let field_idx = self.ir.const_i64(layout_idx.unwrap() as i64);
-                    let get_fn = if is_string { "__struct_get_ptr" } else { "__struct_get_f64" };
-                    if let Some(&get) = self.ctx.get_func(get_fn) {
-                        let val = self.ir.call(get, &[ptr, field_idx]);
-                        self.validate_constraints(val, is_string, &field_def.name, &field_def.constraints);
-                    }
-                }
-            }
         }
 
         ptr
@@ -888,92 +863,114 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
     }
 }
 
-// ─── Constraints ─────────────────────────────────────
+// ─── Slot Primitives ─────────────────────────────────
 
 impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
-    /// Validate parameter constraints at function entry.
-    pub fn validate_param_constraints(&mut self, params: &[roca::Param]) {
-        for param in params {
-            if param.constraints.is_empty() { continue; }
-            let var = match self.ctx.get_var(&param.name) {
-                Some(v) => v.clone(),
-                None => continue,
-            };
-            let val = self.ir.raw().ins().stack_load(var.cranelift_type, var.slot, 0);
-            let is_string = matches!(param.type_ref, roca::TypeRef::String);
-            self.validate_constraints(val, is_string, &param.name, &param.constraints);
-        }
+    /// Allocate a stack slot and store a value. Returns a handle for load/store.
+    pub fn alloc_slot(&mut self, val: Value) -> VarSlot {
+        self.ir.alloc_var(val)
     }
 
-    /// Validate constraints on a value.
-    pub fn validate_constraints(
-        &mut self,
-        val: Value,
-        is_string: bool,
-        name: &str,
-        constraints: &[roca::Constraint],
-    ) {
-        for constraint in constraints {
-            match constraint {
-                roca::Constraint::Min(n) if !is_string => {
-                    let min_val = self.ir.const_number(*n);
-                    let cmp = self.ir.raw().ins().fcmp(ir::condcodes::FloatCC::LessThan, val, min_val);
-                    let cmp_ext = self.ir.extend_bool(cmp);
-                    self.emit_constraint_trap(cmp_ext, name, &format!("must be >= {}", n));
-                }
-                roca::Constraint::Max(n) if !is_string => {
-                    let max_val = self.ir.const_number(*n);
-                    let cmp = self.ir.raw().ins().fcmp(ir::condcodes::FloatCC::GreaterThan, val, max_val);
-                    let cmp_ext = self.ir.extend_bool(cmp);
-                    self.emit_constraint_trap(cmp_ext, name, &format!("must be <= {}", n));
-                }
-                roca::Constraint::Min(n) | roca::Constraint::MinLen(n) if is_string => {
-                    if let Some(&len_fn) = self.ctx.get_func("__string_len") {
-                        let len = self.ir.call(len_fn, &[val]);
-                        let min_val = self.ir.const_i64(*n as i64);
-                        let cmp = self.ir.raw().ins().icmp(ir::condcodes::IntCC::SignedLessThan, len, min_val);
-                        let cmp_ext = self.ir.extend_bool(cmp);
-                        self.emit_constraint_trap(cmp_ext, name, &format!("min length {}", n));
-                    }
-                }
-                roca::Constraint::Max(n) | roca::Constraint::MaxLen(n) if is_string => {
-                    if let Some(&len_fn) = self.ctx.get_func("__string_len") {
-                        let len = self.ir.call(len_fn, &[val]);
-                        let max_val = self.ir.const_i64(*n as i64);
-                        let cmp = self.ir.raw().ins().icmp(ir::condcodes::IntCC::SignedGreaterThan, len, max_val);
-                        let cmp_ext = self.ir.extend_bool(cmp);
-                        self.emit_constraint_trap(cmp_ext, name, &format!("max length {}", n));
-                    }
-                }
-                roca::Constraint::Contains(s) => {
-                    let needle = self.ir.leak_cstr(s);
-                    if let Some(&includes) = self.ctx.get_func("__string_includes") {
-                        let result = self.ir.call(includes, &[val, needle]);
-                        let not_result = {
-                            let ext = self.ir.extend_bool(result);
-                            let one = self.ir.const_i64(1);
-                            self.ir.isub(one, ext)
-                        };
-                        self.emit_constraint_trap(not_result, name, &format!("must contain \"{}\"", s));
-                    }
-                }
-                _ => {}
-            }
-        }
+    /// Load a pointer/i64 value from a slot.
+    pub fn load_slot(&mut self, slot: VarSlot) -> Value {
+        self.ir.load_var(slot, &RocaType::Unknown)
     }
 
-    /// Emit a constraint violation trap: if cond is non-zero, print error and return default.
-    fn emit_constraint_trap(&mut self, cond: Value, field: &str, msg: &str) {
-        let trap_block = self.ir.create_block();
-        let ok_block = self.ir.create_block();
-        self.ir.brif(cond, trap_block, ok_block);
+    /// Load an f64 value from a slot.
+    pub fn load_slot_f64(&mut self, slot: VarSlot) -> Value {
+        self.ir.load_var(slot, &RocaType::Number)
+    }
 
-        self.ir.switch_to(trap_block);
-        self.ir.seal(trap_block);
-        let err_msg = self.ir.leak_cstr(&format!("{}: {}", field, msg));
-        if let Some(&panic_fn) = self.ctx.get_func("__constraint_panic") {
-            self.ir.call_void(panic_fn, &[err_msg]);
+    /// Load an i8 (bool/error tag) value from a slot.
+    pub fn load_slot_bool(&mut self, slot: VarSlot) -> Value {
+        self.ir.load_var(slot, &RocaType::Bool)
+    }
+
+    /// Store a value to a slot.
+    pub fn store_slot(&mut self, slot: VarSlot, val: Value) {
+        self.ir.store_var(slot, val);
+    }
+
+    /// Load from a slot as f64 if is_number, otherwise as i64 pointer.
+    pub fn load_slot_if_number(&mut self, slot: VarSlot, is_number: bool) -> Value {
+        if is_number {
+            self.ir.load_var(slot, &RocaType::Number)
+        } else {
+            self.ir.load_var(slot, &RocaType::Unknown)
         }
+    }
+}
+
+// ─── Comparisons ─────────────────────────────────────
+
+impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
+    /// Float less-than comparison. Returns I64 0/1.
+    pub fn f64_lt(&mut self, a: Value, b: Value) -> Value {
+        self.ir.f_lt(a, b)
+    }
+
+    /// Float greater-than comparison. Returns I64 0/1.
+    pub fn f64_gt(&mut self, a: Value, b: Value) -> Value {
+        self.ir.f_gt(a, b)
+    }
+
+    /// Signed integer less-than comparison. Returns I64 0/1.
+    pub fn i64_slt(&mut self, a: Value, b: Value) -> Value {
+        self.ir.i_slt(a, b)
+    }
+
+    /// Signed integer greater-than comparison. Returns I64 0/1.
+    pub fn i64_sgt(&mut self, a: Value, b: Value) -> Value {
+        self.ir.i_sgt(a, b)
+    }
+
+    /// Integer constant.
+    pub fn i64_const(&mut self, n: i64) -> Value {
+        self.ir.const_i64(n)
+    }
+
+    /// Integer subtraction.
+    pub fn i64_sub(&mut self, a: Value, b: Value) -> Value {
+        self.ir.isub(a, b)
+    }
+
+    /// Integer addition.
+    pub fn i64_add(&mut self, a: Value, b: Value) -> Value {
+        self.ir.iadd(a, b)
+    }
+
+    /// Static string pointer (leaked C string).
+    pub fn static_str(&mut self, s: &str) -> Value {
+        self.ir.leak_cstr(s)
+    }
+}
+
+// ─── Crash / Error Context ──────────────────────────
+
+impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
+    /// Get crash handler for a function name (if registered).
+    pub fn get_crash_handler(&self, name: &str) -> Option<CrashHandlerKind> {
+        self.ctx.crash_handlers.get(name).cloned()
+    }
+
+    /// Whether the current function returns an error tuple.
+    pub fn returns_err(&self) -> bool {
+        self.ctx.returns_err
+    }
+
+    /// Get the default value for the current function's return type.
+    pub fn return_default(&mut self) -> Value {
+        default_for_ir_type(self.ir.raw(), self.ctx.return_type)
+    }
+
+    /// Emit scope cleanup (free heap vars) before an early return.
+    pub fn scope_cleanup(&mut self) {
+        emit_scope_cleanup(self.ir, &self.ctx, None);
+    }
+
+    /// Return a default value with an error tag (for constraint/crash errors).
+    pub fn return_default_err(&mut self) {
+        emit_scope_cleanup(self.ir, &self.ctx, None);
         let default = default_for_ir_type(self.ir.raw(), self.ctx.return_type);
         if self.ctx.returns_err {
             let err_tag = self.ir.raw().ins().iconst(types::I8, 1);
@@ -981,319 +978,26 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
         } else {
             self.ir.ret(default);
         }
-
-        self.ir.switch_to(ok_block);
-        self.ir.seal(ok_block);
-    }
-}
-
-// ─── Crash Handling ──────────────────────────────────
-
-impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
-    /// Call with crash handler — retry loop + error chain dispatch.
-    fn emit_crash_call(
-        &mut self,
-        func_ref: ir::FuncRef,
-        args: &[Value],
-        handler: &CrashHandlerKind,
-    ) -> Value {
-        let chain = match handler {
-            CrashHandlerKind::Simple(chain) => chain.clone(),
-            CrashHandlerKind::Detailed { default, .. } => {
-                default.clone().unwrap_or_else(|| vec![CrashStep::Halt])
-            }
-        };
-
-        let retry = chain.iter().find_map(|s| {
-            if let CrashStep::Retry { attempts, delay_ms } = s { Some((*attempts, *delay_ms)) } else { None }
-        });
-
-        // Store args in slots for potential retry
-        let arg_slots: Vec<_> = args.iter().map(|v| self.ir.alloc_var(*v)).collect();
-        let arg_types: Vec<_> = args.iter().map(|v| self.ir.value_ir_type(*v)).collect();
-
-        // Initial call
-        let call_args: Vec<Value> = arg_slots.iter().zip(&arg_types).map(|(s, t)| {
-            self.ir.raw().ins().stack_load(*t, s.0, 0)
-        }).collect();
-        let results = self.ir.call_multi(func_ref, &call_args);
-        if results.len() < 2 {
-            return if results.is_empty() { self.ir.null() } else { results[0] };
-        }
-
-        let result_type = self.ir.value_ir_type(results[0]);
-        let value_slot = self.ir.alloc_var(results[0]);
-        let err_slot = self.ir.alloc_var(results[1]);
-
-        // Retry loop
-        if let Some((attempts, delay_ms)) = retry {
-            let header = self.ir.create_block();
-            let retry_body = self.ir.create_block();
-            let done = self.ir.create_block();
-
-            let counter_init = self.ir.const_i64(1);
-            let counter_slot = self.ir.alloc_var(counter_init);
-            let first_err = self.ir.raw().ins().stack_load(types::I8, err_slot.0, 0);
-            self.ir.brif(first_err, header, done);
-
-            self.ir.switch_to(header);
-            let counter = self.ir.raw().ins().stack_load(types::I64, counter_slot.0, 0);
-            let max = self.ir.const_i64(attempts as i64);
-            let has_more = self.ir.raw().ins().icmp(ir::condcodes::IntCC::SignedLessThan, counter, max);
-            self.ir.brif(has_more, retry_body, done);
-
-            self.ir.switch_to(retry_body);
-            self.ir.seal(retry_body);
-
-            if delay_ms > 0 {
-                if let Some(&sleep_fn) = self.ctx.get_func("__sleep") {
-                    let ms = self.ir.const_number(delay_ms as f64);
-                    self.ir.call_void(sleep_fn, &[ms]);
-                }
-            }
-
-            let retry_args: Vec<Value> = arg_slots.iter().zip(&arg_types).map(|(s, t)| {
-                self.ir.raw().ins().stack_load(*t, s.0, 0)
-            }).collect();
-            let retry_results = self.ir.call_multi(func_ref, &retry_args);
-            self.ir.raw().ins().stack_store(retry_results[0], value_slot.0, 0);
-            self.ir.raw().ins().stack_store(retry_results[1], err_slot.0, 0);
-
-            let cur = self.ir.raw().ins().stack_load(types::I64, counter_slot.0, 0);
-            let one = self.ir.const_i64(1);
-            let next = self.ir.iadd(cur, one);
-            self.ir.raw().ins().stack_store(next, counter_slot.0, 0);
-
-            let retry_err = self.ir.raw().ins().stack_load(types::I8, err_slot.0, 0);
-            self.ir.brif(retry_err, header, done);
-
-            self.ir.seal(header);
-            self.ir.switch_to(done);
-            self.ir.seal(done);
-        }
-
-        // Error handler dispatch
-        let final_value = self.ir.raw().ins().stack_load(result_type, value_slot.0, 0);
-        let final_err = self.ir.raw().ins().stack_load(types::I8, err_slot.0, 0);
-        self.emit_crash_handler(final_value, final_err, handler, result_type)
+        self.returned = true;
     }
 
-    /// Emit crash handler chain (ok/err branch + chain steps).
-    fn emit_crash_handler(
-        &mut self,
-        value: Value,
-        err_tag: Value,
-        handler: &CrashHandlerKind,
-        result_type: ir::Type,
-    ) -> Value {
-        let ok_block = self.ir.create_block();
-        let err_block = self.ir.create_block();
-        let merge = self.ir.create_block();
-        let rtype = if result_type == types::F64 { RocaType::Number } else { RocaType::Unknown };
-        self.ir.append_block_param(merge, &rtype);
-
-        self.ir.brif(err_tag, err_block, ok_block);
-
-        self.ir.switch_to(ok_block);
-        self.ir.seal(ok_block);
-        self.ir.jump_with(merge, value);
-
-        self.ir.switch_to(err_block);
-        self.ir.seal(err_block);
-
-        let chain = match handler {
-            CrashHandlerKind::Simple(chain) => chain.clone(),
-            CrashHandlerKind::Detailed { default, .. } => {
-                default.clone().unwrap_or_else(|| vec![CrashStep::Halt])
-            }
-        };
-        let chain: Vec<_> = chain.into_iter().filter(|s| !matches!(s, CrashStep::Retry { .. })).collect();
-        let terminates = chain.iter().any(|s| matches!(s, CrashStep::Halt | CrashStep::Panic));
-
-        let err_result = self.emit_crash_chain(&chain, result_type);
-        if !terminates {
-            self.ir.jump_with(merge, err_result);
-        }
-
-        self.ir.switch_to(merge);
-        self.ir.seal(merge);
-        self.ir.block_param(merge, 0)
+    /// Emit a trap (process abort).
+    pub fn trap(&mut self, code: u8) {
+        self.ir.trap(code);
+        self.returned = true;
     }
 
-    /// Emit crash chain steps (log, halt, panic, skip, fallback).
-    fn emit_crash_chain(&mut self, chain: &[CrashStep], result_type: ir::Type) -> Value {
-        let mut last_value = default_for_ir_type(self.ir.raw(), result_type);
-
-        for step in chain {
-            match step {
-                CrashStep::Log => {
-                    let msg = self.ir.leak_cstr("error");
-                    if let Some(&f) = self.ctx.get_func("__print") {
-                        self.ir.call_void(f, &[msg]);
-                    }
-                }
-                CrashStep::Halt => {
-                    emit_scope_cleanup(self.ir, &self.ctx, None);
-                    if self.ctx.returns_err {
-                        let err = self.ir.raw().ins().iconst(types::I8, 1);
-                        self.ir.ret_with_err(last_value, err);
-                    } else {
-                        self.ir.ret(last_value);
-                    }
-                    return last_value;
-                }
-                CrashStep::Panic => {
-                    self.ir.trap(1);
-                    return last_value;
-                }
-                CrashStep::Skip => {}
-                CrashStep::Fallback(_expr) => {
-                    // TODO: emit fallback expression
-                }
-                CrashStep::Retry { .. } => {} // handled in emit_crash_call
-            }
-        }
-        last_value
-    }
-}
-
-// ─── Inline Map/Filter ──────────────────────────────
-
-impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
-    /// Inline map: iterate arr, apply body_fn to each element, collect results.
-    pub fn inline_map(
-        &mut self,
-        arr: Value,
-        binding: &str,
-        body_fn: impl FnOnce(&mut Body) -> Value,
-    ) -> Value {
-        let result_arr = if let Some(&f) = self.ctx.get_func("__array_new") {
-            self.ir.call(f, &[])
-        } else { return self.ir.null(); };
-
-        let len = if let Some(&f) = self.ctx.get_func("__array_len") {
-            self.ir.call(f, &[arr])
-        } else { return result_arr; };
-        let len_slot = self.ir.alloc_var(len);
-        let arr_slot = self.ir.alloc_var(arr);
-        let result_slot = self.ir.alloc_var(result_arr);
-
-        let zero = self.ir.null();
-        let idx_slot = self.ir.alloc_var(zero);
-        let header = self.ir.create_block();
-        let body_block = self.ir.create_block();
-        let exit = self.ir.create_block();
-
-        self.ir.jump(header);
-        self.ir.switch_to(header);
-        let idx = self.ir.raw().ins().stack_load(types::I64, idx_slot.0, 0);
-        let len_val = self.ir.raw().ins().stack_load(types::I64, len_slot.0, 0);
-        let cond = self.ir.raw().ins().icmp(ir::condcodes::IntCC::SignedLessThan, idx, len_val);
-        self.ir.brif(cond, body_block, exit);
-
-        self.ir.switch_to(body_block);
-        self.ir.seal(body_block);
-
-        let cur_idx = self.ir.raw().ins().stack_load(types::I64, idx_slot.0, 0);
-        let cur_arr = self.ir.raw().ins().stack_load(types::I64, arr_slot.0, 0);
-        let elem = if let Some(&f) = self.ctx.get_func("__array_get_f64") {
-            self.ir.call(f, &[cur_arr, cur_idx])
-        } else { self.ir.const_number(0.0) };
-
-        let elem_slot = self.ir.alloc_var(elem);
-        self.ctx.set_var_kind(binding.to_string(), elem_slot.0, types::F64, RocaType::Number);
-
-        let result = body_fn(self);
-
-        let res_arr = self.ir.raw().ins().stack_load(types::I64, result_slot.0, 0);
-        crate::emit_helpers::emit_array_push(self.ir, res_arr, result, &mut self.ctx);
-
-        let next_idx = self.ir.raw().ins().stack_load(types::I64, idx_slot.0, 0);
-        let one = self.ir.const_i64(1);
-        let incremented = self.ir.iadd(next_idx, one);
-        self.ir.raw().ins().stack_store(incremented, idx_slot.0, 0);
-        self.ir.jump(header);
-        self.ir.seal(header);
-
-        self.ir.switch_to(exit);
-        self.ir.seal(exit);
-
-        self.ir.raw().ins().stack_load(types::I64, result_slot.0, 0)
+    /// Bind a named variable to a value with a given type in the current scope.
+    pub fn bind_var(&mut self, name: &str, val: Value, kind: RocaType) {
+        let cl_type = kind.to_cranelift();
+        let slot = self.ir.alloc_var(val);
+        self.ctx.set_var_kind(name.to_string(), slot.0, cl_type, kind);
     }
 
-    /// Inline filter: iterate arr, keep elements where body_fn returns truthy.
-    pub fn inline_filter(
-        &mut self,
-        arr: Value,
-        binding: &str,
-        body_fn: impl FnOnce(&mut Body) -> Value,
-    ) -> Value {
-        let result_arr = if let Some(&f) = self.ctx.get_func("__array_new") {
-            self.ir.call(f, &[])
-        } else { return self.ir.null(); };
-
-        let len = if let Some(&f) = self.ctx.get_func("__array_len") {
-            self.ir.call(f, &[arr])
-        } else { return result_arr; };
-        let len_slot = self.ir.alloc_var(len);
-        let arr_slot = self.ir.alloc_var(arr);
-        let result_slot = self.ir.alloc_var(result_arr);
-
-        let zero = self.ir.null();
-        let idx_slot = self.ir.alloc_var(zero);
-        let header = self.ir.create_block();
-        let body_block = self.ir.create_block();
-        let exit = self.ir.create_block();
-
-        self.ir.jump(header);
-        self.ir.switch_to(header);
-        let idx = self.ir.raw().ins().stack_load(types::I64, idx_slot.0, 0);
-        let len_val = self.ir.raw().ins().stack_load(types::I64, len_slot.0, 0);
-        let cond = self.ir.raw().ins().icmp(ir::condcodes::IntCC::SignedLessThan, idx, len_val);
-        self.ir.brif(cond, body_block, exit);
-
-        self.ir.switch_to(body_block);
-        self.ir.seal(body_block);
-
-        let cur_idx = self.ir.raw().ins().stack_load(types::I64, idx_slot.0, 0);
-        let cur_arr = self.ir.raw().ins().stack_load(types::I64, arr_slot.0, 0);
-        let elem = if let Some(&f) = self.ctx.get_func("__array_get_f64") {
-            self.ir.call(f, &[cur_arr, cur_idx])
-        } else { self.ir.const_number(0.0) };
-
-        let elem_slot = self.ir.alloc_var(elem);
-        self.ctx.set_var_kind(binding.to_string(), elem_slot.0, types::F64, RocaType::Number);
-
-        let result = body_fn(self);
-
-        // Conditional push: if result is truthy, push element
-        let then_push = self.ir.create_block();
-        let after_push = self.ir.create_block();
-        self.ir.brif(result, then_push, after_push);
-
-        self.ir.switch_to(then_push);
-        self.ir.seal(then_push);
-        let push_elem = self.ir.raw().ins().stack_load(types::F64, elem_slot.0, 0);
-        let res_arr = self.ir.raw().ins().stack_load(types::I64, result_slot.0, 0);
-        if let Some(&f) = self.ctx.get_func("__array_push_f64") {
-            self.ir.call_void(f, &[res_arr, push_elem]);
-        }
-        self.ir.jump(after_push);
-
-        self.ir.switch_to(after_push);
-        self.ir.seal(after_push);
-
-        let next_idx = self.ir.raw().ins().stack_load(types::I64, idx_slot.0, 0);
-        let one = self.ir.const_i64(1);
-        let incremented = self.ir.iadd(next_idx, one);
-        self.ir.raw().ins().stack_store(incremented, idx_slot.0, 0);
-        self.ir.jump(header);
-        self.ir.seal(header);
-
-        self.ir.switch_to(exit);
-        self.ir.seal(exit);
-
-        self.ir.raw().ins().stack_load(types::I64, result_slot.0, 0)
+    /// Get the struct field index for a named field.
+    pub fn struct_field_index(&self, struct_name: &str, field_name: &str) -> Option<usize> {
+        self.ctx.struct_layouts.get(struct_name)
+            .and_then(|l| l.field_index(field_name))
     }
 }
 
