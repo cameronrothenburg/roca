@@ -61,6 +61,24 @@ macro_rules! mem_test {
     };
 }
 
+fn read_str(ptr: i64) -> &'static str {
+    if ptr == 0 { return ""; }
+    unsafe { std::ffi::CStr::from_ptr(ptr as *const i8) }.to_str().unwrap_or("")
+}
+
+fn build_str(
+    module: &mut JitModule,
+    rt: &RuntimeFuncs,
+    compiled: &mut CompiledFuncs,
+    name: &str,
+    body_fn: impl FnOnce(&mut Body),
+) {
+    Function::new(name)
+        .returns(RocaType::String)
+        .build(&mut **module, rt, compiled, body_fn)
+        .unwrap();
+}
+
 // ─── Scope cleanup ──────────────────────────────────
 
 mem_test!(let_string_cleaned_at_scope_exit, {
@@ -1401,4 +1419,235 @@ mem_test!(hoisted_let_assigned_in_loop, {
     // 3 freed by reassignment + 1 freed at scope exit = 4 frees
     assert_eq!(allocs, 4, "initial + 3 loop iterations");
     assert_eq!(allocs, frees, "hoisted let: {} allocs, {} frees", allocs, frees);
+});
+
+// ─── Value correctness: const flows ─────────────────
+
+mem_test!(const_string_returns_correct_value, {
+    let (mut m, rt, mut c) = jit_module();
+    build_str(&mut m, &rt, &mut c, "test", |body| {
+        let s = body.string("hello world");
+        body.const_var("msg", s);
+        let r = body.var("msg");
+        body.return_val(r);
+    });
+    MEM.reset();
+    let f = unsafe { std::mem::transmute::<_, fn() -> i64>(finalize_and_get(&mut m, "test")) };
+    let ptr = f();
+    assert_eq!(read_str(ptr), "hello world");
+    roca_runtime::roca_free(ptr);
+    let (a, fr, _, _, _) = MEM.stats();
+    assert_eq!(a, fr, "value correct + clean: {} allocs, {} frees", a, fr);
+});
+
+mem_test!(const_survives_other_allocations, {
+    let (mut m, rt, mut c) = jit_module();
+    build_str(&mut m, &rt, &mut c, "test", |body| {
+        let s1 = body.string("keep_me");
+        body.const_var("keep", s1);
+        // other allocations that get cleaned
+        let s2 = body.string("discard1");
+        body.const_var("d1", s2);
+        let s3 = body.string("discard2");
+        body.const_var("d2", s3);
+        let r = body.var("keep");
+        body.return_val(r);
+    });
+    MEM.reset();
+    let f = unsafe { std::mem::transmute::<_, fn() -> i64>(finalize_and_get(&mut m, "test")) };
+    let ptr = f();
+    assert_eq!(read_str(ptr), "keep_me", "returned the right string, not a discarded one");
+    roca_runtime::roca_free(ptr);
+    let (a, fr, _, _, _) = MEM.stats();
+    assert_eq!(a, fr, "all clean: {} allocs, {} frees", a, fr);
+});
+
+// ─── Value correctness: let reassign flows ──────────
+
+mem_test!(let_reassign_returns_final_value, {
+    let (mut m, rt, mut c) = jit_module();
+    build_str(&mut m, &rt, &mut c, "test", |body| {
+        let s1 = body.string("first");
+        let var = body.let_var("s", s1);
+        let s2 = body.string("second");
+        body.assign(&var, s2);
+        let s3 = body.string("third");
+        body.assign(&var, s3);
+        let r = body.var("s");
+        body.return_val(r);
+    });
+    MEM.reset();
+    let f = unsafe { std::mem::transmute::<_, fn() -> i64>(finalize_and_get(&mut m, "test")) };
+    let ptr = f();
+    assert_eq!(read_str(ptr), "third", "returns the last assigned value");
+    roca_runtime::roca_free(ptr);
+    let (a, fr, _, _, _) = MEM.stats();
+    assert_eq!(a, 3, "3 strings allocated");
+    assert_eq!(a, fr, "all clean: {} allocs, {} frees", a, fr);
+});
+
+// ─── Value correctness: cross-function ──────────────
+
+mem_test!(callee_return_value_readable_by_caller, {
+    let (mut m, rt, mut c) = jit_module();
+
+    build_str(&mut m, &rt, &mut c, "greet", |body| {
+        let s = body.string("hello from callee");
+        body.return_val(s);
+    });
+
+    build_str(&mut m, &rt, &mut c, "test", |body| {
+        let greeting = body.call("greet", &[]);
+        body.const_var("g", greeting);
+        let r = body.var("g");
+        body.return_val(r);
+    });
+
+    MEM.reset();
+    let f = unsafe { std::mem::transmute::<_, fn() -> i64>(finalize_and_get(&mut m, "test")) };
+    let ptr = f();
+    assert_eq!(read_str(ptr), "hello from callee", "caller reads callee's return value");
+    roca_runtime::roca_free(ptr);
+    let (a, fr, _, _, _) = MEM.stats();
+    assert_eq!(a, fr, "cross-function value: {} allocs, {} frees", a, fr);
+});
+
+mem_test!(chained_callee_value_survives, {
+    let (mut m, rt, mut c) = jit_module();
+
+    build_str(&mut m, &rt, &mut c, "inner", |body| {
+        let s = body.string("deep_value");
+        body.return_val(s);
+    });
+
+    build_str(&mut m, &rt, &mut c, "middle", |body| {
+        let s = body.call("inner", &[]);
+        body.return_val(s);
+    });
+
+    build_str(&mut m, &rt, &mut c, "test", |body| {
+        let s = body.call("middle", &[]);
+        body.return_val(s);
+    });
+
+    MEM.reset();
+    let f = unsafe { std::mem::transmute::<_, fn() -> i64>(finalize_and_get(&mut m, "test")) };
+    let ptr = f();
+    assert_eq!(read_str(ptr), "deep_value", "value survives 3 call levels");
+    roca_runtime::roca_free(ptr);
+    let (a, fr, _, _, _) = MEM.stats();
+    assert_eq!(a, fr, "chain value: {} allocs, {} frees", a, fr);
+});
+
+// ─── Value correctness: if/else returns right branch ─
+
+mem_test!(if_else_returns_correct_branch_value, {
+    let (mut m, rt, mut c) = jit_module();
+
+    Function::new("test")
+        .param("n", RocaType::Number)
+        .returns(RocaType::String)
+        .build(&mut *m, &rt, &mut c, |body| {
+            let n = body.var("n");
+            let zero = body.number(0.0);
+            let cond = body.gt(n, zero);
+            body.if_else(cond,
+                |b| {
+                    let s = b.string("positive");
+                    b.return_val(s);
+                },
+                |b| {
+                    let s = b.string("negative");
+                    b.return_val(s);
+                },
+            );
+        })
+        .unwrap();
+
+    let f = unsafe { std::mem::transmute::<_, fn(f64) -> i64>(finalize_and_get(&mut m, "test")) };
+
+    MEM.reset();
+    let ptr = f(5.0);
+    assert_eq!(read_str(ptr), "positive");
+    roca_runtime::roca_free(ptr);
+
+    MEM.reset();
+    let ptr = f(-5.0);
+    assert_eq!(read_str(ptr), "negative");
+    roca_runtime::roca_free(ptr);
+
+    let (a, fr, _, _, _) = MEM.stats();
+    assert_eq!(a, fr, "branch value: {} allocs, {} frees", a, fr);
+});
+
+// ─── Value correctness: hoisted let in loop ─────────
+
+mem_test!(hoisted_let_returns_last_iteration_value, {
+    let (mut m, rt, mut c) = jit_module();
+
+    Function::new("test")
+        .returns(RocaType::String)
+        .build(&mut *m, &rt, &mut c, |body| {
+            let init = body.string("v0");
+            let var = body.let_var("val", init);
+
+            let zero = body.number(0.0);
+            body.let_var_typed("i", zero, RocaType::Number);
+
+            let var_clone = var.clone();
+            body.while_loop(
+                |b| {
+                    let i = b.var("i");
+                    let limit = b.number(3.0);
+                    b.lt(i, limit)
+                },
+                move |b| {
+                    let new_s = b.string("latest");
+                    b.assign(&var_clone, new_s);
+                    let i = b.var("i");
+                    let one = b.number(1.0);
+                    let next = b.add(i, one);
+                    b.assign_name("i", next);
+                },
+            );
+
+            let r = body.var("val");
+            body.return_val(r);
+        })
+        .unwrap();
+
+    MEM.reset();
+    let f = unsafe { std::mem::transmute::<_, fn() -> i64>(finalize_and_get(&mut m, "test")) };
+    let ptr = f();
+    assert_eq!(read_str(ptr), "latest", "returns the value from last iteration");
+    roca_runtime::roca_free(ptr);
+    let (a, fr, _, _, _) = MEM.stats();
+    assert_eq!(a, fr, "hoisted let value: {} allocs, {} frees", a, fr);
+});
+
+// ─── Value correctness: concat produces right string ─
+
+mem_test!(concat_returns_combined_string, {
+    let (mut m, rt, mut c) = jit_module();
+
+    build_str(&mut m, &rt, &mut c, "test", |body| {
+        let a = body.string("hello");
+        body.const_var("a", a);
+        let b = body.string(" world");
+        body.const_var("b", b);
+        let a_val = body.var("a");
+        let b_val = body.var("b");
+        let result = body.string_concat(a_val, b_val);
+        body.const_var("result", result);
+        let r = body.var("result");
+        body.return_val(r);
+    });
+
+    MEM.reset();
+    let f = unsafe { std::mem::transmute::<_, fn() -> i64>(finalize_and_get(&mut m, "test")) };
+    let ptr = f();
+    assert_eq!(read_str(ptr), "hello world", "concat produces correct result");
+    roca_runtime::roca_free(ptr);
+    let (a, fr, _, _, _) = MEM.stats();
+    assert_eq!(a, fr, "concat value: {} allocs, {} frees", a, fr);
 });
