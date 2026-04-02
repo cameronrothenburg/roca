@@ -270,7 +270,7 @@ pub fn compile_function<M: Module>(
     let body_stmts = func.body.clone();
     let params = func.params.clone();
     f.build(module, rt, compiled, |body| {
-        body.validate_param_constraints(&params);
+        super::emit::emit_param_constraints(body, &params);
         emit_body(body, &body_stmts);
     })
 }
@@ -308,7 +308,7 @@ pub fn compile_struct_method<M: Module>(
     let body_stmts = func.body.clone();
     let params = func.params.clone();
     f.build(module, rt, compiled, |body| {
-        body.validate_param_constraints(&params);
+        super::emit::emit_param_constraints(body, &params);
         emit_body(body, &body_stmts);
     })
 }

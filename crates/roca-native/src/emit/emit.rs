@@ -1,5 +1,8 @@
 //! AST walker — translates Roca AST to Body method calls.
 //! Zero IR imports. Every expression is 1-3 lines, every statement is 2-5 lines.
+//!
+//! Roca language semantics (stdlib dispatch, log, inline map/filter, constraint
+//! validation) live here as free functions that compose Body's IR primitives.
 
 use roca_ast::{self as roca, Expr, Stmt, BinOp, StringPart as AstStringPart};
 use roca_cranelift::api::{Body, Value, StringPart, MatchArmLazy, LazyArmKind};
@@ -148,7 +151,7 @@ fn emit_call(body: &mut Body, target: &Expr, args: &[Expr]) -> Value {
         if name == "log" {
             if let Some(arg) = args.first() {
                 let val = emit_expr(body, arg);
-                body.log(val);
+                emit_log(body, val);
             }
             return body.bool_val(false);
         }
@@ -192,9 +195,9 @@ fn emit_method_call(body: &mut Body, target: &Expr, method: &str, args: &[Expr])
             let param_name = params.first().cloned().unwrap_or_default();
             let closure_body = *closure_body.clone();
             return if method == "map" {
-                body.inline_map(arr, &param_name, |b| emit_expr(b, &closure_body))
+                emit_inline_map(body, arr, &param_name, |b| emit_expr(b, &closure_body))
             } else {
-                body.inline_filter(arr, &param_name, |b| emit_expr(b, &closure_body))
+                emit_inline_filter(body, arr, &param_name, |b| emit_expr(b, &closure_body))
             };
         }
     }
@@ -205,7 +208,7 @@ fn emit_method_call(body: &mut Body, target: &Expr, method: &str, args: &[Expr])
 
     let obj = emit_expr(body, target);
     let arg_vals: Vec<Value> = args.iter().map(|a| emit_expr(body, a)).collect();
-    let result = body.method_call(obj, method, &arg_vals);
+    let result = emit_stdlib_dispatch(body, obj, method, &arg_vals);
 
     if target_is_temp_string { body.release_rc(obj); }
     result
@@ -231,7 +234,7 @@ fn emit_field_access(body: &mut Body, target: &Expr, field: &str) -> Value {
     }
 
     let obj = emit_expr(body, target);
-    body.method_call(obj, field, &[])
+    emit_stdlib_dispatch(body, obj, field, &[])
 }
 
 fn emit_struct_lit(body: &mut Body, name: &str, fields: &[(String, Expr)]) -> Value {
@@ -323,4 +326,115 @@ pub fn closure_hash(params: &[String], body: &Expr) -> u64 {
     let mut h = std::hash::DefaultHasher::new();
     for p in params { p.hash(&mut h); }
     h.finish() ^ super::compile::expr_debug_hash(body)
+}
+
+// ─── Roca Language Semantics ─────────────────────────
+// These use Body's IR primitives to implement Roca-specific dispatch.
+
+/// Log dispatch — routes to print_f64/print_bool/print based on type.
+fn emit_log(body: &mut Body, val: Value) {
+    if body.is_number(val) {
+        body.call_void("__print_f64", &[val]);
+    } else if body.value_type(val) == cranelift_codegen::ir::types::I8 {
+        body.call_void("__print_bool", &[val]);
+    } else {
+        body.call_void("__print", &[val]);
+    }
+}
+
+/// Stdlib method dispatch — resolves instance methods to runtime function calls.
+fn emit_stdlib_dispatch(body: &mut Body, obj: Value, method: &str, args: &[Value]) -> Value {
+    match method {
+        "trim" => return body.call("__string_trim", &[obj]),
+        "toUpperCase" => return body.call("__string_to_upper", &[obj]),
+        "toLowerCase" => return body.call("__string_to_lower", &[obj]),
+        "includes" | "contains" => {
+            let needle = args.first().copied().unwrap_or_else(|| body.null());
+            let result = body.call("__string_includes", &[obj, needle]);
+            return body.extend_bool(result);
+        }
+        "startsWith" => {
+            let prefix = args.first().copied().unwrap_or_else(|| body.null());
+            let result = body.call("__string_starts_with", &[obj, prefix]);
+            return body.extend_bool(result);
+        }
+        "endsWith" => {
+            let suffix = args.first().copied().unwrap_or_else(|| body.null());
+            let result = body.call("__string_ends_with", &[obj, suffix]);
+            return body.extend_bool(result);
+        }
+        "indexOf" => {
+            let needle = args.first().copied().unwrap_or_else(|| body.null());
+            return body.call("__string_index_of", &[obj, needle]);
+        }
+        "charCodeAt" => {
+            let idx = args.first().copied().unwrap_or_else(|| body.null());
+            let idx_i = body.to_i64(idx);
+            return body.call("__string_char_code_at", &[obj, idx_i]);
+        }
+        "charAt" => {
+            let idx = args.first().copied().unwrap_or_else(|| body.null());
+            let idx_i = body.to_i64(idx);
+            return body.call("__string_char_at", &[obj, idx_i]);
+        }
+        "slice" => {
+            let start = args.first().copied().unwrap_or_else(|| body.null());
+            let end = args.get(1).copied().unwrap_or_else(|| body.null());
+            let start_i = body.to_i64(start);
+            let end_i = body.to_i64(end);
+            return body.call("__string_slice", &[obj, start_i, end_i]);
+        }
+        "split" => {
+            let delim = args.first().copied().unwrap_or_else(|| body.null());
+            return body.call("__string_split", &[obj, delim]);
+        }
+        "join" => {
+            let sep = args.first().copied().unwrap_or_else(|| body.null());
+            return body.call("__array_join", &[obj, sep]);
+        }
+        "toString" => {
+            if body.is_number(obj) {
+                return body.call("__string_from_f64", &[obj]);
+            }
+            return obj;
+        }
+        "push" => {
+            let val = args.first().copied().unwrap_or_else(|| body.null());
+            body.array_push(obj, val);
+            return obj;
+        }
+        "length" | "len" => {
+            let kind = if body.is_number(obj) { RocaType::Number } else { RocaType::Unknown };
+            return body.length_with_kind(obj, kind);
+        }
+        _ => {}
+    }
+    // Fallback: unknown method — return object as-is
+    obj
+}
+
+/// Validate parameter constraints at function entry.
+/// Delegates to Body::validate_param_constraints (needs raw IR for typed comparisons).
+pub fn emit_param_constraints(body: &mut Body, params: &[roca::Param]) {
+    body.validate_param_constraints(params);
+}
+
+/// Inline map: thin wrapper — delegates to Body::inline_map (IR-building primitive).
+fn emit_inline_map(
+    body: &mut Body,
+    arr: Value,
+    binding: &str,
+    body_fn: impl FnOnce(&mut Body) -> Value,
+) -> Value {
+    body.inline_map(arr, binding, body_fn)
+}
+
+/// Inline filter: thin wrapper — delegates to Body::inline_filter (IR-building primitive).
+fn emit_inline_filter(
+    body: &mut Body,
+    arr: Value,
+    binding: &str,
+    body_fn: impl FnOnce(&mut Body) -> Value,
+) -> Value {
+    body.inline_filter(arr, binding, body_fn)
 }
