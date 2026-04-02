@@ -1345,3 +1345,60 @@ mem_test!(for_each_with_function_call_per_element, {
     // array + 3x "processed" string (one per iteration, each cleaned by process())
     assert_eq!(allocs, frees, "for_each+call: {} allocs, {} frees", allocs, frees);
 });
+
+// ─── Hoisted variable assigned inside loop ──────────
+
+mem_test!(hoisted_let_assigned_in_loop, {
+    let (mut m, rt, mut c) = jit_module();
+
+    // factory returns a new string each call
+    Function::new("factory")
+        .returns(RocaType::String)
+        .build(&mut *m, &rt, &mut c, |body| {
+            let s = body.string("item");
+            body.return_val(s);
+        })
+        .unwrap();
+
+    build_f64(&mut m, &rt, &mut c, "test", |body| {
+        // Hoisted let — declared outside the loop
+        let init = body.string("initial");
+        let var = body.let_var("item", init);
+
+        let zero = body.number(0.0);
+        body.let_var_typed("i", zero, RocaType::Number);
+
+        let var_clone = var.clone();
+        body.while_loop(
+            |b| {
+                let i = b.var("i");
+                let limit = b.number(3.0);
+                b.lt(i, limit)
+            },
+            move |b| {
+                // Each iteration: call factory, assign result to hoisted var
+                // Old value should be freed each time
+                let new_val = b.call("factory", &[]);
+                b.assign(&var_clone, new_val);
+
+                let i = b.var("i");
+                let one = b.number(1.0);
+                let next = b.add(i, one);
+                b.assign_name("i", next);
+            },
+        );
+
+        // After loop: "item" holds the last value from factory
+        let r = body.number(1.0);
+        body.return_val(r);
+    });
+
+    MEM.reset();
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(finalize_and_get(&mut m, "test")) };
+    assert_eq!(f(), 1.0);
+    let (allocs, frees, _, _, _) = MEM.stats();
+    // "initial" + 3x "item" from factory = 4 allocs
+    // 3 freed by reassignment + 1 freed at scope exit = 4 frees
+    assert_eq!(allocs, 4, "initial + 3 loop iterations");
+    assert_eq!(allocs, frees, "hoisted let: {} allocs, {} frees", allocs, frees);
+});
