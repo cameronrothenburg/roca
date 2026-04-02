@@ -174,6 +174,18 @@ impl Parser {
 
     /// Parse a type reference: String, Number, Bool, Named, Self, or Type | null
     pub fn parse_type_ref(&mut self) -> ParseResult<TypeRef> {
+        const MAX_TYPE_DEPTH: usize = 32;
+        self.type_depth += 1;
+        if self.type_depth > MAX_TYPE_DEPTH {
+            self.type_depth -= 1;
+            return Err(self.err(format!("type nesting exceeds maximum depth of {}", MAX_TYPE_DEPTH)));
+        }
+        let result = self.parse_type_ref_inner();
+        self.type_depth -= 1;
+        result
+    }
+
+    fn parse_type_ref_inner(&mut self) -> ParseResult<TypeRef> {
         let base = match self.peek() {
             Token::Fn => {
                 self.advance(); // consume fn

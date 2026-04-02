@@ -142,10 +142,14 @@ impl Parser {
                 }
             } else if self.eat(&Token::LParen) {
                 // Algebraic: Variant(Type, Type)
+                const MAX_VARIANT_FIELDS: usize = 64;
                 let mut types = Vec::new();
                 if !self.at(&Token::RParen) {
                     types.push(self.parse_type_ref()?);
                     while self.eat(&Token::Comma) {
+                        if types.len() >= MAX_VARIANT_FIELDS {
+                            return Err(self.err(format!("enum variant exceeds maximum of {} fields", MAX_VARIANT_FIELDS)));
+                        }
                         types.push(self.parse_type_ref()?);
                     }
                 }

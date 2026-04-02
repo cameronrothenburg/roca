@@ -299,7 +299,14 @@ fn js_match<'a>(ast: &AstBuilder<'a>, value: &Expr, arms: &[roca::MatchArm]) -> 
     }
 }
 
+/// Above this arm count, emit an IIFE with if-else statements instead of nested ternaries.
+const MATCH_IIFE_THRESHOLD: usize = 8;
+
 fn js_match_inner<'a>(ast: &AstBuilder<'a>, value: &Expr, arms: &[roca::MatchArm]) -> Expression<'a> {
+    if arms.len() > MATCH_IIFE_THRESHOLD {
+        return js_match_as_iife(ast, value, arms);
+    }
+
     let mixed = match_has_err_arms(arms);
     let mut result: Option<Expression<'a>> = None;
 
@@ -359,6 +366,77 @@ fn js_match_inner<'a>(ast: &AstBuilder<'a>, value: &Expr, arms: &[roca::MatchArm
     }
 
     result.unwrap_or_else(|| ident(ast, "undefined"))
+}
+
+/// Emit a match as an IIFE containing a flat if-else chain. Used when arm count exceeds
+/// `MATCH_IIFE_THRESHOLD` to avoid deeply nested ternaries that are hard to read and
+/// can hit JS engine recursion limits.
+///
+/// Emits: `(() => { if (v === p1) return arm1; if (v === p2) return arm2; ... return undefined; })()`
+fn js_match_as_iife<'a>(ast: &AstBuilder<'a>, value: &Expr, arms: &[roca::MatchArm]) -> Expression<'a> {
+    let mixed = match_has_err_arms(arms);
+    let mut stmts = ast.vec();
+
+    for arm in arms.iter() {
+        let arm_value = build_match_arm_value(ast, &arm.value, mixed);
+        match &arm.pattern {
+            None => {
+                stmts.push(return_stmt(ast, arm_value));
+                break; // wildcard is the default; nothing after it is reachable
+            }
+            Some(MatchPattern::Value(pattern)) => {
+                let val = expr_to_js(ast, value);
+                let pat = expr_to_js(ast, pattern);
+                let test = binary(ast, val, BinaryOperator::StrictEquality, pat);
+                let mut then_stmts = ast.vec();
+                then_stmts.push(return_stmt(ast, arm_value));
+                stmts.push(if_stmt(ast, test, block(ast, then_stmts), None));
+            }
+            Some(MatchPattern::Variant { enum_name, variant, bindings }) => {
+                let val = expr_to_js(ast, value);
+                let test = if bindings.is_empty() {
+                    let enum_variant = field_access(ast, ident(ast, enum_name), ast.str(variant));
+                    binary(ast, val, BinaryOperator::StrictEquality, enum_variant)
+                } else {
+                    let tag = field_access(ast, val, ast.str(TAG_FIELD));
+                    let tag_str = string_lit(ast, variant);
+                    binary(ast, tag, BinaryOperator::StrictEquality, tag_str)
+                };
+
+                let consequent_expr = if bindings.is_empty() {
+                    arm_value
+                } else {
+                    let mut fn_params = ast.vec();
+                    let mut call_args = ast.vec();
+                    for (i, binding) in bindings.iter().enumerate() {
+                        fn_params.push(param(ast, binding));
+                        let field_name = positional_field(i);
+                        let val2 = expr_to_js(ast, value);
+                        call_args.push(Argument::from(
+                            field_access(ast, val2, ast.str(&field_name))
+                        ));
+                    }
+                    let params = formal_params(ast, fn_params);
+                    let mut inner_stmts = ast.vec();
+                    inner_stmts.push(return_stmt(ast, arm_value));
+                    let body = function_body(ast, inner_stmts);
+                    let arrow = ast.expression_arrow_function(SPAN, false, false, NONE, params, NONE, body);
+                    ast.expression_call(SPAN, arrow, NONE, call_args, false)
+                };
+
+                let mut then_stmts = ast.vec();
+                then_stmts.push(return_stmt(ast, consequent_expr));
+                stmts.push(if_stmt(ast, test, block(ast, then_stmts), None));
+            }
+        }
+    }
+
+    stmts.push(return_stmt(ast, ident(ast, "undefined")));
+
+    let body = function_body(ast, stmts);
+    let params = formal_params(ast, ast.vec());
+    let arrow = ast.expression_arrow_function(SPAN, false, false, NONE, params, NONE, body);
+    ast.expression_call(SPAN, arrow, NONE, ast.vec(), false)
 }
 
 // ─── Shared helpers ───────────────────────────────────────

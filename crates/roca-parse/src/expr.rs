@@ -11,11 +11,13 @@ pub type ParseResult<T> = Result<T, ParseError>;
 pub struct Parser {
     pub tokens: Vec<Token>,
     pub pos: usize,
+    /// Tracks recursive depth of `parse_type_ref` to prevent stack overflow.
+    pub type_depth: usize,
 }
 
 impl Parser {
     pub fn new(tokens: Vec<Token>) -> Self {
-        Self { tokens, pos: 0 }
+        Self { tokens, pos: 0, type_depth: 0 }
     }
 
     pub fn peek(&self) -> &Token {
