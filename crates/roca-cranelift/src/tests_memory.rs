@@ -913,11 +913,62 @@ mem_test!(reassign_then_return_transfers_final, {
     let ptr = f();
     let result = unsafe { std::ffi::CStr::from_ptr(ptr as *const i8) }.to_str().unwrap();
     assert_eq!(result, "second");
-    // "first" freed by reassign, "second" survived as return value
     let (allocs, frees, _, _, _) = MEM.stats();
     assert_eq!(allocs, 2);
     assert_eq!(frees, 1, "only first freed by callee");
     roca_runtime::roca_free(ptr);
     let (allocs, frees, _, _, _) = MEM.stats();
     assert_eq!(allocs, frees, "all cleaned: {} allocs, {} frees", allocs, frees);
+});
+
+// ─── Category 8: Temporary cleanup ──────────────────
+
+mem_test!(unbound_string_cleaned_at_statement_end, {
+    let (mut m, rt, mut c) = jit_module();
+    build_f64(&mut m, &rt, &mut c, "test", |body| {
+        body.string("orphan"); // created but never stored
+        body.flush_temps(); // statement boundary — free orphans
+        let r = body.number(1.0);
+        body.return_val(r);
+    });
+    MEM.reset();
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(finalize_and_get(&mut m, "test")) };
+    assert_eq!(f(), 1.0);
+    let (allocs, frees, _, _, _) = MEM.stats();
+    assert_eq!(allocs, 1, "string was allocated");
+    assert_eq!(allocs, frees, "temp cleaned: {} allocs, {} frees", allocs, frees);
+});
+
+mem_test!(unbound_array_cleaned_at_statement_end, {
+    let (mut m, rt, mut c) = jit_module();
+    build_f64(&mut m, &rt, &mut c, "test", |body| {
+        let v1 = body.number(1.0);
+        body.array(&[v1]); // created but never stored
+        body.flush_temps();
+        let r = body.number(1.0);
+        body.return_val(r);
+    });
+    MEM.reset();
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(finalize_and_get(&mut m, "test")) };
+    assert_eq!(f(), 1.0);
+    let (allocs, frees, _, _, _) = MEM.stats();
+    assert!(allocs >= 1, "array allocated");
+    assert_eq!(allocs, frees, "temp array: {} allocs, {} frees", allocs, frees);
+});
+
+mem_test!(bound_value_not_flushed_as_temp, {
+    let (mut m, rt, mut c) = jit_module();
+    build_f64(&mut m, &rt, &mut c, "test", |body| {
+        let s = body.string("kept");
+        body.const_var("s", s); // stored — not a temp
+        body.flush_temps(); // should not free "kept"
+        let r = body.number(1.0);
+        body.return_val(r);
+    });
+    MEM.reset();
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(finalize_and_get(&mut m, "test")) };
+    assert_eq!(f(), 1.0);
+    let (allocs, frees, _, _, _) = MEM.stats();
+    assert_eq!(allocs, 1, "one string");
+    assert_eq!(allocs, frees, "bound not flushed: {} allocs, {} frees", allocs, frees);
 });

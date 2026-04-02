@@ -158,11 +158,12 @@ impl Function {
 
             // TODO: emit_param_constraints
 
-            let mut body = Body { ir: &mut *ir, ctx, returned: false };
+            let mut body = Body { ir: &mut *ir, ctx, returned: false, temps: Vec::new() };
             body_fn(&mut body);
 
             // Auto default return
             if !body.returned {
+                body.flush_temps_inner();
                 emit_scope_cleanup(&mut *body.ir, &body.ctx, None);
                 let default_val = default_for_ir_type(body.ir.raw(), ret_cl_type);
                 if returns_err {

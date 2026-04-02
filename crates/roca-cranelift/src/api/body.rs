@@ -61,6 +61,41 @@ pub struct Body<'a, 'b: 'a, 'c> {
     pub(crate) ir: &'c mut IrBuilder<'a, 'b>,
     pub(crate) ctx: EmitCtx,
     pub(crate) returned: bool,
+    /// Heap values created by Body methods but not yet bound to a variable.
+    /// Freed at scope exit if unclaimed. Internal — no other crate sees this.
+    pub(crate) temps: Vec<Value>,
+}
+
+// ─── Internal temp tracking ─────────────────────────
+
+impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
+    /// Track a heap value as a temporary. Removed when bound to a variable.
+    fn track_temp(&mut self, val: Value) {
+        if self.ir.value_ir_type(val) == types::I64 {
+            self.temps.push(val);
+        }
+    }
+
+    /// Remove a value from temps (it's been bound to a variable).
+    fn claim_temp(&mut self, val: Value) {
+        self.temps.retain(|&v| v != val);
+    }
+
+    /// Free all unclaimed temporaries. Called internally at scope exit.
+    pub(crate) fn flush_temps_inner(&mut self) {
+        if self.temps.is_empty() { return; }
+        if let Some(&free_ref) = self.ctx.get_func("__free") {
+            for &val in &self.temps {
+                self.ir.call_void(free_ref, &[val]);
+            }
+        }
+        self.temps.clear();
+    }
+
+    /// Free unclaimed temporaries. Called at statement boundaries.
+    pub fn flush_temps(&mut self) {
+        self.flush_temps_inner();
+    }
 }
 
 // ─── Literals ─────────────────────────────────────────
@@ -76,11 +111,13 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
 
     pub fn string(&mut self, s: &str) -> Value {
         let static_ptr = self.ir.leak_cstr(s);
-        if let Some(&f) = self.ctx.get_func("__string_new") {
+        let val = if let Some(&f) = self.ctx.get_func("__string_new") {
             self.ir.call(f, &[static_ptr])
         } else {
             static_ptr
-        }
+        };
+        self.track_temp(val);
+        val
     }
 
     pub fn null(&mut self) -> Value {
@@ -116,6 +153,7 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
     /// Bind an immutable variable. Heap tracking is automatic — any I64 value
     /// is marked as heap and will be freed at scope exit via `__free(ptr)`.
     pub fn const_var(&mut self, name: &str, val: Value) -> ConstRef {
+        self.claim_temp(val);
         let cl_type = self.ir.value_ir_type(val);
         let slot = self.ir.alloc_var(val);
         self.ctx.set_var(name.to_string(), slot.0, cl_type);
@@ -127,6 +165,7 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
 
     /// Bind an immutable variable with an explicit type hint (for field access tracking).
     pub fn const_var_typed(&mut self, name: &str, val: Value, roca_type: RocaType) -> ConstRef {
+        self.claim_temp(val);
         let cl_type = self.ir.value_ir_type(val);
         let slot = self.ir.alloc_var(val);
         self.ctx.set_var_kind(name.to_string(), slot.0, cl_type, roca_type.clone());
@@ -138,6 +177,7 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
 
     /// Bind a mutable variable. Heap tracking is automatic.
     pub fn let_var(&mut self, name: &str, val: Value) -> MutRef {
+        self.claim_temp(val);
         let cl_type = self.ir.value_ir_type(val);
         let slot = self.ir.alloc_var(val);
         self.ctx.set_var(name.to_string(), slot.0, cl_type);
@@ -149,6 +189,7 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
 
     /// Bind a mutable variable with an explicit type hint.
     pub fn let_var_typed(&mut self, name: &str, val: Value, roca_type: RocaType) -> MutRef {
+        self.claim_temp(val);
         let cl_type = self.ir.value_ir_type(val);
         let slot = self.ir.alloc_var(val);
         self.ctx.set_var_kind(name.to_string(), slot.0, cl_type, roca_type.clone());
@@ -158,8 +199,9 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
         MutRef { name: name.to_string(), slot, roca_type }
     }
 
-    /// Reassign a mutable variable. Frees the old heap value via `__free`.
+    /// Reassign a mutable variable. Frees the old value, stores new. Claims temp.
     pub fn assign(&mut self, var: &MutRef, val: Value) {
+        self.claim_temp(val);
         if let Some(old) = self.ctx.get_var(&var.name) {
             if old.is_heap {
                 if let Some(&free_ref) = self.ctx.get_func("__free") {
@@ -171,8 +213,9 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
         self.ir.store_var(var.slot, val);
     }
 
-    /// Reassign a variable by name. Frees old heap value, stores new value.
+    /// Reassign a variable by name. Frees old value, stores new. Claims temp.
     pub fn assign_name(&mut self, name: &str, val: Value) {
+        self.claim_temp(val);
         if let Some(var) = self.ctx.get_var(name) {
             let slot = var.slot;
             let is_heap = var.is_heap;
@@ -223,6 +266,7 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
     pub fn string_concat(&mut self, l: Value, r: Value) -> Value {
         let val = if let Some(f) = self.ctx.get_func("__string_concat") { self.ir.call(*f, &[l, r]) }
         else { return self.ir.null() };
+        self.track_temp(val);
         val
     }
 
@@ -337,6 +381,7 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
         for &elem in elements {
             crate::emit_helpers::emit_array_push(self.ir, arr, elem, &mut self.ctx);
         }
+        self.track_temp(arr);
         arr
     }
 
@@ -373,9 +418,12 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
         self.ctx.struct_layouts.insert(layout_name.clone(), StructLayout { fields: layout_fields });
         self.ctx.pending_struct_type = Some(layout_name);
         for (i, &(_, val)) in fields.iter().enumerate() {
+            // Fields are owned by the struct — remove from temps
+            self.claim_temp(val);
             let idx = self.ir.const_i64(i as i64);
             crate::emit_helpers::emit_struct_set(self.ir, ptr, idx, val, &mut self.ctx);
         }
+        self.track_temp(ptr);
         ptr
     }
 
@@ -407,8 +455,12 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
             }
             self.ctx.struct_layouts.insert(enum_layout_name.clone(), StructLayout { fields });
         }
-        // Track this value as having that layout (will be set on var binding)
         self.ctx.pending_struct_type = Some(enum_layout_name);
+        // Tag string is owned by the enum — claim it from temps
+        self.claim_temp(tag);
+        // Args are owned by the enum too
+        for &arg in args { self.claim_temp(arg); }
+        self.track_temp(ptr);
         ptr
     }
 
@@ -585,6 +637,7 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
             });
         }
         let val = result.unwrap_or_else(|| self.ir.null());
+        self.track_temp(val);
         val
     }
 }
@@ -771,8 +824,10 @@ impl<'a, 'b: 'a, 'c> Body<'a, 'b, 'c> {
     /// Return a value. If the value came from a variable, pass `skip` to
     /// prevent scope cleanup from freeing it — ownership transfers to caller.
     pub fn return_val(&mut self, val: Value) {
+        // Free any unclaimed temporaries (except the return value)
+        self.claim_temp(val); // return value is not a temp
+        self.flush_temps_inner();
         // Find which variable (if any) this value was loaded from.
-        // Check if val is a stack_load from a known heap variable's slot.
         let skip = self.find_var_for_value(val);
         emit_scope_cleanup(self.ir, &self.ctx, skip.as_deref());
         if self.ctx.returns_err {

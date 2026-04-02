@@ -68,12 +68,12 @@ Cranelift does not need to know if an I64 is a string, array, or struct. It only
 
 The runtime provides a single `free(ptr)` for all heap values. The allocator tags each allocation so `free` knows the layout. Cranelift emits one call: `free(ptr)`. No strategy dispatch, no type registry, no per-type free functions.
 
-This means:
-- No `CleanupStrategy` enum with 7 variants
-- No `CleanupRegistry` with override maps
-- No `value_cleanups` HashMap tracking what Body method created what
-- No `_typed` variants on const_var/let_var
-- Body just tracks: "this slot has a heap pointer" → emit free at the right time
+Cranelift internally tracks heap values to handle temporaries:
+- Body maintains a `temps: Vec<Value>` of I64 values not yet bound to a variable
+- When a Body method creates a heap value (string, array, struct, enum), it's added to `temps`
+- When `const_var`/`let_var` binds a value, it's removed from `temps` (ownership transferred to variable)
+- At scope exit, remaining temps are freed alongside named variables
+- This tracking is **internal** — no other crate participates in memory management
 
 ## When to Free
 
