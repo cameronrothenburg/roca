@@ -753,15 +753,171 @@ mem_test!(free_null_is_noop, {
 
 mem_test!(default_return_is_clean, {
     let (mut m, rt, mut c) = jit_module();
-    // Function with no explicit return — Body emits default return
     build_f64(&mut m, &rt, &mut c, "test", |body| {
         let s = body.string("local");
         body.const_var("s", s);
-        // No return_val — Body's auto-default kicks in
     });
     MEM.reset();
     let f = unsafe { std::mem::transmute::<_, fn() -> f64>(finalize_and_get(&mut m, "test")) };
     let _result = f();
     let (allocs, frees, _, _, _) = MEM.stats();
     assert_eq!(allocs, frees, "default return: {} allocs, {} frees", allocs, frees);
+});
+
+// ─── Category 2 (remaining): Return array/struct ownership ──
+
+mem_test!(return_transfers_array_ownership, {
+    let (mut m, rt, mut c) = jit_module();
+    Function::new("make")
+        .returns(RocaType::Array(Box::new(RocaType::Number)))
+        .build(&mut *m, &rt, &mut c, |body| {
+            let v1 = body.number(1.0);
+            let v2 = body.number(2.0);
+            let arr = body.array(&[v1, v2]);
+            body.const_var("arr", arr);
+            let r = body.var("arr");
+            body.return_val(r);
+        })
+        .unwrap();
+
+    MEM.reset();
+    let f = unsafe { std::mem::transmute::<_, fn() -> i64>(finalize_and_get(&mut m, "make")) };
+    let ptr = f();
+    assert_ne!(ptr, 0, "array should survive return");
+    roca_runtime::roca_free(ptr);
+    let (allocs, frees, _, _, _) = MEM.stats();
+    assert_eq!(allocs, frees, "return array: {} allocs, {} frees", allocs, frees);
+});
+
+mem_test!(return_transfers_struct_ownership, {
+    let (mut m, rt, mut c) = jit_module();
+    Function::new("make")
+        .returns(RocaType::Struct("Point".into()))
+        .build(&mut *m, &rt, &mut c, |body| {
+            let x = body.number(10.0);
+            let y = body.number(20.0);
+            let s = body.struct_lit("Point", &[("x", x), ("y", y)]);
+            body.const_var("p", s);
+            let r = body.var("p");
+            body.return_val(r);
+        })
+        .unwrap();
+
+    MEM.reset();
+    let f = unsafe { std::mem::transmute::<_, fn() -> i64>(finalize_and_get(&mut m, "make")) };
+    let ptr = f();
+    assert_ne!(ptr, 0, "struct should survive return");
+    roca_runtime::roca_free(ptr);
+    let (allocs, frees, _, _, _) = MEM.stats();
+    assert_eq!(allocs, frees, "return struct: {} allocs, {} frees", allocs, frees);
+});
+
+// ─── Category 3 (remaining): Nested struct ──────────
+
+mem_test!(nested_struct_cleans_recursively, {
+    let (mut m, rt, mut c) = jit_module();
+    build_f64(&mut m, &rt, &mut c, "test", |body| {
+        // Inner struct
+        let ix = body.number(1.0);
+        let iy = body.number(2.0);
+        let inner = body.struct_lit("Inner", &[("x", ix), ("y", iy)]);
+        // Outer struct that contains inner
+        let name = body.string("outer");
+        let outer = body.struct_lit("Outer", &[("name", name), ("inner", inner)]);
+        body.const_var("o", outer);
+        let r = body.number(1.0);
+        body.return_val(r);
+    });
+    MEM.reset();
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(finalize_and_get(&mut m, "test")) };
+    assert_eq!(f(), 1.0);
+    let (allocs, frees, _, _, _) = MEM.stats();
+    // string "outer" + inner struct + outer struct = 3
+    assert_eq!(allocs, 3, "string + inner + outer");
+    assert_eq!(allocs, frees, "nested struct: {} allocs, {} frees", allocs, frees);
+});
+
+// ─── Category 7 (remaining): String interp + concat chain ──
+
+mem_test!(string_interp_cleaned_at_scope_exit, {
+    let (mut m, rt, mut c) = jit_module();
+    use crate::api::StringPart;
+    build_f64(&mut m, &rt, &mut c, "test", |body| {
+        let name = body.string("world");
+        body.const_var("name", name);
+        let n = body.var("name");
+        let result = body.string_interp(&[
+            StringPart::Lit("hello ".to_string()),
+            StringPart::Expr(n),
+        ]);
+        body.const_var("msg", result);
+        let r = body.number(1.0);
+        body.return_val(r);
+    });
+    MEM.reset();
+    let f = unsafe { std::mem::transmute::<_, fn() -> f64>(finalize_and_get(&mut m, "test")) };
+    assert_eq!(f(), 1.0);
+    let (allocs, frees, _, _, _) = MEM.stats();
+    assert_eq!(allocs, frees, "string interp: {} allocs, {} frees", allocs, frees);
+});
+
+// ─── Category 9 (remaining): Reassignment in branch ─
+
+mem_test!(reassign_in_branch_cleans_old, {
+    let (mut m, rt, mut c) = jit_module();
+    build_f64_param(&mut m, &rt, &mut c, "test", "n", |body| {
+        let s1 = body.string("initial");
+        let var = body.let_var("s", s1);
+        let n = body.var("n");
+        let zero = body.number(0.0);
+        let cond = body.gt(n, zero);
+        let var_clone = var.clone();
+        body.if_then(cond, move |b| {
+            let s2 = b.string("updated");
+            b.assign(&var_clone, s2);
+        });
+        let r = body.number(1.0);
+        body.return_val(r);
+    });
+    let f = unsafe { std::mem::transmute::<_, fn(f64) -> f64>(finalize_and_get(&mut m, "test")) };
+
+    // Branch taken: old "initial" freed by reassign, "updated" freed at scope exit
+    MEM.reset();
+    assert_eq!(f(1.0), 1.0);
+    let (a1, f1, _, _, _) = MEM.stats();
+    assert_eq!(a1, f1, "branch taken: {} allocs, {} frees", a1, f1);
+
+    // Branch not taken: "initial" freed at scope exit
+    MEM.reset();
+    assert_eq!(f(-1.0), 1.0);
+    let (a2, f2, _, _, _) = MEM.stats();
+    assert_eq!(a2, f2, "branch skipped: {} allocs, {} frees", a2, f2);
+});
+
+mem_test!(reassign_then_return_transfers_final, {
+    let (mut m, rt, mut c) = jit_module();
+    Function::new("make")
+        .returns(RocaType::String)
+        .build(&mut *m, &rt, &mut c, |body| {
+            let s1 = body.string("first");
+            let var = body.let_var("s", s1);
+            let s2 = body.string("second");
+            body.assign(&var, s2);
+            let r = body.var("s");
+            body.return_val(r);
+        })
+        .unwrap();
+
+    MEM.reset();
+    let f = unsafe { std::mem::transmute::<_, fn() -> i64>(finalize_and_get(&mut m, "make")) };
+    let ptr = f();
+    let result = unsafe { std::ffi::CStr::from_ptr(ptr as *const i8) }.to_str().unwrap();
+    assert_eq!(result, "second");
+    // "first" freed by reassign, "second" survived as return value
+    let (allocs, frees, _, _, _) = MEM.stats();
+    assert_eq!(allocs, 2);
+    assert_eq!(frees, 1, "only first freed by callee");
+    roca_runtime::roca_free(ptr);
+    let (allocs, frees, _, _, _) = MEM.stats();
+    assert_eq!(allocs, frees, "all cleaned: {} allocs, {} frees", allocs, frees);
 });
