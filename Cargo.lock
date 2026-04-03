@@ -1732,6 +1732,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "roca-lang"
+version = "0.3.0"
+
+[[package]]
 name = "roca-lsp"
 version = "0.3.0"
 dependencies = [
@@ -1744,6 +1748,10 @@ dependencies = [
  "tokio",
  "tower-lsp",
 ]
+
+[[package]]
+name = "roca-mem"
+version = "0.3.0"
 
 [[package]]
 name = "roca-native"
@@ -1766,8 +1774,7 @@ dependencies = [
 name = "roca-parse"
 version = "0.3.0"
 dependencies = [
- "roca-ast",
- "roca-errors",
+ "roca-lang",
 ]
 
 [[package]]

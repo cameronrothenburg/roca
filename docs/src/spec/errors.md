@@ -1,326 +1,166 @@
-# 5. Error Model
+# 7. Error Codes
 
-**Status:** Draft
-
-This section defines the Roca error model, including error returns, error declarations, crash blocks, crash strategies, and crash chains. The error model enforces that every possible failure is handled explicitly at the call site.
+This section is the central registry for all compiler diagnostics. Error codes are grouped by domain. Each code has a short description here — see [AI Feedback Loop](./feedback.md) for the full teaching messages with fix suggestions.
 
 ---
 
-## 5.1 Error Returns
+## 7.1 Ownership Errors (E-OWN)
 
-A function that can fail MUST declare `, err` after its return type. Inside the function body, `return err.name` returns a named error to the caller.
+These enforce the memory model defined in [Section 5](./memory.md).
 
-```roca
-pub fn validate(s: String) -> String, err {
-    if s == "" { return err.empty }
-    return s
-test {
-    self("hello") is "hello"
-    self("") is err.empty
-}
-}
-```
-
-### 5.1.1 Rules
-
-- The `, err` modifier MUST appear after the return type in the function signature.
-- `return err.name` MUST be used to return a named error.
-- A function without `, err` MUST NOT use `return err.*` in its body.
-- A conforming compiler MUST reject `return err.*` in functions that do not declare `, err`.
+| Code | Rule | Condition |
+|------|------|-----------|
+| `E-OWN-001` | const owns | Value created without a `const` owner |
+| `E-OWN-002` | let borrows | `let` binding creates a new value instead of borrowing from a `const` |
+| `E-OWN-003` | borrow before pass | `const` passed directly to a `b` parameter without a `let` |
+| `E-OWN-004` | use after move | Value used after being passed to an `o` parameter |
+| `E-OWN-005` | declare intent | Function parameter missing `o` or `b` qualifier |
+| `E-OWN-006` | return owned | Function returns a borrowed value instead of an owned one |
+| `E-OWN-007` | container copy | Borrowed value copied into container (note, not error) |
+| `E-OWN-008` | second-class ref | Reference stored in struct field or returned from function |
+| `E-OWN-009` | branch symmetry | Owned value consumed in one `if` branch but not the other |
+| `E-OWN-010` | loop consumption | Owned value consumed in loop without reassignment |
 
 ---
 
-## 5.2 Error Declarations
+## 7.2 Syntax Errors (E-SYN)
 
-Error declarations define the named errors that a function or method can produce. Each declaration binds a name to a human-readable message string.
+These enforce the grammar defined in [Section 2](./syntax.md).
 
-```roca
-get(url: String) -> HttpResponse, err {
-    err network = "network error"
-    err timeout = "request timed out"
-}
-```
-
-### 5.2.1 Where Errors Are Declared
-
-- Struct method signatures (in the header block) MAY define error declarations.
-- Extern contract method signatures MAY define error declarations.
-- Standalone `pub fn` functions MAY define error declarations and return named errors.
-
-### 5.2.2 Error Name Rules
-
-- Error names MUST be `lowercase_snake_case`.
-- Error names MUST be unique within a single method signature.
-- The error message MUST be a string literal.
-
-```roca
-pub extern contract Fs {
-    readFile(path: String) -> String, err {
-        err not_found = "file not found"
-        err permission = "permission denied"
-        err io = "I/O error"
-    }
-    writeFile(path: String, data: String) -> Ok, err {
-        err permission = "permission denied"
-        err io = "I/O error"
-    }
-}
-```
+| Code | Condition |
+|------|-----------|
+| `E-SYN-001` | Unexpected token — expected `{expected}`, got `{actual}` |
+| `E-SYN-002` | Unterminated string literal |
+| `E-SYN-003` | Invalid number literal |
+| `E-SYN-004` | Missing return type — every function must declare `-> Type` |
+| `E-SYN-005` | Missing test block — every `pub fn` must have a `test {}` block |
+| `E-SYN-006` | Empty struct — struct must have at least one field or method |
+| `E-SYN-007` | Invalid import path — must be relative (`./`) with `.roca` extension |
+| `E-SYN-008` | Duplicate parameter name |
+| `E-SYN-009` | Reserved keyword used as identifier |
 
 ---
 
-## 5.3 Crash Blocks
+## 7.3 Type Errors (E-TYP)
 
-A crash block defines how errors are handled at the call site. Every call to an error-returning function MUST be covered by a crash handler.
+These enforce the type system defined in [Section 3](./types.md).
 
-```roca
-pub fn fetch_data(url: String) -> String {
-    const response = Http.get(url)
-    return response
-crash {
-    Http.get -> log |> retry(3, 1000) |> halt
-}
-test {
-    self("https://example.com") is String
-}
-}
-```
-
-### 5.3.1 Placement
-
-- The `crash` block MUST appear inside the function body, after the main logic and before the `test` block.
-- A function MAY have exactly one `crash` block.
-- The crash block covers all error-returning calls within the function body.
-
-### 5.3.2 Compiler Enforcement
-
-- A conforming compiler MUST reject any function that calls an error-returning function without a corresponding crash handler (the **missing-crash rule**).
-- Every error-returning call in the function body MUST have a matching entry in the crash block.
-- A conforming compiler SHOULD produce a clear diagnostic identifying the uncovered call.
-
-### 5.3.3 Inline Error Handling in Mutation Methods
-
-Struct methods that mutate state MAY use `let val, err = call()` inline instead of crash blocks. This allows branching on errors during mutation sequences where crash blocks do not fit naturally.
-
-```roca
-pub struct Account {
-    balance: Number
-    deposit(amount: Number) -> Ok, err {
-        err invalid = "invalid amount"
-    }
-}{
-    pub fn deposit(amount: Number) -> Ok, err {
-        if amount <= 0 { return err.invalid }
-        self.balance = self.balance + amount
-        return Ok
-    test {
-        self(100) is Ok
-        self(-1) is err.invalid
-    }
-    }
-}
-```
-
-**Rules:**
-- `let val, err = call()` is permitted inside struct methods.
-- Standalone `pub fn` functions MUST use crash blocks for error handling.
-- Safe casts (`Number()`, `String()`, `Bool()`) MAY use `let val, err` in any context.
+| Code | Condition |
+|------|-----------|
+| `E-TYP-001` | Type mismatch — expected `{expected}`, got `{actual}` |
+| `E-TYP-002` | Unknown type name |
+| `E-TYP-003` | Wrong number of type arguments |
+| `E-TYP-004` | Constraint violation — value does not satisfy `{constraint}` |
+| `E-TYP-005` | Cannot compare structs with `==` (use field comparison) |
+| `E-TYP-006` | Nullable access — cannot call method on `Optional<T>` without checking |
 
 ---
 
-## 5.4 Crash Strategies
+## 7.4 Error Handling Errors (E-ERR)
 
-Roca defines six crash strategies. Each strategy specifies a behavior for handling an error.
+These enforce that all errors are handled explicitly.
 
-| Strategy | Syntax | Behavior |
-|----------|--------|----------|
-| `log` | `log` | Log the error and continue to the next strategy in the chain |
-| `halt` | `halt` | Propagate the error to the caller |
-| `skip` | `skip` | Swallow the error and continue with `null` or the type's default value |
-| `fallback(expr)` | `fallback(0)` | Use the given fallback value instead of the error |
-| `retry(n, ms)` | `retry(3, 1000)` | Retry the call `n` times with `ms` milliseconds between attempts |
-| `panic` | `panic` | Crash the process immediately |
-
-### 5.4.1 Terminal vs. Non-Terminal Strategies
-
-Strategies are classified as **terminal** or **non-terminal**:
-
-- **Terminal strategies** end the chain and determine the final outcome: `halt`, `fallback`, `skip`, `panic`.
-- **Non-terminal strategies** perform an action and pass control to the next strategy: `log`, `retry`.
-
-A crash chain MUST end with a terminal strategy. A conforming compiler MUST reject chains that end with a non-terminal strategy.
-
-### 5.4.2 `log`
-
-The `log` strategy records the error (target-specific mechanism) and continues to the next strategy in the chain.
-
-- `log` is non-terminal — it MUST NOT be the last strategy in a chain.
-- The log output format is implementation-defined.
-
-### 5.4.3 `halt`
-
-The `halt` strategy propagates the error to the calling function.
-
-- `halt` is terminal.
-- If the enclosing function does not declare `, err`, the compiler MUST reject `halt` — there is nowhere to propagate the error.
-
-### 5.4.4 `skip`
-
-The `skip` strategy swallows the error. Execution continues with the type's default value (`""` for String, `0` for Number, `false` for Bool).
-
-- `skip` is terminal.
-- The receiving binding receives the type's zero value, not `null`.
-
-### 5.4.5 `fallback(expr)`
-
-The `fallback` strategy replaces the error with a concrete value.
-
-- `fallback` is terminal.
-- The expression MUST be type-compatible with the expected return type.
-
-### 5.4.6 `retry(n, ms)`
-
-The `retry` strategy re-executes the failed call up to `n` times, waiting `ms` milliseconds between attempts.
-
-- `retry` is non-terminal — if all retries fail, the next strategy in the chain handles the error.
-- `n` MUST be a positive integer literal.
-- `ms` MUST be a non-negative integer literal.
-
-### 5.4.7 `panic`
-
-The `panic` strategy terminates the process.
-
-- `panic` is terminal.
-- A conforming implementation MUST log the error before terminating.
-- `panic` SHOULD be used only as a last resort — prefer `halt` or `fallback` in most cases.
+| Code | Condition |
+|------|-----------|
+| `E-ERR-001` | Unhandled error — call to error-returning function without `let val, err =` |
+| `E-ERR-002` | Error not checked — `err` variable declared but never read |
+| `E-ERR-003` | Return `err.*` in function without `, err` return type |
+| `E-ERR-004` | Unknown error name — `return err.name` where `name` is not declared |
+| `E-ERR-005` | Missing error declaration — function returns `, err` but declares no error names |
 
 ---
 
-## 5.5 Crash Chains
+## 7.5 Struct Errors (E-STR)
 
-Crash strategies are composed into chains using the pipe operator `|>`. Strategies execute left to right.
+These enforce struct rules defined in [Section 3.4](./types.md#34-structs).
 
-```roca
-crash {
-    Http.get -> log |> retry(3, 1000) |> halt
-}
-```
-
-In this example:
-
-1. `log` — log the error.
-2. `retry(3, 1000)` — retry up to 3 times with 1-second delay.
-3. `halt` — if all retries fail, propagate the error.
-
-### 5.5.1 Chain Rules
-
-- A chain MUST contain at least one strategy.
-- A chain MUST end with a terminal strategy (`halt`, `fallback`, `skip`, or `panic`).
-- Non-terminal strategies (`log`, `retry`) MUST NOT appear as the final strategy.
-- Terminal strategies MUST NOT appear in non-final positions — they end the chain.
-
-### 5.5.2 Chain Syntax
-
-```roca
-CrashEntry  = CallTarget "->" CrashChain
-CallTarget  = Ident | Ident ("." Ident)+
-CrashChain  = Strategy ("|>" Strategy)*
-Strategy    = "log"
-            | "halt"
-            | "skip"
-            | "panic"
-            | "fallback" "(" Expr ")"
-            | "retry" "(" Number "," Number ")"
-```
-
-The `CallTarget` identifies the error-returning function call. It MUST match a call that appears in the function body. It MAY be a standalone function name (`validate`) or a qualified name (`Type.method`, `obj.field.method`).
+| Code | Condition |
+|------|-----------|
+| `E-STR-001` | Missing method implementation — signature declared but no body |
+| `E-STR-002` | Signature mismatch — implementation params/return don't match signature |
+| `E-STR-003` | Undeclared method — implementation without a matching signature |
+| `E-STR-004` | Private method called from outside the struct |
+| `E-STR-005` | Unknown method — type does not have method `{name}` |
+| `E-STR-006` | Unknown field — struct does not have field `{name}` |
 
 ---
 
-## 5.6 Detailed Crash Handlers
+## 7.6 Contract Errors (E-CON)
 
-A crash entry MAY use a block form to handle individual error names separately.
+These enforce contract and satisfies rules.
 
-```roca
-crash {
-    Fs.readFile {
-        err.not_found -> fallback("default content")
-        err.permission -> halt
-        default -> log |> halt
-    }
-}
-```
-
-### 5.6.1 Per-Error Handling Rules
-
-- Each `err.name` entry specifies a chain for that specific error.
-- The `default` entry handles any error not explicitly listed.
-- If a detailed crash handler is used, a `default` entry SHOULD be provided.
-- A conforming compiler SHOULD warn if a detailed handler omits `default` and does not cover all declared errors.
-
-### 5.6.2 Syntax
-
-```roca
-DetailedCrash   = CallTarget "{" ErrorHandler+ "}"
-ErrorHandler    = "err." name "->" CrashChain
-                | "default" "->" CrashChain
-```
-
-### 5.6.3 Example with Multiple Calls
-
-A crash block MAY contain multiple entries — one per error-returning call.
-
-```roca
-pub fn copy_file(src: String, dest: String) -> Ok {
-    const content = Fs.readFile(src)
-    Fs.writeFile(dest, content)
-    return Ok
-crash {
-    Fs.readFile {
-        err.not_found -> halt
-        default -> log |> halt
-    }
-    Fs.writeFile -> log |> retry(2, 500) |> halt
-}
-test {
-    self("/tmp/a.txt", "/tmp/b.txt") is Ok
-}
-}
-```
+| Code | Condition |
+|------|-----------|
+| `E-CON-001` | Missing satisfies implementation — contract method not implemented |
+| `E-CON-002` | Satisfies mismatch — param count or return type doesn't match contract |
+| `E-CON-003` | Unknown contract name |
 
 ---
 
-## 5.7 Fallback with Closure
+## 7.7 Module Errors (E-MOD)
 
-The `fallback` strategy MAY accept a closure instead of a simple expression. The closure receives the error object as its argument.
+These enforce import and cross-file resolution.
+
+| Code | Condition |
+|------|-----------|
+| `E-MOD-001` | Import not found — file does not exist at path |
+| `E-MOD-002` | Name not exported — imported name is not `pub` in source file |
+| `E-MOD-003` | Circular import detected |
+
+---
+
+## 7.8 Error Handling: What Replaces Crash Blocks
+
+Crash blocks are removed from the language. Error handling is explicit inline code using `let val, err =` and stdlib helpers.
+
+### Pattern: Check and return
 
 ```roca
-crash {
-    Http.get -> fallback(fn(e) -> ApiResponse.fail(500, e.message))
+pub fn load(b path: String) -> Config, err {
+    err not_found = "config not found"
+
+    let data, failed = Fs.readFile(path)
+    if failed { return err.not_found }
+
+    const config = parse(data)
+    return config
 }
 ```
 
-### 5.7.1 Rules
-
-- The closure MUST accept exactly one parameter: the error object.
-- The closure's return type MUST be compatible with the expected type at the call site.
-- The error object provides at minimum a `message` field of type `String`.
-
-### 5.7.2 Simple vs. Closure Fallback
-
-| Form | Syntax | Use case |
-|------|--------|----------|
-| Simple | `fallback(0)` | Static default value |
-| Closure | `fallback(fn(e) -> compute(e))` | Dynamic value derived from the error |
+### Pattern: Retry
 
 ```roca
-// Simple fallback — use a static default
-crash {
-    Config.load -> fallback(Config.defaults())
-}
+const data = retry(3, 1000, fn() -> Http.get(url))
+```
 
-// Closure fallback — construct a response from the error
-crash {
-    Http.get -> fallback(fn(e) -> Response { status: 500, body: e.message })
+`retry(attempts, delay_ms, fn)` is a stdlib function. It calls the closure up to `attempts` times, waiting `delay_ms` between tries. Returns the first success or the last error.
+
+### Pattern: Fallback
+
+```roca
+const config = fallback(load_config(path), Config.default())
+```
+
+`fallback(result, default)` is a stdlib function. If `result` is an error, returns `default`. Otherwise returns the value.
+
+### Pattern: Log and continue
+
+```roca
+let result, failed = db.query(sql)
+if failed {
+    log("query failed: " + failed.message)
 }
 ```
+
+### Why no crash blocks
+
+Crash blocks were special syntax for something that's just code. `retry`, `fallback`, and `log` are functions — they don't need their own grammar. Inline `let val, err =` is already in the language. The six crash strategies are replaced by:
+
+| Old crash strategy | New pattern |
+|-------------------|-------------|
+| `halt` | `if failed { return err.name }` |
+| `skip` | `if failed { }` (ignore) |
+| `fallback(expr)` | `const x = fallback(call(), default)` |
+| `retry(n, ms)` | `const x = retry(n, ms, fn() -> call())` |
+| `log` | `if failed { log(failed.message) }` |
+| `panic` | `if failed { panic(failed.message) }` |

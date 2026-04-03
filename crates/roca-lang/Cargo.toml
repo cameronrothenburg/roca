@@ -1,10 +1,9 @@
 [package]
-name = "roca-parse"
+name = "roca-lang"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Roca tokenizer and parser — source text to AST"
+description = "Roca language front end — AST, parser, checker"
 
 [dependencies]
-roca-lang = { workspace = true }

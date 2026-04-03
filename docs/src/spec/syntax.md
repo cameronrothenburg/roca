@@ -257,15 +257,12 @@ pub extern fn readFile(path: String) -> String, err {
 
 ## 2.3 Function Definition
 
-A function definition is the primary executable item. It consists of a signature, a body, an optional crash block, and an optional test block.
+A function definition is the primary executable item. It consists of a signature, a body, and an optional test block.
 
 ```text
 FnDef = DocComment? 'pub'? 'fn' Ident TypeParams? '(' Params ')' '->' TypeRef (',' 'err')? '{'
             ErrDecl*
             Stmt*
-        'crash' '{'
-            CrashHandler*
-        '}'
         'test' '{'
             TestCase*
         '}'
@@ -290,23 +287,45 @@ fn helper(x: Number) -> Number {
 
 ### 2.3.2 Parameters
 
-Parameters are a comma-separated list of name-type pairs. Each parameter MAY include constraints in curly braces after the type.
+Parameters are a comma-separated list of ownership-qualified name-type pairs. Every parameter MUST declare its ownership intent with `o` (owned/consumed) or `b` (borrowed/read-only). Parameters MAY include constraints in curly braces after the type.
 
 ```text
 Params = (Param (',' Param)*)?
-Param = Ident ':' TypeRef ('{' Constraint (',' Constraint)* '}')?
+Param = OwnershipQualifier Ident ':' TypeRef ('{' Constraint (',' Constraint)* '}')?
+OwnershipQualifier = 'o' | 'b'
 Constraint = Ident ':' (NumberLit | StringLit)
 ```
 
+- `b` — **borrowed**. The caller retains ownership. The function reads but does not consume.
+- `o` — **owned**. The caller transfers ownership. The function is responsible for the value.
+
 ```roca
+// Borrow both — caller keeps them
+pub fn greet(b name: String, b age: Number) -> String {
+    return "Hello " + name
+}
+
+// Take ownership — caller loses file after this call
+pub fn consume(o file: File) -> Ok {
+    return Ok
+}
+
+// Mixed — borrow config, consume data
+pub fn process(b config: Config, o data: Data) -> Result {
+    return transform(data)
+}
+
+// With constraints
 pub fn clamp(
-    value: Number,
-    low: Number { max: 1000 },
-    high: Number { min: 0 }
+    b value: Number,
+    b low: Number { max: 1000 },
+    b high: Number { min: 0 }
 ) -> Number {
     return value
 }
 ```
+
+See [Section 5 — Memory Model](./memory.md) for the full ownership rules.
 
 ### 2.3.3 Return Type
 
@@ -364,67 +383,42 @@ pub fn divide(a: Number, b: Number) -> Number, err {
 
 The function body contains the happy-path logic. It MUST contain only statements and expressions that handle the success case. Error conditions are signaled by returning `err.name`.
 
-### 2.3.6 Crash Block
+### 2.3.6 Error Handling
 
-The crash block declares error-handling strategies for dependencies that can fail. It appears after the body, inside the function's closing brace.
-
-```text
-CrashBlock = 'crash' '{' CrashHandler* '}'
-CrashHandler = DottedName '->' CrashChain
-             | DottedName '{' DetailedHandler+ '}'
-CrashChain = CrashStep ('|>' CrashStep)*
-CrashStep = 'retry' '(' Number ',' Number ')'
-          | 'skip'
-          | 'halt'
-          | 'panic'
-          | 'log'
-          | 'fallback' '(' Expr ')'
-DetailedHandler = ('err' '.' Ident | 'default') '->' CrashChain
-```
-
-Crash strategies MUST be one of: `log`, `halt`, `skip`, `fallback`, `retry`, `panic`.
-
-- `retry(attempts, delay_ms)` takes exactly 2 arguments: the number of attempts and the delay in milliseconds.
-- `skip`, `halt`, `panic` are bare keywords with NO parentheses.
-- `log` is a non-terminal step that logs the error and passes to the next step in the chain.
-- `fallback(expr)` takes a single expression argument.
-
-The `default` keyword is NOT a strategy. It is a catch-all arm in detailed crash handlers (the `DottedName { ... }` form), where it matches any error not explicitly named. In that context, `default -> chain` routes unmatched errors to a crash chain.
+There is no crash block. Error handling uses `let val, err = call()` inline. Every call to an error-returning function MUST have its error handled — either by checking it, returning it, or using a stdlib helper.
 
 ```roca
-pub fn fetchUser(id: String) -> User, err {
-    err not_found = "user does not exist"
-    const response = http.get("/users/{id}")
-    return User { name: response.name }
-crash {
-    http.get -> log |> retry(3, 1000) |> halt
-    http.get -> retry(3, 500) |> log |> fallback(defaultUser)
-    db.query -> call {
-        err.not_found -> skip
-        default -> halt
-    }
-}
-test {
-    self("abc") == User { name: "test" }
-}}
+pub fn load_user(b id: String) -> User, err {
+    err not_found = "user not found"
 
-// Detailed crash handlers with error matching
-pub fn loadConfig(path: String) -> Config, err {
-    err missing = "config file not found"
-    const data = Fs.readFile(path)
-    return parse(data)
-crash {
-    Fs.readFile {
-        err.not_found -> fallback("default")
-        err.permission -> halt
-        default -> log |> halt
-    }
-}}
+    let response, failed = Http.get("/users/" + id)
+    if failed { return err.not_found }
+
+    const user = User { name: response }
+    return user
+}
 ```
+
+Built-in helpers for common patterns:
+
+```roca
+// Retry with attempts and delay
+let data, failed = retry(3, 1000, fn() -> Http.get(url))
+if failed { return err.network }
+
+// Fallback to a default value
+const config = fallback(load_config(path), Config.default())
+
+// Log and continue
+let result, failed = db.query(sql)
+if failed { log(failed) }
+```
+
+A conforming compiler MUST reject any function that calls an error-returning function without handling the error. See [Section 7 — Errors](./errors.md) for the full error code reference.
 
 ### 2.3.7 Test Block
 
-The test block contains proof assertions for the function. It appears after the crash block (or after the body if there is no crash block), inside the function's closing brace.
+The test block contains proof assertions for the function. It appears after the body, inside the function's closing brace.
 
 ```text
 TestBlock = 'test' '{' TestCase* '}'
@@ -462,9 +456,7 @@ Within a function's braces, elements MUST appear in this order:
 
 1. Error declarations (`err name = "message"`)
 2. Body statements
-3. Crash and test blocks (OPTIONAL, in any order)
-
-Crash and test blocks MAY appear in any order after the function body.
+3. Test block (OPTIONAL)
 
 ---
 
