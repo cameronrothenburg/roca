@@ -53,10 +53,10 @@ fn ownership_params() {
     "#);
     let Item::Function(f) = &ast.items[0] else { panic!("expected function") };
     assert_eq!(f.params.len(), 2);
-    assert_eq!(f.params[0].own, Own::B);
+    assert_eq!(f.params[0].own, Some(Own::B));
     assert_eq!(f.params[0].name, "config");
     assert_eq!(f.params[0].ty, Type::Named("Config".into()));
-    assert_eq!(f.params[1].own, Own::O);
+    assert_eq!(f.params[1].own, Some(Own::O));
     assert_eq!(f.params[1].name, "data");
     assert_eq!(f.params[1].ty, Type::Named("Data".into()));
 }

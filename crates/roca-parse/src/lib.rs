@@ -2,18 +2,11 @@
 //!
 //! Takes source text, produces `roca_lang::SourceFile`.
 
-use roca_lang::SourceFile;
+mod tokenizer;
+mod parser;
 
-/// Parse a single Roca source file.
-pub fn parse(_source: &str) -> SourceFile {
-    SourceFile { items: vec![] }
-}
-
-/// Parse multiple files as a project. Resolves imports across files.
-/// Each entry is (filename, source_text).
-pub fn parse_project(_files: &[(&str, &str)]) -> Vec<SourceFile> {
-    vec![]
-}
+pub use tokenizer::tokenize;
+pub use parser::{parse, parse_project};
 
 #[cfg(test)]
 mod tests;

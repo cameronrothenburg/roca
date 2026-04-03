@@ -1,128 +1,50 @@
-//! Static analysis engine for Roca — walks the AST and runs 15 pluggable
-//! rules to produce diagnostics.
+//! roca-check — ownership inference and type checking.
 //!
-//! Depends on [`roca_ast`], [`roca_errors`], and [`roca_resolve`]. Consumed by
-//! `roca-cli` (build/check commands) and `roca-lsp` (live diagnostics).
+//! Walks the AST, tracks ownership state per value (Austral-style state table),
+//! and produces diagnostics for violations.
 //!
-//! # Key exports
-//!
-//! - [`check()`] — analyse a single [`roca_ast::SourceFile`] and return all
-//!   [`roca_errors::RuleError`]s.
-//! - [`check_with_registry()`] — same, but with a pre-built
-//!   [`roca_resolve::ContractRegistry`] (for multi-file projects).
-//! - [`check_with_registry_and_dir()`] — adds a source directory so the
-//!   checker can resolve cross-file imports.
-//!
-//! # Rules
-//!
-//! Each rule implements the [`rule::Rule`] trait and lives in its own file
-//! under `rules/` (contracts, structs, satisfies, crash, tests, types,
-//! variables, methods, unhandled, manual_err, docs, ownership, reserved,
-//! constraints, self_test).
+//! Rules are pluggable structs implementing the [`rule::Rule`] trait. The walker
+//! owns all state mutations; rules are pure observers called at each check point.
 
-pub mod context;
-pub mod walker;
+use roca_lang::SourceFile;
+
 pub mod rule;
-pub mod rules;
+mod walker;
+mod rules;
 
-use roca_ast::SourceFile;
-use roca_errors::RuleError;
-use roca_resolve::ContractRegistry;
-use rule::Rule;
+#[derive(Debug, Clone, PartialEq)]
+pub struct Diagnostic {
+    pub code: &'static str,
+    pub message: String,
+}
 
-/// All registered rules — add new rules here
-fn all_rules() -> Vec<Box<dyn Rule>> {
+fn all_rules() -> Vec<Box<dyn rule::Rule>> {
     vec![
-        Box::new(rules::contracts::ContractsRule),
-        Box::new(rules::constraints::ConstraintsRule),
-        Box::new(rules::structs::StructsRule),
-        Box::new(rules::satisfies::SatisfiesRule),
-        Box::new(rules::crash::CrashRule),
-        Box::new(rules::tests::TestsRule),
-        Box::new(rules::variables::VariablesRule),
-        Box::new(rules::methods::MethodsRule),
-        Box::new(rules::types::TypeCheckRule),
-        Box::new(rules::unhandled::UnhandledErrorsRule),
-        Box::new(rules::manual_err::NoManualErrRule),
-        Box::new(rules::docs::DocsRule),
-        Box::new(rules::ownership::OwnershipRule),
-        Box::new(rules::reserved::ReservedNameRule),
-        Box::new(rules::self_test::SelfTestRule),
+        Box::new(rules::ConstOwns),
+        Box::new(rules::LetBorrowsFromConst),
+        Box::new(rules::BorrowBeforePass),
+        Box::new(rules::UseAfterMove),
+        Box::new(rules::DeclareIntent),
+        Box::new(rules::ReturnOwned),
+        Box::new(rules::ContainerCopy),
+        Box::new(rules::BranchSymmetry),
+        Box::new(rules::LoopConsumption),
+        Box::new(rules::ReturnTypeMismatch),
+        Box::new(rules::UnknownType),
+        Box::new(rules::UnknownField),
     ]
 }
 
-pub fn check(file: &SourceFile) -> Vec<RuleError> {
-    let registry = ContractRegistry::build(file);
-    check_with_registry(file, &registry)
-}
-
-pub fn check_with_registry(file: &SourceFile, registry: &ContractRegistry) -> Vec<RuleError> {
-    walker::walk(file, registry, None, &all_rules())
-}
-
-pub fn check_with_registry_and_dir(file: &SourceFile, registry: &ContractRegistry, source_dir: Option<&std::path::Path>) -> Vec<RuleError> {
-    walker::walk(file, registry, source_dir, &all_rules())
+/// Check a source file for ownership and type errors.
+/// Returns an empty vec if the program is valid.
+pub fn check(source: &SourceFile) -> Vec<Diagnostic> {
+    let mut rules = all_rules();
+    walker::walk(source, &mut rules)
 }
 
 #[cfg(test)]
-mod check_tests {
-    use super::*;
-    use roca_parse as parse;
-
-    #[test]
-    fn valid_program_passes_all_checks() {
-        let file = parse::parse(r#"
-            contract Stringable {
-                to_string() -> String
-            }
-
-            /// An email address
-            pub struct Email {
-                value: String
-                validate(raw: String) -> Email, err {
-                    err missing = "required"
-                }
-            }{
-                fn validate(raw: String) -> Email, err {
-                    if raw == "" { return err.missing }
-                    return Email { value: raw }
-                    test {
-                        self("a@b.com") is Ok
-                        self("") is err.missing
-                    }
-                }
-            }
-
-            Email satisfies Stringable {
-                fn to_string() -> String {
-                    return self.value
-                    test { self() == "test" }
-                }
-            }
-
-            /// Greets a person by name
-            pub fn greet(name: String) -> String {
-                const trimmed = name.trim()
-                return "Hello " + trimmed
-                crash { name.trim -> halt }
-                test { self("cam") == "Hello cam" }
-            }
-        "#);
-        let errors = check(&file);
-        assert!(errors.is_empty(), "expected no errors, got: {:?}", errors);
-    }
-
-    #[test]
-    fn multiple_errors_collected() {
-        let file = parse::parse(r#"
-            fn bad() -> Number {
-                const x = 5
-                x = 10
-                let y = x.to_string()
-                return 0
-            }
-        "#);
-        let errors = check(&file);
-        assert!(errors.len() >= 2);
-    }
+mod tests {
+    mod ownership;  // E-OWN-001 through E-OWN-010
+    mod types;      // E-TYP, E-STR
+    mod acceptance; // full valid programs
 }

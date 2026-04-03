@@ -43,7 +43,7 @@ pub enum Own {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Param {
-    pub own: Own,
+    pub own: Option<Own>,  // None = not declared, checker rejects (E-OWN-005)
     pub name: String,
     pub ty: Type,
 }
@@ -92,7 +92,7 @@ pub enum Expr {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Stmt {
     // Bindings
-    Let { name: String, ty: Option<Type>, value: Expr },       // immutable, owns
+    Let { name: String, ty: Option<Type>, value: Expr, is_const: bool },  // is_const=true for `const`, false for `let`
     Var { name: String, ty: Option<Type>, value: Expr },       // mutable, owns
     Assign { target: String, value: Expr },                     // reassign var
 
