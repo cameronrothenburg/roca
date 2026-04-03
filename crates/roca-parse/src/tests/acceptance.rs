@@ -2,14 +2,10 @@
 //!
 //! These prove the checker doesn't reject correct code.
 
-use crate::check;
-
 fn is_clean(src: &str) -> bool {
-    let ast = roca_parse::parse(src);
-    let diags = check(&ast);
-    let errors: Vec<_> = diags.iter().filter(|d| d.code != "E-OWN-007").collect();
-    if !errors.is_empty() {
-        panic!("expected clean, got: {:?}", errors);
+    let result = crate::parse(src);
+    if !result.errors.is_empty() {
+        panic!("expected clean, got: {:?}", result.errors);
     }
     true
 }

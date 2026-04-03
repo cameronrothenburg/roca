@@ -1,8 +1,11 @@
-//! TDD Red — 13 tests defining the parser's contract.
-//! Each parses real Roca syntax and asserts the AST structure.
-//! All fail until the parser is implemented.
+//! Parser tests — verify the tokenizer + parser produce correct AST.
+//! These bypass the checker (use raw parser).
 
-use crate::{parse, parse_project};
+use crate::parser;
+fn parse(s: &str) -> roca_lang::SourceFile { parser::parse(s) }
+fn parse_project(files: &[(&str, &str)]) -> Vec<roca_lang::SourceFile> {
+    files.iter().map(|(_, s)| parser::parse(s)).collect()
+}
 use roca_lang::*;
 
 #[test]
@@ -33,10 +36,8 @@ fn arithmetic_precedence() {
     "#);
     assert_eq!(ast.items.len(), 1);
     let Item::Function(f) = &ast.items[0] else { panic!("expected function") };
-    // First stmt: const x = 1 + (2 * 3)
     let Stmt::Let { name, value, .. } = &f.body[0] else { panic!("expected let") };
     assert_eq!(name, "x");
-    // Outer: Add, inner right: Mul
     let Expr::BinOp { op, left, right } = value else { panic!("expected binop") };
     assert_eq!(*op, BinOp::Add);
     let Expr::Lit(Lit::Int(1)) = left.as_ref() else { panic!("expected 1") };
@@ -84,7 +85,6 @@ fn struct_with_constructor() {
     assert_eq!(s.fields[1].ty, Type::Int);
     assert_eq!(s.methods.len(), 1);
     assert_eq!(s.methods[0].name, "new");
-    // Method body returns a struct literal
     let Stmt::Return(Expr::StructLit { name, fields }) = &s.methods[0].body[0] else { panic!("expected return struct lit") };
     assert_eq!(name, "User");
     assert_eq!(fields.len(), 2);
@@ -102,11 +102,9 @@ fn error_handling_inline() {
         }
     "#);
     let Item::Function(f) = &ast.items[0] else { panic!("expected function") };
-    // First stmt: let destructure
-    let Stmt::Let { name, value, .. } = &f.body[0] else { panic!("expected let") };
+    let Stmt::Let { name, .. } = &f.body[0] else { panic!("expected let") };
     assert_eq!(name, "result");
-    // Second stmt: if err
-    let Stmt::If { cond, then, else_ } = &f.body[1] else { panic!("expected if") };
+    let Stmt::If { cond, then, .. } = &f.body[1] else { panic!("expected if") };
     let Expr::Ident(err_name) = cond else { panic!("expected ident") };
     assert_eq!(err_name, "err");
     assert!(then.len() >= 1);
@@ -128,12 +126,10 @@ fn match_enum() {
     let Stmt::Let { value, .. } = &f.body[0] else { panic!("expected let") };
     let Expr::Match { value: _, arms } = value else { panic!("expected match") };
     assert_eq!(arms.len(), 3);
-    // First arm: Result.Ok(val)
     let Pattern::Variant { name, variant, bindings } = &arms[0].pattern else { panic!("expected variant") };
     assert_eq!(name, "Result");
     assert_eq!(variant, "Ok");
     assert_eq!(bindings, &["val"]);
-    // Last arm: wildcard
     assert_eq!(arms[2].pattern, Pattern::Wildcard);
 }
 
@@ -147,7 +143,6 @@ fn closure_to_function() {
     "#);
     let Item::Function(f) = &ast.items[0] else { panic!("expected function") };
     let Stmt::Let { value, .. } = &f.body[0] else { panic!("expected let") };
-    // items.map(closure) is a Call where target is GetField
     let Expr::Call { target, args } = value else { panic!("expected call") };
     let Expr::GetField { field, .. } = target.as_ref() else { panic!("expected field access") };
     assert_eq!(field, "map");
@@ -191,11 +186,9 @@ fn struct_field_access_and_mutation() {
     "#);
     let Item::Struct(s) = &ast.items[0] else { panic!("expected struct") };
     let m = &s.methods[0];
-    // First stmt: self.count = self.count + 1
     let Stmt::SetField { target, field, value } = &m.body[0] else { panic!("expected set field") };
     assert_eq!(*target, Expr::SelfRef);
     assert_eq!(field, "count");
-    // RHS: self.count + 1
     let Expr::BinOp { op, left, .. } = value else { panic!("expected binop") };
     assert_eq!(*op, BinOp::Add);
     let Expr::GetField { target: inner, field: f2 } = left.as_ref() else { panic!("expected get field") };
@@ -266,11 +259,9 @@ fn cross_file_project() {
     "#;
     let files = parse_project(&[("dep.roca", dep), ("main.roca", main)]);
     assert_eq!(files.len(), 2);
-    // Dep has one function
     assert_eq!(files[0].items.len(), 1);
     let Item::Function(f) = &files[0].items[0] else { panic!("expected function") };
     assert_eq!(f.name, "helper");
-    // Main has import + function
     assert_eq!(files[1].items.len(), 2);
     let Item::Import { names, .. } = &files[1].items[0] else { panic!("expected import") };
     assert_eq!(names, &["helper"]);

@@ -1,10 +1,14 @@
-//! Rule trait and shared types for roca-check.
+//! Rule trait, diagnostics, and shared types for ownership checking.
 
 use std::collections::{HashMap, HashSet};
 
 use roca_lang::ast::{Expr, Item, Lit, Own, Param, SourceFile, Stmt, Type};
 
-use crate::Diagnostic;
+#[derive(Debug, Clone, PartialEq)]
+pub struct Diagnostic {
+    pub code: &'static str,
+    pub message: String,
+}
 
 // ─── Variable state ───────────────────────────────────────────────────────────
 

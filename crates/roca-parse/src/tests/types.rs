@@ -5,11 +5,8 @@
 //!   E-TYP-002: unknown type name
 //!   E-STR-006: unknown field on struct
 
-use crate::check;
-
 fn has_error(src: &str, code: &str) -> bool {
-    let ast = roca_parse::parse(src);
-    check(&ast).iter().any(|d| d.code == code)
+    crate::parse(src).errors.iter().any(|d| d.code == code)
 }
 
 #[test]

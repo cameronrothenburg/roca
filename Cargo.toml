@@ -12,4 +12,3 @@ repository = "https://github.com/cameronrothenburg/roca"
 roca-lang = { path = "crates/roca-lang" }
 roca-mem = { path = "crates/roca-mem" }
 roca-parse = { path = "crates/roca-parse" }
-roca-check = { path = "crates/roca-check" }

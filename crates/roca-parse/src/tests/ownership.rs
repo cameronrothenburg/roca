@@ -12,19 +12,16 @@
 //!   + branch symmetry (E-OWN-009)
 //!   + loop consumption (E-OWN-010)
 
-use crate::check;
-
-fn errors(src: &str) -> Vec<String> {
-    let ast = roca_parse::parse(src);
-    check(&ast).iter().map(|d| d.code.to_string()).collect()
+fn parse_result(src: &str) -> crate::ParseResult {
+    crate::parse(src)
 }
 
 fn has_error(src: &str, code: &str) -> bool {
-    errors(src).contains(&code.to_string())
+    parse_result(src).errors.iter().any(|d| d.code == code)
 }
 
 fn is_clean(src: &str) -> bool {
-    errors(src).is_empty()
+    parse_result(src).errors.is_empty()
 }
 
 // ─── E-OWN-001: const is always an owner ─────────────
@@ -191,7 +188,8 @@ fn own_006_reject_return_borrowed() {
 #[test]
 fn own_007_emits_note() {
     // Not an error — a note. Borrowed value inserted into container.
-    let ast = roca_parse::parse(r#"
+    // Should appear in notes, not errors.
+    let result = parse_result(r#"
         fn main() -> Int {
             const items = [1, 2, 3]
             let first = items
@@ -199,9 +197,8 @@ fn own_007_emits_note() {
             return 0
         }
     "#);
-    let diags = check(&ast);
-    let has_note = diags.iter().any(|d| d.code == "E-OWN-007");
-    assert!(has_note, "expected E-OWN-007 note for borrowed value in container");
+    assert!(result.errors.is_empty(), "should compile clean, got errors: {:?}", result.errors);
+    assert!(result.notes.iter().any(|d| d.code == "E-OWN-007"), "expected E-OWN-007 note");
 }
 
 // ─── E-OWN-008: second-class references ──────────────

@@ -10,10 +10,9 @@ use std::collections::{HashMap, HashSet};
 use roca_lang::ast::{Expr, FuncDef, Item, Own, Param, SourceFile, Stmt, StructDef, Type};
 
 use crate::rule::{
-    build_registries, infer_expr_type, type_to_name, Ctx, FieldRegistry, FnRegistry, Rule,
-    StateTable, TypeRegistry, VarInfo, VarState,
+    build_registries, infer_expr_type, type_to_name, Ctx, Diagnostic, FieldRegistry, FnRegistry,
+    Rule, StateTable, TypeRegistry, VarInfo, VarState,
 };
-use crate::Diagnostic;
 
 // ─── State table helpers ──────────────────────────────────────────────────────
 

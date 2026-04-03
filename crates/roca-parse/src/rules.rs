@@ -23,10 +23,9 @@ use std::collections::HashSet;
 use roca_lang::ast::{Expr, Own, Param, Stmt, Type};
 
 use crate::rule::{
-    infer_expr_type, is_primitive_type, is_value_creating, type_to_name, Ctx, Rule, StateTable,
-    VarState,
+    infer_expr_type, is_primitive_type, is_value_creating, type_to_name, Ctx, Diagnostic, Rule,
+    StateTable, VarState,
 };
-use crate::Diagnostic;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -436,4 +435,23 @@ pub struct UnknownField;
 impl Rule for UnknownField {
     fn code(&self) -> &'static str { "E-STR-006" }
     // No hooks needed — walker's second pass handles E-STR-006 directly.
+}
+
+// ─── Registration ───────────────────────────────────────────────────────────
+
+pub fn all_rules() -> Vec<Box<dyn Rule>> {
+    vec![
+        Box::new(ConstOwns),
+        Box::new(LetBorrowsFromConst),
+        Box::new(BorrowBeforePass),
+        Box::new(UseAfterMove),
+        Box::new(DeclareIntent),
+        Box::new(ReturnOwned),
+        Box::new(ContainerCopy),
+        Box::new(BranchSymmetry),
+        Box::new(LoopConsumption),
+        Box::new(ReturnTypeMismatch),
+        Box::new(UnknownType),
+        Box::new(UnknownField),
+    ]
 }

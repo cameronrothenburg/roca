@@ -1,0 +1,84 @@
+//! Rule: duplicate-err, err-no-errors
+//! Validates contract error declarations.
+
+use std::collections::HashSet;
+use roca_ast::*;
+use roca_errors as errors;
+use roca_errors::RuleError;
+use crate::rule::Rule;
+use crate::context::ItemContext;
+
+pub struct ContractsRule;
+
+impl Rule for ContractsRule {
+    fn name(&self) -> &'static str { "contracts" }
+
+    fn check_item(&self, ctx: &ItemContext) -> Vec<RuleError> {
+        let mut errors = Vec::new();
+        match ctx.item {
+            Item::Contract(c) | Item::ExternContract(c) => {
+                let mut seen_errs = HashSet::new();
+                for func in &c.functions {
+                    for err in &func.errors {
+                        if !seen_errs.insert(&err.name) {
+                            errors.push(RuleError::new(errors::DUPLICATE_ERR, format!("duplicate error name '{}' in contract '{}'", err.name, c.name), Some(format!("in {}.{}", c.name, func.name))));
+                        }
+                    }
+                    if func.returns_err && func.errors.is_empty() {
+                        errors.push(RuleError::new(errors::ERR_NO_ERRORS, format!("function '{}' returns err but declares no error names", func.name), Some(format!("in contract '{}'", c.name))));
+                    }
+                }
+            }
+            _ => {}
+        }
+        errors
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::context::CheckContext;
+    use roca_resolve::ContractRegistry;
+
+    fn check(src: &str) -> Vec<RuleError> {
+        let file = roca_parse::parse(src);
+        let reg = ContractRegistry::build(&file);
+        let rule = ContractsRule;
+        let ctx = CheckContext { file: &file, registry: &reg, source_dir: None };
+        file.items.iter().flat_map(|item| {
+            rule.check_item(&ItemContext { check: &ctx, item })
+        }).collect()
+    }
+
+    #[test]
+    fn no_errors_on_valid() {
+        assert!(check("contract Stringable { to_string() -> String }").is_empty());
+    }
+
+    #[test]
+    fn duplicate_err_name() {
+        let errors = check(r#"contract Bad { get(url: String) -> String, err { err timeout = "a" err timeout = "b" } }"#);
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].code, "duplicate-err");
+    }
+
+    #[test]
+    fn err_no_errors_caught() {
+        let errors = check(r#"contract Bad { get() -> String, err }"#);
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].code, "err-no-errors");
+    }
+
+    #[test]
+    fn valid_contract_with_errors() {
+        let errors = check(r#"contract Good { get() -> String, err { err not_found = "missing" } }"#);
+        assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn extern_contract_valid() {
+        let errors = check(r#"extern contract Good { get() -> String }"#);
+        assert!(errors.is_empty(), "valid extern contract should pass: {:?}", errors);
+    }
+}
