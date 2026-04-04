@@ -11,7 +11,7 @@ use roca_lang::ast::{Expr, ExprKind, FuncDef, Item, Own, Param, SourceFile, Stmt
 
 use crate::rule::{
     build_registries, infer_expr_type, type_to_name, Ctx, Diagnostic, FieldRegistry, FnRegistry,
-    Rule, StateTable, TypeRegistry, VarInfo, VarState,
+    FnSigRegistry, Rule, StateTable, TypeRegistry, VarInfo, VarState,
 };
 
 // ─── State table helpers ──────────────────────────────────────────────────────
@@ -109,7 +109,7 @@ fn check_field_access_expr(
                 if let Some(info) = state.get(name) {
                     if let Some(ty_name) = &info.ty {
                         if let Some(fields) = field_reg.get(ty_name) {
-                            if !fields.contains(field) {
+                            if !fields.iter().any(|(n, _)| n == field) {
                                 diags.push(Diagnostic {
                                     code: "E-STR-006",
                                     message: format!(
@@ -157,14 +157,30 @@ fn check_field_access_expr(
     }
 }
 
+// ─── Registries bundle ────────────────────────────────────────────────────────
+
+struct Regs<'a> {
+    fn_reg: &'a FnRegistry,
+    sig_reg: &'a FnSigRegistry,
+    type_reg: &'a TypeRegistry,
+    field_reg: &'a FieldRegistry,
+}
+
+impl<'a> Regs<'a> {
+    fn ctx<'b>(&'b self, state: &'b StateTable) -> Ctx<'b> {
+        Ctx { state, fn_reg: self.fn_reg, sig_reg: self.sig_reg, type_reg: self.type_reg, field_reg: self.field_reg }
+    }
+
+    fn infer_type(&self, expr: &Expr, state: &StateTable) -> Option<String> {
+        infer_expr_type(expr, state, self.sig_reg, self.field_reg)
+    }
+}
+
 // ─── Walker ───────────────────────────────────────────────────────────────────
 
-/// Walk a single function, seeding the state from its params, then walking its body.
 fn walk_function(
     f: &FuncDef,
-    fn_reg: &FnRegistry,
-    type_reg: &TypeRegistry,
-    field_reg: &FieldRegistry,
+    regs: &Regs,
     rules: &mut Vec<Box<dyn Rule>>,
     diags: &mut Vec<Diagnostic>,
 ) {
@@ -181,48 +197,44 @@ fn walk_function(
 
     // Let rules inspect each param
     for p in &f.params {
-        let ctx = Ctx { state: &state, fn_reg, type_reg, field_reg };
+        let ctx = regs.ctx(&state);
         for rule in rules.iter_mut() {
             diags.extend(rule.check_param(p, &ctx));
         }
     }
 
     // Walk the body
-    walk_stmts(&f.body, &f.ret, fn_reg, type_reg, field_reg, rules, &mut state, diags);
+    walk_stmts(&f.body, &f.ret, regs, rules, &mut state, diags);
 
     // Second pass: field access checking (read-only, needs final state)
-    check_field_accesses_in_stmts(&f.body, &state, field_reg, diags);
+    check_field_accesses_in_stmts(&f.body, &state, regs.field_reg, diags);
 }
 
 /// Walk a slice of statements, mutating `state` as bindings are introduced.
 fn walk_stmts(
     stmts: &[Stmt],
     ret_ty: &Type,
-    fn_reg: &FnRegistry,
-    type_reg: &TypeRegistry,
-    field_reg: &FieldRegistry,
+    regs: &Regs,
     rules: &mut Vec<Box<dyn Rule>>,
     state: &mut StateTable,
     diags: &mut Vec<Diagnostic>,
 ) {
     for stmt in stmts {
-        walk_stmt(stmt, ret_ty, fn_reg, type_reg, field_reg, rules, state, diags);
+        walk_stmt(stmt, ret_ty, regs, rules, state, diags);
     }
 }
 
 fn walk_stmt(
     stmt: &Stmt,
     ret_ty: &Type,
-    fn_reg: &FnRegistry,
-    type_reg: &TypeRegistry,
-    field_reg: &FieldRegistry,
+    regs: &Regs,
     rules: &mut Vec<Box<dyn Rule>>,
     state: &mut StateTable,
     diags: &mut Vec<Diagnostic>,
 ) {
     // Let rules observe the statement (pre-mutation state)
     {
-        let ctx = Ctx { state, fn_reg, type_reg, field_reg };
+        let ctx = regs.ctx(state);
         for rule in rules.iter_mut() {
             diags.extend(rule.check_stmt(stmt, &ctx));
         }
@@ -233,34 +245,34 @@ fn walk_stmt(
         Stmt::Let { name, value, is_const: true, .. } => {
             // Process any call in RHS first to track moves
             if let ExprKind::Call { target, args } = &value.kind {
-                process_call(target, args, fn_reg, type_reg, field_reg, rules, state, diags);
+                process_call(target, args, regs, rules, state, diags);
             }
-            let ty = infer_expr_type(value, state);
+            let ty = regs.infer_type(value, state);
             state.insert(name.clone(), VarInfo { state: VarState::Owned, ty });
         }
 
         // ── let x = expr → Borrowed ───────────────────────────────────────────
         Stmt::Let { name, value, is_const: false, .. } => {
-            let ty = infer_expr_type(value, state);
+            let ty = regs.infer_type(value, state);
             state.insert(name.clone(), VarInfo { state: VarState::Borrowed, ty });
         }
 
         // ── var x = expr → Owned (mutable) ───────────────────────────────────
         Stmt::Var { name, value, .. } => {
-            let ty = infer_expr_type(value, state);
+            let ty = regs.infer_type(value, state);
             state.insert(name.clone(), VarInfo { state: VarState::Owned, ty });
         }
 
         // ── Assign: reassign a var ────────────────────────────────────────────
         Stmt::Assign { target, value } => {
-            let ty = infer_expr_type(value, state);
+            let ty = regs.infer_type(value, state);
             state.insert(target.clone(), VarInfo { state: VarState::Owned, ty });
         }
 
         // ── Expr statement ────────────────────────────────────────────────────
         Stmt::Expr(expr) => {
             if let ExprKind::Call { target, args } = &expr.kind {
-                process_call(target, args, fn_reg, type_reg, field_reg, rules, state, diags);
+                process_call(target, args, regs, rules, state, diags);
             }
         }
 
@@ -268,9 +280,9 @@ fn walk_stmt(
         Stmt::Return(expr) => {
             // Process any call in the return expression first (for moves)
             if let ExprKind::Call { target, args } = &expr.kind {
-                process_call(target, args, fn_reg, type_reg, field_reg, rules, state, diags);
+                process_call(target, args, regs, rules, state, diags);
             }
-            let ctx = Ctx { state, fn_reg, type_reg, field_reg };
+            let ctx = regs.ctx(state);
             for rule in rules.iter_mut() {
                 diags.extend(rule.check_return(expr, ret_ty, &ctx));
             }
@@ -279,28 +291,19 @@ fn walk_stmt(
         // ── If statement ──────────────────────────────────────────────────────
         Stmt::If { cond: _, then, else_ } => {
             let mut then_state = state.clone();
-            walk_stmts(then, ret_ty, fn_reg, type_reg, field_reg, rules, &mut then_state, diags);
+            walk_stmts(then, ret_ty, regs, rules, &mut then_state, diags);
             let consumed_in_then = vars_newly_consumed(state, &then_state);
 
             let consumed_in_else: Option<HashSet<String>> = if let Some(else_stmts) = else_ {
                 let mut else_state = state.clone();
-                walk_stmts(
-                    else_stmts,
-                    ret_ty,
-                    fn_reg,
-                    type_reg,
-                    field_reg,
-                    rules,
-                    &mut else_state,
-                    diags,
-                );
+                walk_stmts(else_stmts, ret_ty, regs, rules, &mut else_state, diags);
                 Some(vars_newly_consumed(state, &else_state))
             } else {
                 None
             };
 
             {
-                let ctx = Ctx { state, fn_reg, type_reg, field_reg };
+                let ctx = regs.ctx(state);
                 for rule in rules.iter_mut() {
                     diags.extend(rule.check_branch(&consumed_in_then, &consumed_in_else, &ctx));
                 }
@@ -320,10 +323,10 @@ fn walk_stmt(
         Stmt::Loop { body } => {
             let outer_owned = owned_var_names(state);
             let mut loop_state = state.clone();
-            walk_stmts(body, ret_ty, fn_reg, type_reg, field_reg, rules, &mut loop_state, diags);
+            walk_stmts(body, ret_ty, regs, rules, &mut loop_state, diags);
 
             {
-                let ctx = Ctx { state, fn_reg, type_reg, field_reg };
+                let ctx = regs.ctx(state);
                 for rule in rules.iter_mut() {
                     diags.extend(rule.check_loop_body(&outer_owned, &loop_state, body, &ctx));
                 }
@@ -344,10 +347,10 @@ fn walk_stmt(
             let outer_owned = owned_var_names(state);
             let mut for_state = state.clone();
             for_state.insert(name.clone(), VarInfo { state: VarState::Owned, ty: None });
-            walk_stmts(body, ret_ty, fn_reg, type_reg, field_reg, rules, &mut for_state, diags);
+            walk_stmts(body, ret_ty, regs, rules, &mut for_state, diags);
 
             {
-                let ctx = Ctx { state, fn_reg, type_reg, field_reg };
+                let ctx = regs.ctx(state);
                 for rule in rules.iter_mut() {
                     diags.extend(rule.check_loop_body(&outer_owned, &for_state, body, &ctx));
                 }
@@ -364,9 +367,7 @@ fn walk_stmt(
 fn process_call(
     target: &Expr,
     args: &[Expr],
-    fn_reg: &FnRegistry,
-    type_reg: &TypeRegistry,
-    field_reg: &FieldRegistry,
+    regs: &Regs,
     rules: &mut Vec<Box<dyn Rule>>,
     state: &mut StateTable,
     diags: &mut Vec<Diagnostic>,
@@ -374,14 +375,14 @@ fn process_call(
     let fn_name = resolve_call_name(target, state);
     let qualifiers: Vec<Option<Own>> = fn_name
         .as_ref()
-        .and_then(|n| fn_reg.get(n))
+        .and_then(|n| regs.fn_reg.get(n))
         .cloned()
         .unwrap_or_default();
 
     // Call rules for each arg (pre-mutation state)
     for (i, arg) in args.iter().enumerate() {
         let qual = qualifiers.get(i).copied().flatten();
-        let ctx = Ctx { state, fn_reg, type_reg, field_reg };
+        let ctx = regs.ctx(state);
         for rule in rules.iter_mut() {
             diags.extend(rule.check_call_arg(arg, qual, &ctx));
         }
@@ -405,16 +406,17 @@ fn process_call(
 // ─── Top-level entry ──────────────────────────────────────────────────────────
 
 pub fn walk(source: &SourceFile, rules: &mut Vec<Box<dyn Rule>>) -> Vec<Diagnostic> {
-    let (fn_reg, type_reg, field_reg) = build_registries(source);
+    let (fn_reg, sig_reg, type_reg, field_reg) = build_registries(source);
+    let regs = Regs { fn_reg: &fn_reg, sig_reg: &sig_reg, type_reg: &type_reg, field_reg: &field_reg };
     let mut diags = Vec::new();
 
     for item in &source.items {
         match item {
             Item::Function(f) => {
-                walk_function(f, &fn_reg, &type_reg, &field_reg, rules, &mut diags);
+                walk_function(f, &regs, rules, &mut diags);
             }
             Item::Struct(s) => {
-                walk_struct(s, &fn_reg, &type_reg, &field_reg, rules, &mut diags);
+                walk_struct(s, &regs, rules, &mut diags);
             }
             Item::Enum(_) | Item::Import { .. } => {}
         }
@@ -425,13 +427,11 @@ pub fn walk(source: &SourceFile, rules: &mut Vec<Box<dyn Rule>>) -> Vec<Diagnost
 
 fn walk_struct(
     s: &StructDef,
-    fn_reg: &FnRegistry,
-    type_reg: &TypeRegistry,
-    field_reg: &FieldRegistry,
+    regs: &Regs,
     rules: &mut Vec<Box<dyn Rule>>,
     diags: &mut Vec<Diagnostic>,
 ) {
     for method in &s.methods {
-        walk_function(method, fn_reg, type_reg, field_reg, rules, diags);
+        walk_function(method, regs, rules, diags);
     }
 }

@@ -2,7 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use roca_lang::ast::{Expr, ExprKind, Item, Lit, Own, Param, SourceFile, Stmt, Type};
+use roca_lang::ast::{BinOp, Expr, ExprKind, Item, Lit, Own, Param, SourceFile, Stmt, Type, UnaryOp};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Diagnostic {
@@ -32,11 +32,14 @@ pub struct VarInfo {
 /// For struct methods, key is "StructName.method".
 pub type FnRegistry = HashMap<String, Vec<Option<Own>>>;
 
+/// Maps function name → (param types, return type).
+pub type FnSigRegistry = HashMap<String, (Vec<Type>, Type)>;
+
 /// Set of all known type names (builtins + struct names + enum names).
 pub type TypeRegistry = HashSet<String>;
 
-/// Maps struct name → set of field names.
-pub type FieldRegistry = HashMap<String, HashSet<String>>;
+/// Maps struct name → field name → field type.
+pub type FieldRegistry = HashMap<String, Vec<(String, Type)>>;
 
 /// Variable state table for a function.
 pub type StateTable = HashMap<String, VarInfo>;
@@ -66,11 +69,52 @@ pub fn lit_type_name(lit: &Lit) -> &'static str {
     }
 }
 
-pub fn infer_expr_type(expr: &Expr, state: &StateTable) -> Option<String> {
+pub fn infer_expr_type(expr: &Expr, state: &StateTable, sig_reg: &FnSigRegistry, field_reg: &FieldRegistry) -> Option<String> {
     match &expr.kind {
         ExprKind::Lit(lit) => Some(lit_type_name(lit).to_string()),
         ExprKind::Ident(name) => state.get(name).and_then(|v| v.ty.clone()),
         ExprKind::StructLit { name, .. } => Some(name.clone()),
+        ExprKind::BinOp { op, left, .. } => {
+            match op {
+                // Comparisons always return Bool
+                BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge
+                | BinOp::And | BinOp::Or => Some("Bool".into()),
+                // Arithmetic returns the operand type
+                _ => infer_expr_type(left, state, sig_reg, field_reg),
+            }
+        }
+        ExprKind::UnaryOp { op, expr: inner } => {
+            match op {
+                UnaryOp::Not => Some("Bool".into()),
+                UnaryOp::Neg => infer_expr_type(inner, state, sig_reg, field_reg),
+            }
+        }
+        ExprKind::Call { target, .. } => {
+            let name = resolve_call_name_for_type(target);
+            name.and_then(|n| sig_reg.get(&n).map(|(_, ret)| type_to_name(ret)).flatten())
+        }
+        ExprKind::GetField { target, field } => {
+            let target_type = infer_expr_type(target, state, sig_reg, field_reg)?;
+            let fields = field_reg.get(&target_type)?;
+            fields.iter()
+                .find(|(name, _)| name == field)
+                .and_then(|(_, ty)| type_to_name(ty))
+        }
+        _ => None,
+    }
+}
+
+/// Resolve a call target to a function name for signature lookup.
+fn resolve_call_name_for_type(target: &Expr) -> Option<String> {
+    match &target.kind {
+        ExprKind::Ident(n) => Some(n.clone()),
+        ExprKind::GetField { target: obj, field } => {
+            if let ExprKind::Ident(struct_name) = &obj.kind {
+                Some(format!("{}.{}", struct_name, field))
+            } else {
+                None
+            }
+        }
         _ => None,
     }
 }
@@ -94,9 +138,10 @@ fn builtin_types() -> TypeRegistry {
         .collect()
 }
 
-/// Build all three registries by scanning the top-level items once.
-pub fn build_registries(source: &SourceFile) -> (FnRegistry, TypeRegistry, FieldRegistry) {
+/// Build all registries by scanning the top-level items once.
+pub fn build_registries(source: &SourceFile) -> (FnRegistry, FnSigRegistry, TypeRegistry, FieldRegistry) {
     let mut fn_reg: FnRegistry = HashMap::new();
+    let mut sig_reg: FnSigRegistry = HashMap::new();
     let mut type_reg = builtin_types();
     let mut field_reg: FieldRegistry = HashMap::new();
 
@@ -105,15 +150,21 @@ pub fn build_registries(source: &SourceFile) -> (FnRegistry, TypeRegistry, Field
             Item::Function(f) => {
                 let quals: Vec<Option<Own>> = f.params.iter().map(|p| p.own).collect();
                 fn_reg.insert(f.name.clone(), quals);
+                let param_types: Vec<Type> = f.params.iter().map(|p| p.ty.clone()).collect();
+                sig_reg.insert(f.name.clone(), (param_types, f.ret.clone()));
             }
             Item::Struct(s) => {
                 type_reg.insert(s.name.clone());
-                let fields: HashSet<String> = s.fields.iter().map(|f| f.name.clone()).collect();
+                let fields: Vec<(String, Type)> = s.fields.iter()
+                    .map(|f| (f.name.clone(), f.ty.clone()))
+                    .collect();
                 field_reg.insert(s.name.clone(), fields);
                 for m in &s.methods {
                     let key = format!("{}.{}", s.name, m.name);
                     let quals: Vec<Option<Own>> = m.params.iter().map(|p| p.own).collect();
-                    fn_reg.insert(key, quals);
+                    fn_reg.insert(key.clone(), quals);
+                    let param_types: Vec<Type> = m.params.iter().map(|p| p.ty.clone()).collect();
+                    sig_reg.insert(key, (param_types, m.ret.clone()));
                 }
             }
             Item::Enum(e) => {
@@ -123,7 +174,7 @@ pub fn build_registries(source: &SourceFile) -> (FnRegistry, TypeRegistry, Field
         }
     }
 
-    (fn_reg, type_reg, field_reg)
+    (fn_reg, sig_reg, type_reg, field_reg)
 }
 
 // ─── Read-only context ────────────────────────────────────────────────────────
@@ -132,6 +183,7 @@ pub fn build_registries(source: &SourceFile) -> (FnRegistry, TypeRegistry, Field
 pub struct Ctx<'a> {
     pub state: &'a StateTable,
     pub fn_reg: &'a FnRegistry,
+    pub sig_reg: &'a FnSigRegistry,
     pub type_reg: &'a TypeRegistry,
     pub field_reg: &'a FieldRegistry,
 }

@@ -20,7 +20,7 @@
 
 use std::collections::HashSet;
 
-use roca_lang::ast::{Expr, ExprKind, Own, Param, Stmt, Type};
+use roca_lang::ast::{BinOp, Expr, ExprKind, Own, Param, Stmt, Type};
 
 use crate::rule::{
     infer_expr_type, is_primitive_type, is_value_creating, type_to_name, Ctx, Diagnostic, Rule,
@@ -392,7 +392,7 @@ impl Rule for ReturnTypeMismatch {
             Some(n) => n,
             None => return vec![],
         };
-        let actual = match infer_expr_type(expr, ctx.state) {
+        let actual = match infer_expr_type(expr, ctx.state, ctx.sig_reg, ctx.field_reg) {
             Some(n) => n,
             None => return vec![],
         };
@@ -440,6 +440,93 @@ impl Rule for UnknownField {
     // No hooks needed — walker's second pass handles E-STR-006 directly.
 }
 
+// ─── E-TYP-001 (BinOp): operand type mismatch in binary operations ──────────
+
+pub struct BinOpTypeMismatch;
+
+impl Rule for BinOpTypeMismatch {
+    fn code(&self) -> &'static str { "E-TYP-001" }
+
+    fn check_stmt(&mut self, stmt: &Stmt, ctx: &Ctx) -> Vec<Diagnostic> {
+        match stmt {
+            Stmt::Let { value, .. } | Stmt::Var { value, .. } => check_binop_types(value, ctx),
+            Stmt::Return(expr) => check_binop_types(expr, ctx),
+            Stmt::Assign { value, .. } => check_binop_types(value, ctx),
+            _ => vec![],
+        }
+    }
+}
+
+fn check_binop_types(expr: &Expr, ctx: &Ctx) -> Vec<Diagnostic> {
+    if let ExprKind::BinOp { op, left, right } = &expr.kind {
+        // Comparisons (==, !=, <, >, etc.) only need both sides to be the same type
+        // Arithmetic (+, -, *, /, %) needs both sides to be the same numeric type
+        let lt = infer_expr_type(left, ctx.state, ctx.sig_reg, ctx.field_reg);
+        let rt = infer_expr_type(right, ctx.state, ctx.sig_reg, ctx.field_reg);
+        if let (Some(l), Some(r)) = (&lt, &rt) {
+            if l != r {
+                return vec![diag("E-TYP-001", format!("type mismatch in binary op: {} vs {}", l, r))];
+            }
+        }
+        // Recurse into sub-expressions
+        let mut out = check_binop_types(left, ctx);
+        out.extend(check_binop_types(right, ctx));
+        return out;
+    }
+    vec![]
+}
+
+// ─── E-TYP-001 (Call): argument type mismatch in function calls ─────────────
+
+pub struct CallArgTypeMismatch;
+
+impl Rule for CallArgTypeMismatch {
+    fn code(&self) -> &'static str { "E-TYP-001" }
+
+    fn check_stmt(&mut self, stmt: &Stmt, ctx: &Ctx) -> Vec<Diagnostic> {
+        match stmt {
+            Stmt::Let { value, .. } | Stmt::Var { value, .. } => check_call_arg_types(value, ctx),
+            Stmt::Return(expr) => check_call_arg_types(expr, ctx),
+            _ => vec![],
+        }
+    }
+}
+
+fn check_call_arg_types(expr: &Expr, ctx: &Ctx) -> Vec<Diagnostic> {
+    if let ExprKind::Call { target, args } = &expr.kind {
+        let fn_name = match &target.kind {
+            ExprKind::Ident(n) => Some(n.clone()),
+            ExprKind::GetField { target: obj, field } => {
+                if let ExprKind::Ident(sn) = &obj.kind {
+                    Some(format!("{}.{}", sn, field))
+                } else { None }
+            }
+            _ => None,
+        };
+        if let Some(name) = fn_name {
+            if let Some((param_types, _)) = ctx.sig_reg.get(&name) {
+                for (i, arg) in args.iter().enumerate() {
+                    if let Some(expected_ty) = param_types.get(i) {
+                        let expected_name = match type_to_name(expected_ty) {
+                            Some(n) => n,
+                            None => continue,
+                        };
+                        let actual_name = match infer_expr_type(arg, ctx.state, ctx.sig_reg, ctx.field_reg) {
+                            Some(n) => n,
+                            None => continue,
+                        };
+                        if expected_name != actual_name {
+                            return vec![diag("E-TYP-001",
+                                format!("argument {} type mismatch: expected {}, got {}", i + 1, expected_name, actual_name))];
+                        }
+                    }
+                }
+            }
+        }
+    }
+    vec![]
+}
+
 // ─── Registration ───────────────────────────────────────────────────────────
 
 pub fn all_rules() -> Vec<Box<dyn Rule>> {
@@ -456,5 +543,7 @@ pub fn all_rules() -> Vec<Box<dyn Rule>> {
         Box::new(ReturnTypeMismatch),
         Box::new(UnknownType),
         Box::new(UnknownField),
+        Box::new(BinOpTypeMismatch),
+        Box::new(CallArgTypeMismatch),
     ]
 }
