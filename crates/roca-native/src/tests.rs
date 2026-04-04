@@ -396,3 +396,114 @@ fn struct_instance_method_with_self() {
     "#);
     assert_eq!(call(&m, "test_it", &[]), Value::Int(42));
 }
+
+// ─── Red tests: compiler gaps ───────────────────────────
+
+#[test]
+fn match_int_arms() {
+    let m = compile_src(r#"
+        fn pick(b n: Int) -> Int {
+            return match n {
+                1 => 10
+                2 => 20
+                _ => 99
+            }
+        }
+    "#);
+    assert_eq!(call(&m, "pick", &[Value::Int(1)]), Value::Int(10));
+    assert_eq!(call(&m, "pick", &[Value::Int(2)]), Value::Int(20));
+    assert_eq!(call(&m, "pick", &[Value::Int(7)]), Value::Int(99));
+}
+
+#[test]
+fn match_with_wildcard_only() {
+    let m = compile_src(r#"
+        fn always(b n: Int) -> Int {
+            return match n {
+                _ => 42
+            }
+        }
+    "#);
+    assert_eq!(call(&m, "always", &[Value::Int(0)]), Value::Int(42));
+}
+
+#[test]
+fn struct_method_reads_field() {
+    let m = compile_src(r#"
+        pub struct Box { value: Int }{
+            pub fn new(o v: Int) -> Box {
+                return Box { value: v }
+            }
+            pub fn get() -> Int {
+                return self.value
+            }
+        }
+        fn test_get() -> Int {
+            const b = Box.new(99)
+            return b.get()
+        }
+    "#);
+    assert_eq!(call(&m, "test_get", &[]), Value::Int(99));
+}
+
+#[test]
+fn struct_method_two_fields() {
+    let m = compile_src(r#"
+        pub struct Pair { x: Int  y: Int }{
+            pub fn new(o x: Int, o y: Int) -> Pair {
+                return Pair { x: x, y: y }
+            }
+            pub fn sum() -> Int {
+                return self.x + self.y
+            }
+        }
+        fn test_sum() -> Int {
+            const p = Pair.new(3, 7)
+            return p.sum()
+        }
+    "#);
+    assert_eq!(call(&m, "test_sum", &[]), Value::Int(10));
+}
+
+#[test]
+fn closure_identity() {
+    let m = compile_src(r#"
+        fn test_id(b x: Int) -> Int {
+            const id = fn(n) -> n
+            return id(x)
+        }
+    "#);
+    assert_eq!(call(&m, "test_id", &[Value::Int(7)]), Value::Int(7));
+}
+
+#[test]
+fn struct_field_mutation() {
+    let m = compile_src(r#"
+        pub struct Counter { value: Int }{
+            pub fn new(o v: Int) -> Counter {
+                return Counter { value: v }
+            }
+            pub fn inc() -> Int {
+                self.value = self.value + 1
+                return self.value
+            }
+        }
+        fn test_inc() -> Int {
+            const c = Counter.new(10)
+            return c.inc()
+        }
+    "#);
+    assert_eq!(call(&m, "test_inc", &[]), Value::Int(11));
+}
+
+#[test]
+fn if_expression_value() {
+    let m = compile_src(r#"
+        fn pick(b cond: Bool) -> Int {
+            const x = if cond { 1 } else { 2 }
+            return x
+        }
+    "#);
+    assert_eq!(call(&m, "pick", &[Value::Bool(true)]), Value::Int(1));
+    assert_eq!(call(&m, "pick", &[Value::Bool(false)]), Value::Int(2));
+}
