@@ -122,3 +122,93 @@ fn proof_test() {
     assert_eq!(test_result.passed, 2, "expected 2 passed: {}", test_result.output);
     assert_eq!(test_result.failed, 0, "expected 0 failed: {}", test_result.output);
 }
+
+// ─── Additional native tests ─────────────────────────────
+
+#[test]
+fn nested_function_calls() {
+    let m = compile_src(r#"
+        fn double(b x: Int) -> Int { return x + x }
+        fn quad(b x: Int) -> Int { return double(double(x)) }
+    "#);
+    assert_eq!(call(&m, "quad", &[3]), Value::Int(12));
+}
+
+#[test]
+fn multiple_return_paths() {
+    let m = compile_src(r#"
+        fn max(b a: Int, b b: Int) -> Int {
+            if a > b { return a }
+            return b
+        }
+    "#);
+    assert_eq!(call(&m, "max", &[5, 3]), Value::Int(5));
+    assert_eq!(call(&m, "max", &[2, 7]), Value::Int(7));
+}
+
+#[test]
+fn var_reassignment() {
+    let m = compile_src(r#"
+        fn count() -> Int {
+            var x = 0
+            x = x + 1
+            x = x + 1
+            x = x + 1
+            return x
+        }
+    "#);
+    assert_eq!(call(&m, "count", &[]), Value::Int(3));
+}
+
+#[test]
+fn proof_test_with_failing_case() {
+    let result = roca_parse::parse(r#"
+        pub fn add(b a: Int, b b: Int) -> Int {
+            return a + b
+        test {
+            self(1, 2) == 3
+            self(1, 2) == 999
+        }}
+    "#);
+    assert!(result.errors.is_empty());
+    let test_result = run_tests(&result.ast);
+    assert_eq!(test_result.passed, 1);
+    assert_eq!(test_result.failed, 1);
+}
+
+#[test]
+fn function_with_no_test_block_compiles() {
+    let m = compile_src(r#"
+        fn helper(b x: Int) -> Int { return x }
+    "#);
+    assert_eq!(call(&m, "helper", &[42]), Value::Int(42));
+}
+
+#[test]
+fn unary_negation() {
+    let m = compile_src(r#"
+        fn neg(b x: Int) -> Int { return 0 - x }
+    "#);
+    assert_eq!(call(&m, "neg", &[5]), Value::Int(-5));
+}
+
+#[test]
+fn comparison_returns_bool() {
+    let m = compile_src(r#"
+        fn eq(b a: Int, b b: Int) -> Bool { return a == b }
+    "#);
+    assert_eq!(call(&m, "eq", &[5, 5]), Value::Bool(true));
+    assert_eq!(call(&m, "eq", &[5, 3]), Value::Bool(false));
+}
+
+#[test]
+fn empty_loop_with_immediate_break() {
+    let m = compile_src(r#"
+        fn instant() -> Int {
+            var x = 42
+            loop { break }
+            return x
+        }
+    "#);
+    assert_eq!(call(&m, "instant", &[]), Value::Int(42));
+}

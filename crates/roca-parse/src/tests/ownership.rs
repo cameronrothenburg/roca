@@ -297,3 +297,42 @@ fn own_010_reject_consume_in_loop() {
         }
     "#, "E-OWN-010"));
 }
+
+// ─── Additional ownership edge cases ─────────────────────
+
+#[test]
+fn multiple_errors_in_one_file() {
+    // Both functions have violations — both should be reported
+    let result = parse_result(r#"
+        fn bad1() -> Int { let x = 42  return x }
+        fn bad2() -> Int { let y = 99  return y }
+    "#);
+    let own002s: Vec<_> = result.errors.iter().filter(|d| d.code == "E-OWN-002").collect();
+    assert!(own002s.len() >= 2, "expected 2+ E-OWN-002 errors, got {}", own002s.len());
+}
+
+#[test]
+fn valid_multi_function_program() {
+    assert!(is_clean(r#"
+        fn helper(b x: Int) -> Int { return x + 1 }
+        fn main() -> Int {
+            const val = 10
+            let borrowed = val
+            const result = helper(borrowed)
+            return result
+        }
+    "#));
+}
+
+#[test]
+fn own_004_move_then_use_in_different_stmt() {
+    assert!(has_error(r#"
+        fn take(o x: Int) -> Int { return x }
+        fn main() -> Int {
+            const a = 5
+            const b = take(a)
+            const c = a + 1
+            return b + c
+        }
+    "#, "E-OWN-004"));
+}

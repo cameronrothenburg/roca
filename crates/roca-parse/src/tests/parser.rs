@@ -269,3 +269,119 @@ fn cross_file_project() {
     let Item::Import { names, .. } = &files[1].items[0] else { panic!("expected import") };
     assert_eq!(names, &["helper"]);
 }
+
+// ─── Additional parser tests ─────────────────────────────
+
+#[test]
+fn multiple_functions_in_one_file() {
+    let ast = parse(r#"
+        fn foo() -> Int { return 1 }
+        fn bar() -> Int { return 2 }
+        pub fn baz() -> Int { return 3 }
+    "#);
+    assert_eq!(ast.items.len(), 3);
+}
+
+#[test]
+fn nested_if_else() {
+    let ast = parse(r#"
+        fn classify(b n: Int) -> Int {
+            if n > 0 {
+                if n > 100 { return 2 }
+                return 1
+            } else {
+                return 0
+            }
+        }
+    "#);
+    let Item::Function(f) = &ast.items[0] else { panic!() };
+    let Stmt::If { then, else_, .. } = &f.body[0] else { panic!() };
+    // Outer if has nested if inside
+    assert!(then.len() >= 1);
+    assert!(else_.is_some());
+}
+
+#[test]
+fn var_reassignment() {
+    let ast = parse(r#"
+        fn count() -> Int {
+            var x = 0
+            x = x + 1
+            x = x + 1
+            return x
+        }
+    "#);
+    let Item::Function(f) = &ast.items[0] else { panic!() };
+    assert_eq!(f.body.len(), 4); // var, assign, assign, return
+    let Stmt::Assign { target, .. } = &f.body[1] else { panic!("expected assign") };
+    assert_eq!(target, "x");
+}
+
+#[test]
+fn struct_with_multiple_methods() {
+    let ast = parse(r#"
+        pub struct Counter { value: Int }{
+            pub fn new(o v: Int) -> Counter {
+                return Counter { value: v }
+            }
+            pub fn get() -> Int {
+                return self.value
+            }
+            pub fn increment() -> Int {
+                self.value = self.value + 1
+                return self.value
+            }
+        }
+    "#);
+    let Item::Struct(s) = &ast.items[0] else { panic!() };
+    assert_eq!(s.methods.len(), 3);
+    assert_eq!(s.methods[0].name, "new");
+    assert_eq!(s.methods[1].name, "get");
+    assert_eq!(s.methods[2].name, "increment");
+}
+
+#[test]
+fn enum_declaration() {
+    let ast = parse(r#"
+        pub enum Color {
+            Red
+            Green
+            Blue
+        }
+    "#);
+    assert_eq!(ast.items.len(), 1);
+    let Item::Enum(e) = &ast.items[0] else { panic!("expected enum") };
+    assert_eq!(e.name, "Color");
+    assert!(e.is_pub);
+    assert_eq!(e.variants.len(), 3);
+}
+
+#[test]
+fn loop_with_break() {
+    let ast = parse(r#"
+        fn find() -> Int {
+            var i = 0
+            loop {
+                if i >= 10 { break }
+                i = i + 1
+            }
+            return i
+        }
+    "#);
+    let Item::Function(f) = &ast.items[0] else { panic!() };
+    let Stmt::Loop { body } = &f.body[1] else { panic!("expected loop") };
+    assert!(body.len() >= 1);
+}
+
+#[test]
+fn bool_literals_in_expressions() {
+    let ast = parse(r#"
+        fn check() -> Bool {
+            const a = true
+            const b = false
+            return a
+        }
+    "#);
+    let Item::Function(f) = &ast.items[0] else { panic!() };
+    assert_eq!(f.body.len(), 3);
+}

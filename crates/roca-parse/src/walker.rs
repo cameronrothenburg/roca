@@ -16,6 +16,47 @@ use crate::rule::{
 
 // ─── State table helpers ──────────────────────────────────────────────────────
 
+/// Check all identifiers in an expression for use-after-move (E-OWN-004).
+fn check_consumed_in_expr(expr: &Expr, state: &StateTable, diags: &mut Vec<Diagnostic>) {
+    match &expr.kind {
+        ExprKind::Ident(name) => {
+            if let Some(info) = state.get(name) {
+                if info.state == VarState::Consumed {
+                    diags.push(Diagnostic {
+                        code: "E-OWN-004",
+                        message: format!("use of moved value '{name}'"),
+                    });
+                }
+            }
+        }
+        ExprKind::BinOp { left, right, .. } => {
+            check_consumed_in_expr(left, state, diags);
+            check_consumed_in_expr(right, state, diags);
+        }
+        ExprKind::UnaryOp { expr: inner, .. } => {
+            check_consumed_in_expr(inner, state, diags);
+        }
+        ExprKind::Call { target, args } => {
+            check_consumed_in_expr(target, state, diags);
+            for a in args { check_consumed_in_expr(a, state, diags); }
+        }
+        ExprKind::GetField { target, .. } => {
+            check_consumed_in_expr(target, state, diags);
+        }
+        ExprKind::ArrayGet { target, index } => {
+            check_consumed_in_expr(target, state, diags);
+            check_consumed_in_expr(index, state, diags);
+        }
+        ExprKind::StructLit { fields, .. } => {
+            for (_, v) in fields { check_consumed_in_expr(v, state, diags); }
+        }
+        ExprKind::ArrayNew(elems) => {
+            for e in elems { check_consumed_in_expr(e, state, diags); }
+        }
+        _ => {}
+    }
+}
+
 fn vars_newly_consumed(before: &StateTable, after: &StateTable) -> HashSet<String> {
     after
         .iter()
@@ -243,7 +284,9 @@ fn walk_stmt(
     match stmt {
         // ── const x = expr → Owned ────────────────────────────────────────────
         Stmt::Let { name, value, is_const: true, .. } => {
-            // Process any call in RHS first to track moves
+            // Check for use-after-move in the RHS expression
+            check_consumed_in_expr(value, state, diags);
+            // Process any call in RHS to track moves
             if let ExprKind::Call { target, args } = &value.kind {
                 process_call(target, args, regs, rules, state, diags);
             }
@@ -278,7 +321,7 @@ fn walk_stmt(
 
         // ── Return ────────────────────────────────────────────────────────────
         Stmt::Return(expr) => {
-            // Process any call in the return expression first (for moves)
+            check_consumed_in_expr(expr, state, diags);
             if let ExprKind::Call { target, args } = &expr.kind {
                 process_call(target, args, regs, rules, state, diags);
             }

@@ -136,3 +136,87 @@ fn emit_import() {
     assert!(js.contains("import"), "expected import statement, got:\n{js}");
     assert!(js.contains("./types.js"), "expected .roca → .js extension change, got:\n{js}");
 }
+
+// ─── Additional JS emission tests ────────────────────────
+
+#[test]
+fn emit_var_and_reassignment() {
+    let js = emit_src(r#"
+        fn count() -> Int {
+            var x = 0
+            x = x + 1
+            return x
+        }
+    "#);
+    assert!(js.contains("let x"), "var should emit as let, got:\n{js}");
+    assert!(js.contains("x = x + 1") || js.contains("x=x+1"), "expected reassignment, got:\n{js}");
+}
+
+#[test]
+fn emit_loop_with_break() {
+    let js = emit_src(r#"
+        fn spin() -> Int {
+            var i = 0
+            loop {
+                if i > 5 { break }
+                i = i + 1
+            }
+            return i
+        }
+    "#);
+    assert!(js.contains("while") && js.contains("true"), "loop should emit as while(true), got:\n{js}");
+    assert!(js.contains("break"), "expected break, got:\n{js}");
+}
+
+#[test]
+fn emit_bool_literal() {
+    let js = emit_src("fn yes() -> Bool { return true }");
+    assert!(js.contains("true"), "expected true literal, got:\n{js}");
+}
+
+#[test]
+fn emit_int_literal() {
+    let js = emit_src("fn answer() -> Int { return 42 }");
+    assert!(js.contains("42"), "expected 42, got:\n{js}");
+}
+
+#[test]
+fn emit_multiple_functions() {
+    let js = emit_src(r#"
+        fn foo() -> Int { return 1 }
+        fn bar() -> Int { return 2 }
+    "#);
+    assert!(js.contains("function foo"), "expected foo, got:\n{js}");
+    assert!(js.contains("function bar"), "expected bar, got:\n{js}");
+}
+
+#[test]
+fn emit_nested_expression() {
+    let js = emit_src(r#"
+        fn calc(b a: Int, b b: Int, b c: Int) -> Int {
+            return a + b * c
+        }
+    "#);
+    // Should have proper precedence in output
+    assert!(js.contains("a + b * c") || js.contains("a+b*c"), "expected nested expr, got:\n{js}");
+}
+
+#[test]
+fn emit_self_as_this() {
+    let js = emit_src(r#"
+        pub struct Counter { value: Int }{
+            pub fn get() -> Int {
+                return self.value
+            }
+        }
+    "#);
+    assert!(js.contains("this.value") || js.contains("this .value"), "self should emit as this, got:\n{js}");
+}
+
+#[test]
+fn emit_comparison_operators() {
+    let js = emit_src(r#"
+        fn check(b a: Int, b b: Int) -> Bool { return a >= b }
+    "#);
+    assert!(js.contains(">="), "expected >=, got:\n{js}");
+}
