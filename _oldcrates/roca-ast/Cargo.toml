@@ -1,7 +1,0 @@
-[package]
-name = "roca-ast"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
-description = "AST node types and language constants for the Roca compiler"
-repository.workspace = true

@@ -1,0 +1,17 @@
+[package]
+name = "roca-js"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Roca JS backend — AST to JavaScript via OXC"
+
+[dependencies]
+roca-lang = { workspace = true }
+oxc_allocator = { workspace = true }
+oxc_ast = { workspace = true }
+oxc_codegen = { workspace = true }
+oxc_span = { workspace = true }
+
+[dev-dependencies]
+roca-parse = { workspace = true }

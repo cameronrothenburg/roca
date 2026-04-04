@@ -18,3 +18,8 @@ cranelift-frontend = "0.130"
 cranelift-module = "0.130"
 cranelift-jit = "0.130"
 cranelift-native = "0.130"
+roca-js = { path = "crates/roca-js" }
+oxc_allocator = "0.122"
+oxc_ast = "0.122"
+oxc_codegen = "0.122"
+oxc_span = "0.122"
