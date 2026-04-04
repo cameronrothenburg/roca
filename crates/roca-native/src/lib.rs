@@ -24,15 +24,41 @@ mod compiler;
 
 use roca_lang::ast::{Expr, ExprKind, Item, Lit, SourceFile, TestCase, Type};
 
-/// A Roca value returned from JIT execution.
-#[derive(Debug, Clone, PartialEq)]
+/// A Roca value — used for args, return values, and test expectations.
+///
+/// `String` carries either a heap pointer (from JIT) or expected content (from test).
+/// `PartialEq` compares by content — reading the heap pointer via roca-mem when needed.
+#[derive(Debug, Clone)]
 pub enum Value {
     Int(i64),
     Float(f64),
     Bool(bool),
-    String(i64),   // heap pointer
-    Struct(i64),   // heap pointer
+    String(i64),            // heap pointer (JIT return) or 0 with ExpectedString
+    ExpectedString(String), // string content (test expectation)
+    Struct(i64),
     Unit,
+}
+
+impl PartialEq for Value {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Value::Int(a), Value::Int(b)) => a == b,
+            (Value::Float(a), Value::Float(b)) => (a - b).abs() < 1e-10,
+            (Value::Bool(a), Value::Bool(b)) => a == b,
+            (Value::Unit, Value::Unit) => true,
+            (Value::Struct(a), Value::Struct(b)) => a == b,
+            // String comparison: read heap pointer content via roca-mem
+            (Value::String(ptr), Value::ExpectedString(expected)) |
+            (Value::ExpectedString(expected), Value::String(ptr)) => {
+                roca_mem::read_cstr(*ptr) == expected.as_str()
+            }
+            (Value::String(a), Value::String(b)) => {
+                roca_mem::read_cstr(*a) == roca_mem::read_cstr(*b)
+            }
+            (Value::ExpectedString(a), Value::ExpectedString(b)) => a == b,
+            _ => false,
+        }
+    }
 }
 
 /// Opaque compiled module handle. Holds the AST for type lookups.
@@ -54,46 +80,42 @@ pub fn compile(source: &SourceFile) -> Result<Module, String> {
     Ok(Module { compiled, source: source.clone() })
 }
 
-/// Call a compiled function by name. The module knows the return type.
-pub fn call(module: &Module, name: &str, args: &[i64]) -> Value {
+/// Call a compiled function by name with typed arguments.
+/// Uses a compiled shim that unpacks args from a buffer — supports any number of params.
+pub fn call(module: &Module, name: &str, args: &[Value]) -> Value {
     use cranelift_module::Module as ClifModule;
 
-    let id = module.compiled.func_ids.get(name)
+    let shim_name = format!("{name}__shim");
+    let shim_id = module.compiled.func_ids.get(&shim_name)
         .copied()
-        .expect(&format!("function not found: {name}"));
-    let ptr = module.compiled.jit.get_finalized_function(id);
-
-    // Look up return type from AST
+        .unwrap_or_else(|| panic!("shim not found: {shim_name}"));
+    let shim_ptr = module.compiled.jit.get_finalized_function(shim_id);
     let ret_type = find_return_type(&module.source, name);
 
-    unsafe {
-        match &ret_type {
-            Type::Float => {
-                let raw = call_raw_f64(ptr, args);
-                Value::Float(raw)
-            }
-            Type::Bool => {
-                let raw = call_raw_i8(ptr, args);
-                Value::Bool(raw != 0)
-            }
-            Type::String => {
-                let raw = call_raw_i64(ptr, args);
-                Value::String(raw)
-            }
-            Type::Named(_) | Type::Array(_) | Type::Optional(_) => {
-                let raw = call_raw_i64(ptr, args);
-                Value::Struct(raw)
-            }
-            Type::Unit => {
-                call_raw_i64(ptr, args);
-                Value::Unit
-            }
-            _ => {
-                // Int and everything else
-                let raw = call_raw_i64(ptr, args);
-                Value::Int(raw)
-            }
-        }
+    // Pack all args as i64 into a contiguous buffer
+    let raw_args: Vec<i64> = args.iter().map(|v| match v {
+        Value::Int(n) => *n,
+        Value::Float(f) => i64::from_ne_bytes(f.to_ne_bytes()),
+        Value::Bool(b) => if *b { 1 } else { 0 },
+        Value::String(p) | Value::Struct(p) => *p,
+        Value::ExpectedString(_) => panic!("ExpectedString cannot be used as a call argument"),
+        Value::Unit => 0,
+    }).collect();
+
+    // Call the shim: (args_ptr: *const i64) -> i64
+    let raw_result = unsafe {
+        let shim: unsafe extern "C" fn(*const i64) -> i64 = std::mem::transmute(shim_ptr);
+        shim(raw_args.as_ptr())
+    };
+
+    // Interpret the unified i64 result based on return type
+    match &ret_type {
+        Type::Float => Value::Float(f64::from_ne_bytes(raw_result.to_ne_bytes())),
+        Type::Bool => Value::Bool(raw_result != 0),
+        Type::String => Value::String(raw_result),
+        Type::Named(_) | Type::Array(_) | Type::Optional(_) => Value::Struct(raw_result),
+        Type::Unit => Value::Unit,
+        _ => Value::Int(raw_result),
     }
 }
 
@@ -112,34 +134,6 @@ fn find_return_type(source: &SourceFile, name: &str) -> Type {
         }
     }
     Type::Int // fallback
-}
-
-unsafe fn call_raw_i64(ptr: *const u8, args: &[i64]) -> i64 {
-    match args.len() {
-        0 => { let f: unsafe extern "C" fn() -> i64 = std::mem::transmute(ptr); f() }
-        1 => { let f: unsafe extern "C" fn(i64) -> i64 = std::mem::transmute(ptr); f(args[0]) }
-        2 => { let f: unsafe extern "C" fn(i64, i64) -> i64 = std::mem::transmute(ptr); f(args[0], args[1]) }
-        3 => { let f: unsafe extern "C" fn(i64, i64, i64) -> i64 = std::mem::transmute(ptr); f(args[0], args[1], args[2]) }
-        _ => panic!("call: too many args (max 3)"),
-    }
-}
-
-unsafe fn call_raw_f64(ptr: *const u8, args: &[i64]) -> f64 {
-    match args.len() {
-        0 => { let f: unsafe extern "C" fn() -> f64 = std::mem::transmute(ptr); f() }
-        1 => { let f: unsafe extern "C" fn(i64) -> f64 = std::mem::transmute(ptr); f(args[0]) }
-        2 => { let f: unsafe extern "C" fn(i64, i64) -> f64 = std::mem::transmute(ptr); f(args[0], args[1]) }
-        _ => panic!("call_f64: too many args (max 2)"),
-    }
-}
-
-unsafe fn call_raw_i8(ptr: *const u8, args: &[i64]) -> u8 {
-    match args.len() {
-        0 => { let f: unsafe extern "C" fn() -> u8 = std::mem::transmute(ptr); f() }
-        1 => { let f: unsafe extern "C" fn(i64) -> u8 = std::mem::transmute(ptr); f(args[0]) }
-        2 => { let f: unsafe extern "C" fn(i64, i64) -> u8 = std::mem::transmute(ptr); f(args[0], args[1]) }
-        _ => panic!("call_i8: too many args (max 2)"),
-    }
 }
 
 /// Compile and run all proof tests in a source file.
@@ -169,9 +163,32 @@ pub fn run_tests(source: &SourceFile) -> TestResult {
         for case in &test_block.cases {
             match case {
                 TestCase::Equals { args, expected } => {
-                    let arg_vals: Vec<i64> = args.iter().map(|a| expr_to_i64(a)).collect();
+                    // Convert all args — skip test case if any arg is unsupported
+                    let mut arg_vals = Vec::new();
+                    let mut skip = false;
+                    for a in args {
+                        match expr_to_value(a) {
+                            Some(v) => arg_vals.push(v),
+                            None => {
+                                failed += 1;
+                                output.push_str(&format!("SKIP: {}(...) — unsupported arg expression\n", func.name));
+                                skip = true;
+                                break;
+                            }
+                        }
+                    }
+                    if skip { continue; }
+
+                    let expected_val = match expr_to_value(expected) {
+                        Some(v) => v,
+                        None => {
+                            failed += 1;
+                            output.push_str(&format!("SKIP: {}(...) — unsupported expected expression\n", func.name));
+                            continue;
+                        }
+                    };
+
                     let result = call(&module, &func.name, &arg_vals);
-                    let expected_val = expr_to_value(expected);
 
                     if result == expected_val {
                         passed += 1;
@@ -188,21 +205,21 @@ pub fn run_tests(source: &SourceFile) -> TestResult {
     TestResult { passed, failed, output }
 }
 
-fn expr_to_i64(expr: &Expr) -> i64 {
+fn expr_to_value(expr: &Expr) -> Option<Value> {
     match &expr.kind {
-        ExprKind::Lit(Lit::Int(n)) => *n,
-        ExprKind::Lit(Lit::Bool(b)) => if *b { 1 } else { 0 },
-        ExprKind::Lit(Lit::Float(f)) => *f as i64,
-        _ => 0,
-    }
-}
-
-fn expr_to_value(expr: &Expr) -> Value {
-    match &expr.kind {
-        ExprKind::Lit(Lit::Int(n)) => Value::Int(*n),
-        ExprKind::Lit(Lit::Float(f)) => Value::Float(*f),
-        ExprKind::Lit(Lit::Bool(b)) => Value::Bool(*b),
-        _ => Value::Int(0),
+        ExprKind::Lit(Lit::Int(n)) => Some(Value::Int(*n)),
+        ExprKind::Lit(Lit::Float(f)) => Some(Value::Float(*f)),
+        ExprKind::Lit(Lit::Bool(b)) => Some(Value::Bool(*b)),
+        ExprKind::Lit(Lit::String(s)) => Some(Value::ExpectedString(s.clone())),
+        ExprKind::Lit(Lit::Unit) => Some(Value::Unit),
+        ExprKind::UnaryOp { op: roca_lang::ast::UnaryOp::Neg, expr: inner } => {
+            match expr_to_value(inner)? {
+                Value::Int(n) => Some(Value::Int(-n)),
+                Value::Float(f) => Some(Value::Float(-f)),
+                other => Some(other),
+            }
+        }
+        _ => None,
     }
 }
 

@@ -1,0 +1,48 @@
+// Control flow: if/else, loops, match
+
+pub fn abs(b n: Int) -> Int {
+    if n < 0 { return 0 - n }
+    return n
+test {
+    self(5) == 5
+    self(-7) == 7
+    self(0) == 0
+}}
+
+pub fn max(b a: Int, b b: Int) -> Int {
+    if a > b { return a }
+    return b
+test {
+    self(3, 7) == 7
+    self(10, 2) == 10
+    self(5, 5) == 5
+}}
+
+pub fn sum_to(b n: Int) -> Int {
+    var total = 0
+    var i = 0
+    loop {
+        if i >= n { break }
+        total = total + i
+        i = i + 1
+    }
+    return total
+test {
+    self(5) == 10
+    self(1) == 0
+    self(0) == 0
+}}
+
+pub fn describe(b n: Int) -> String {
+    const result = match n {
+        1 => "one"
+        2 => "two"
+        3 => "three"
+        _ => "other"
+    }
+    return result
+test {
+    self(1) == "one"
+    self(2) == "two"
+    self(99) == "other"
+}}

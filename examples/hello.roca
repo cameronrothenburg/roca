@@ -1,0 +1,10 @@
+pub fn add(b a: Int, b b: Int) -> Int {
+    return a + b
+test {
+    self(1, 2) == 3
+    self(0, 0) == 0
+}}
+
+pub fn greet() -> String {
+    return "hello world"
+}

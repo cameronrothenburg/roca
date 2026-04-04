@@ -160,9 +160,104 @@ pub fn compile(source: &SourceFile) -> Result<CompiledModule, String> {
         }
     }
 
+    // Compile call shims: each takes (args_ptr: i64) -> i64 and unpacks args
+    // to call the real function. This lets call() work with any number of args.
+    let shim_entries: Vec<(String, Vec<ClifType>, ClifType)> = func_ids.keys().map(|name| {
+        let (params, ret) = &sig_reg[name];
+        (name.clone(), params.clone(), *ret)
+    }).collect();
+
+    for (name, param_types, ret_type) in &shim_entries {
+        let shim_name = format!("{}__shim", name);
+        let mut shim_sig = module.make_signature();
+        shim_sig.params.push(AbiParam::new(types::I64)); // args_ptr
+        shim_sig.returns.push(AbiParam::new(types::I64)); // unified i64 return
+        let shim_id = module.declare_function(&shim_name, Linkage::Export, &shim_sig)
+            .map_err(|e| format!("declare shim {shim_name}: {e}"))?;
+
+        compile_shim(
+            &mut module, shim_id, &shim_name, &func_ids[name],
+            param_types, *ret_type,
+        ).map_err(|e| format!("compile shim {shim_name}: {e}"))?;
+
+        func_ids.insert(shim_name, shim_id);
+    }
+
     module.finalize_definitions().map_err(|e| format!("finalize: {e}"))?;
 
     Ok(CompiledModule { jit: module, func_ids })
+}
+
+/// Compile a shim that unpacks args from a pointer and calls the real function.
+/// Shim signature: (args_ptr: i64) -> i64
+/// Each arg is loaded as 8 bytes from args_ptr[i*8], bitcast to the correct type.
+/// The return value is unified to i64 (f64 bits, bool extended, etc.).
+fn compile_shim(
+    module: &mut JITModule,
+    shim_id: FuncId,
+    shim_name: &str,
+    real_id: &FuncId,
+    param_types: &[ClifType],
+    ret_type: ClifType,
+) -> Result<(), String> {
+    let mut cl_ctx = cranelift_codegen::Context::new();
+    cl_ctx.func.signature = {
+        let mut sig = module.make_signature();
+        sig.params.push(AbiParam::new(types::I64));
+        sig.returns.push(AbiParam::new(types::I64));
+        sig
+    };
+
+    let mut fb_ctx = FunctionBuilderContext::new();
+    let mut fb = FunctionBuilder::new(&mut cl_ctx.func, &mut fb_ctx);
+
+    let entry = fb.create_block();
+    fb.append_block_params_for_function_params(entry);
+    fb.switch_to_block(entry);
+    fb.seal_block(entry);
+
+    let args_ptr = fb.block_params(entry)[0]; // i64 pointer to args buffer
+
+    // Load each arg from the buffer
+    let mut call_args = Vec::new();
+    for (i, ty) in param_types.iter().enumerate() {
+        let offset = i32::try_from(i * 8).map_err(|_| format!("too many params in shim {shim_name}"))?;
+        let raw = fb.ins().load(types::I64, cranelift_codegen::ir::MemFlags::trusted(), args_ptr, offset);
+        let arg = match ty {
+            ClifType::F64 => fb.ins().bitcast(types::F64, cranelift_codegen::ir::MemFlags::new(), raw),
+            ClifType::I8 => fb.ins().ireduce(types::I8, raw),
+            ClifType::I64 => raw,
+        };
+        call_args.push(arg);
+    }
+
+    // Call the real function
+    let real_sig = {
+        let mut sig = module.make_signature();
+        for ty in param_types {
+            sig.params.push(AbiParam::new(ty.to_clif()));
+        }
+        sig.returns.push(AbiParam::new(ret_type.to_clif()));
+        sig
+    };
+    let sig_ref = fb.import_signature(real_sig);
+    let real_func_ref = module.declare_func_in_func(*real_id, fb.func);
+    let call_inst = fb.ins().call(real_func_ref, &call_args);
+    let result = fb.inst_results(call_inst)[0];
+
+    // Unify return to i64
+    let unified = match ret_type {
+        ClifType::F64 => fb.ins().bitcast(types::I64, cranelift_codegen::ir::MemFlags::new(), result),
+        ClifType::I8 => fb.ins().uextend(types::I64, result),
+        ClifType::I64 => result,
+    };
+    fb.ins().return_(&[unified]);
+    fb.finalize();
+
+    module.define_function(shim_id, &mut cl_ctx)
+        .map_err(|e| format!("define_function {shim_name}: {e}"))?;
+
+    Ok(())
 }
 
 fn make_sig(module: &JITModule, params: &[Param], ret: &Type) -> cranelift_codegen::ir::Signature {

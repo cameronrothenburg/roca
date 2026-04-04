@@ -1,0 +1,17 @@
+[package]
+name = "roca-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Roca compiler CLI"
+
+[[bin]]
+name = "roca"
+path = "src/main.rs"
+
+[dependencies]
+clap = { workspace = true }
+roca-parse = { workspace = true }
+roca-native = { workspace = true }
+roca-js = { workspace = true }

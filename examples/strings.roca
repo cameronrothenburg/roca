@@ -1,0 +1,13 @@
+// String values and returns
+
+pub fn greeting() -> String {
+    return "hello world"
+test {
+    self() == "hello world"
+}}
+
+pub fn empty() -> String {
+    return ""
+test {
+    self() == ""
+}}
