@@ -1,7 +1,22 @@
 //! roca-mem — Memory management for the Roca language.
 //!
-//! One crate owns all allocation, ownership, and cleanup.
-//! `set_owned` enforces that containers always own their heap fields.
+//! One crate owns all allocation, ownership transfer, and cleanup.
+//! Used by the native backend (Cranelift JIT) for physical memory operations.
+//! The JS backend ignores this crate entirely (GC handles memory).
+//!
+//! # Core rule
+//!
+//! `mem_struct_set_owned` is the ownership gate. When storing a heap value
+//! into a struct field: if the source is tracked (owned), move ownership;
+//! if untracked (borrowed parameter), copy it. Containers always own their fields.
+//!
+//! # Modules
+//!
+//! - [`tags`] — allocation tracking registry (ALLOC_TAGS, type IDs)
+//! - [`tracker`] — alloc/free counting, leak detection
+//! - [`alloc`] — string, struct, array, map allocation + deep copy
+//! - [`free`] — recursive, idempotent, tag-dispatch cleanup
+//! - [`struct_ops`] — field get/set + the ownership gate
 
 pub mod tags;
 pub mod tracker;

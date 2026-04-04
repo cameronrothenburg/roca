@@ -1,4 +1,19 @@
-//! roca-js — Roca JS backend. Builds OXC JS AST from Roca AST, then emits JS text.
+//! roca-js — Roca JS backend.
+//!
+//! Builds an OXC JS AST from the checked Roca AST, then renders it to
+//! JavaScript text via `oxc_codegen`.
+//!
+//! # Mapping
+//!
+//! - `fn` → `function` (with `export` if `pub`)
+//! - `struct` → `class` (methods are static unless they use `self`)
+//! - `const` → `const`, `var` → `let`
+//! - `for x in items` → `for (const x of items)`
+//! - `loop` → `while (true)`
+//! - `match` → ternary chain
+//! - `fn(x) -> expr` → `(x) => expr`
+//! - `self` → `this`
+//! - `import from "./x.roca"` → `import from "./x.js"`
 
 use roca_lang::{SourceFile, Item, FuncDef, StructDef, Stmt, Expr, ExprKind, BinOp, UnaryOp, Lit, Pattern, MatchArm};
 

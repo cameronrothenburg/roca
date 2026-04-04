@@ -1,9 +1,22 @@
 //! roca-native — compiles checked AST to machine code via Cranelift JIT.
 //!
-//! Cranelift is a private implementation detail. The public API is:
-//! - `compile()` — AST → JIT module
-//! - `run_tests()` — compile + execute proof tests
-//! - `call()` — call a compiled function, returns typed Value
+//! Cranelift is a private implementation detail — nothing outside this crate
+//! touches Cranelift types. All memory operations go through roca-mem.
+//!
+//! # Public API
+//!
+//! - [`compile()`] — AST → JIT module
+//! - [`call()`] — call a compiled function by name, returns typed [`Value`]
+//! - [`run_tests()`] — compile + execute inline proof tests
+//!
+//! # Architecture
+//!
+//! - `compiler.rs` — AST walker emitting Cranelift IR through the builder
+//! - `builder.rs` — wraps `FunctionBuilder`, no Cranelift types leak
+//! - `runtime.rs` — registers roca-mem symbols into the JIT module
+//!
+//! The `call()` function looks up the return type from the AST and dispatches
+//! to the correct calling convention (i64, f64, or i8 return).
 
 mod builder;
 mod runtime;

@@ -1,7 +1,35 @@
 //! roca-parse — tokenizer, parser, and ownership checker for Roca.
 //!
-//! Takes source text, produces a checked `SourceFile` or diagnostics.
-//! Code that violates ownership rules cannot produce an AST.
+//! Takes source text, produces a checked [`ParseResult`] with the AST,
+//! errors (blocking), and notes (informational). Code that violates
+//! ownership or type rules gets diagnostics.
+//!
+//! # Pipeline
+//!
+//! ```text
+//! source &str → tokenizer → parser → AST → checker (ownership + types) → ParseResult
+//! ```
+//!
+//! # Checking
+//!
+//! The checker uses a pluggable [`Rule`](rule::Rule) trait. Each rule is a
+//! separate struct that observes the AST walk and emits diagnostics.
+//! The walker owns all state mutations (Owned/Borrowed/Consumed).
+//!
+//! Current rules: E-OWN-001 through E-OWN-010 (ownership),
+//! E-TYP-001/002 (types), E-STR-006 (struct fields), plus
+//! BinOpTypeMismatch and CallArgTypeMismatch.
+//!
+//! # Usage
+//!
+//! ```ignore
+//! let result = roca_parse::parse(source);
+//! if result.errors.is_empty() {
+//!     // result.ast is safe to compile
+//! } else {
+//!     // result.errors contains diagnostics
+//! }
+//! ```
 
 mod tokenizer;
 mod parser;
