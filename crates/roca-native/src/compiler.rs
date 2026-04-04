@@ -277,8 +277,8 @@ struct CompileCtx<'a> {
     runtime_ids: &'a HashMap<String, FuncId>,
     struct_reg: &'a StructRegistry,
     sig_reg: &'a SigRegistry,
-    /// Maps variable name → struct type name for field access inference.
     var_struct_map: HashMap<String, String>,
+    closure_counter: usize,
 }
 
 impl<'a> CompileCtx<'a> {
@@ -295,6 +295,41 @@ impl<'a> CompileCtx<'a> {
 
 // ─── Compile one function ─────────────────────────────────────────────────────
 
+/// Check if a function body references `self` anywhere.
+fn body_uses_self(stmts: &[Stmt]) -> bool {
+    stmts.iter().any(|s| stmt_uses_self(s))
+}
+
+fn stmt_uses_self(stmt: &Stmt) -> bool {
+    match stmt {
+        Stmt::Let { value, .. } | Stmt::Var { value, .. } | Stmt::Assign { value, .. }
+        | Stmt::Return(value) | Stmt::Expr(value) => expr_uses_self(value),
+        Stmt::SetField { target, value, .. } => expr_uses_self(target) || expr_uses_self(value),
+        Stmt::If { cond, then, else_ } => {
+            expr_uses_self(cond) || body_uses_self(then)
+                || else_.as_ref().is_some_and(|e| body_uses_self(e))
+        }
+        Stmt::Loop { body } | Stmt::For { body, .. } => body_uses_self(body),
+        _ => false,
+    }
+}
+
+fn expr_uses_self(expr: &Expr) -> bool {
+    match &expr.kind {
+        ExprKind::SelfRef => true,
+        ExprKind::BinOp { left, right, .. } => expr_uses_self(left) || expr_uses_self(right),
+        ExprKind::UnaryOp { expr, .. } => expr_uses_self(expr),
+        ExprKind::Call { target, args } => expr_uses_self(target) || args.iter().any(expr_uses_self),
+        ExprKind::GetField { target, .. } => expr_uses_self(target),
+        ExprKind::StructLit { fields, .. } => fields.iter().any(|(_, v)| expr_uses_self(v)),
+        ExprKind::If { cond, then, else_ } => {
+            expr_uses_self(cond) || expr_uses_self(then) || else_.as_ref().is_some_and(|e| expr_uses_self(e))
+        }
+        ExprKind::MakeClosure { body, .. } => expr_uses_self(body),
+        _ => false,
+    }
+}
+
 fn compile_function(
     module: &mut JITModule,
     func_id: FuncId,
@@ -305,8 +340,14 @@ fn compile_function(
     struct_reg: &StructRegistry,
     sig_reg: &SigRegistry,
 ) -> Result<(), String> {
+    let uses_self = body_uses_self(&func.body);
+
     let sig = {
         let mut s = module.make_signature();
+        // Instance methods get self as first i64 param
+        if uses_self {
+            s.params.push(AbiParam::new(types::I64));
+        }
         for p in &func.params {
             s.params.push(AbiParam::new(roca_type_to_clif(&p.ty).to_clif()));
         }
@@ -328,6 +369,7 @@ fn compile_function(
         struct_reg,
         sig_reg,
         var_struct_map: HashMap::new(),
+        closure_counter: 0,
     };
 
     let mut b = RocaBuilder::new(fb, sig_reg.clone());
@@ -339,8 +381,18 @@ fn compile_function(
     b.builder.seal_block(entry);
 
     // Bind parameters
+    let param_offset = if uses_self { 1 } else { 0 };
+    if uses_self {
+        let self_val = b.builder.block_params(entry)[0];
+        b.param_declare("self", ClifType::I64, self_val);
+        // Track self's struct type for field access
+        if let Some(dot_pos) = func_key.find('.') {
+            let struct_name = &func_key[..dot_pos];
+            ctx.var_struct_map.insert("self".to_string(), struct_name.to_string());
+        }
+    }
     let param_vals: Vec<_> = (0..func.params.len())
-        .map(|i| b.builder.block_params(entry)[i])
+        .map(|i| b.builder.block_params(entry)[i + param_offset])
         .collect();
     for (i, p) in func.params.iter().enumerate() {
         let ty = roca_type_to_clif(&p.ty);
@@ -383,7 +435,7 @@ fn compile_stmt(ctx: &mut CompileCtx, b: &mut RocaBuilder, stmt: &Stmt, ret_type
             let val = compile_expr(ctx, b, value);
             let clif_ty = ty.as_ref()
                 .map(roca_type_to_clif)
-                .unwrap_or_else(|| infer_expr_type(value, ctx.struct_reg, ctx.sig_reg));
+                .unwrap_or_else(|| infer_expr_type(value, b, ctx.struct_reg, ctx.sig_reg));
             b.var_declare(name, clif_ty, val);
             if let Some(sname) = infer_struct_name_from_expr(value, ctx.struct_reg) {
                 ctx.var_struct_map.insert(name.clone(), sname);
@@ -393,7 +445,7 @@ fn compile_stmt(ctx: &mut CompileCtx, b: &mut RocaBuilder, stmt: &Stmt, ret_type
             let val = compile_expr(ctx, b, value);
             let clif_ty = ty.as_ref()
                 .map(roca_type_to_clif)
-                .unwrap_or_else(|| infer_expr_type(value, ctx.struct_reg, ctx.sig_reg));
+                .unwrap_or_else(|| infer_expr_type(value, b, ctx.struct_reg, ctx.sig_reg));
             b.var_declare(name, clif_ty, val);
             if let Some(sname) = infer_struct_name_from_expr(value, ctx.struct_reg) {
                 ctx.var_struct_map.insert(name.clone(), sname);
@@ -500,8 +552,32 @@ fn compile_stmt(ctx: &mut CompileCtx, b: &mut RocaBuilder, stmt: &Stmt, ret_type
         Stmt::Expr(expr) => {
             compile_expr(ctx, b, expr);
         }
-        Stmt::SetField { .. } | Stmt::ArraySet { .. } | Stmt::For { .. } | Stmt::Continue => {
-            // Not needed for the 10 tests
+        Stmt::SetField { target, field, value } => {
+            let ptr = compile_expr(ctx, b, target);
+            let val = compile_expr(ctx, b, value);
+            let struct_name = match &target.kind {
+                ExprKind::SelfRef => ctx.var_struct_map.get("self").cloned(),
+                ExprKind::Ident(n) => ctx.var_struct_map.get(n).cloned(),
+                _ => None,
+            };
+            if let Some(sname) = struct_name {
+                let idx = field_index(ctx.struct_reg, &sname, field) as i64;
+                let idx_val = b.int_val(idx);
+                let fty = field_type(ctx.struct_reg, &sname, field);
+                let clif_ty = roca_type_to_clif(&fty);
+                if clif_ty == ClifType::F64 {
+                    let f64_val = coerce(b, val, infer_expr_type(value, b, ctx.struct_reg, ctx.sig_reg), ClifType::F64);
+                    let rt = ctx.import_runtime(b, "mem_struct_set_f64");
+                    b.call_imported(rt, &[ptr, idx_val, f64_val]);
+                } else {
+                    // Int/pointer fields use set_f64 too (stored as f64 bits)
+                    let rt = ctx.import_runtime(b, "mem_struct_set_f64");
+                    b.call_imported(rt, &[ptr, idx_val, val]);
+                }
+            }
+        }
+        Stmt::ArraySet { .. } | Stmt::For { .. } | Stmt::Continue => {
+            // Not yet implemented
         }
     }
 }
@@ -515,7 +591,7 @@ fn compile_expr(ctx: &mut CompileCtx, b: &mut RocaBuilder, expr: &Expr) -> crane
         ExprKind::BinOp { op, left, right } => compile_binop(ctx, b, *op, left, right),
         ExprKind::UnaryOp { op, expr } => {
             let val = compile_expr(ctx, b, expr);
-            let ty = infer_expr_type(expr, ctx.struct_reg, ctx.sig_reg);
+            let ty = infer_expr_type(expr, b, ctx.struct_reg, ctx.sig_reg);
             match op {
                 UnaryOp::Neg => b.neg(val, ty),
                 UnaryOp::Not => b.not(val),
@@ -526,12 +602,122 @@ fn compile_expr(ctx: &mut CompileCtx, b: &mut RocaBuilder, expr: &Expr) -> crane
         ExprKind::StructLit { name, fields } => compile_struct_lit(ctx, b, name, fields),
         ExprKind::Cast { expr, ty } => {
             let val = compile_expr(ctx, b, expr);
-            let from_ty = infer_expr_type(expr, ctx.struct_reg, ctx.sig_reg);
+            let from_ty = infer_expr_type(expr, b, ctx.struct_reg, ctx.sig_reg);
             let to_ty = roca_type_to_clif(ty);
             coerce(b, val, from_ty, to_ty)
         }
-        ExprKind::SelfRef => b.int_val(0),
-        _ => b.int_val(0),
+        ExprKind::SelfRef => b.var_get("self"),
+
+        ExprKind::Match { value, arms } => {
+            let scrutinee = compile_expr(ctx, b, value);
+            let merge = b.create_block();
+            let result_ty = infer_expr_type(&arms[0].body, b, ctx.struct_reg, ctx.sig_reg);
+            b.add_block_param(merge, result_ty);
+
+            for (i, arm) in arms.iter().enumerate() {
+                let is_last = i == arms.len() - 1;
+                match &arm.pattern {
+                    roca_lang::Pattern::Wildcard => {
+                        let val = compile_expr(ctx, b, &arm.body);
+                        b.jump_with(merge, val);
+                    }
+                    roca_lang::Pattern::Lit(lit) => {
+                        let pat = compile_lit(ctx, b, lit);
+                        let cond = b.eq(scrutinee, pat, ClifType::I64);
+                        let arm_blk = b.create_block();
+                        let next = if is_last { merge } else { b.create_block() };
+                        b.brif_to(cond, arm_blk, next);
+
+                        b.switch_block(arm_blk);
+                        b.seal_block(arm_blk);
+                        let val = compile_expr(ctx, b, &arm.body);
+                        b.jump_with(merge, val);
+
+                        if !is_last {
+                            b.switch_block(next);
+                            b.seal_block(next);
+                        }
+                    }
+                    roca_lang::Pattern::Variant { .. } => {
+                        // TODO: enum variant matching
+                        let val = b.int_val(0);
+                        b.jump_with(merge, val);
+                    }
+                }
+            }
+            b.seal_block(merge);
+            b.switch_block(merge);
+            b.block_param(merge, 0)
+        }
+
+        ExprKind::If { cond, then, else_ } => {
+            let cond_val = compile_expr(ctx, b, cond);
+            let cond_i8 = coerce_to_i8(b, cond_val, cond, ctx.struct_reg, ctx.sig_reg);
+            let then_blk = b.create_block();
+            let else_blk = b.create_block();
+            let merge = b.create_block();
+            let result_ty = infer_expr_type(then, b, ctx.struct_reg, ctx.sig_reg);
+            b.add_block_param(merge, result_ty);
+            b.brif_to(cond_i8, then_blk, else_blk);
+
+            b.switch_block(then_blk);
+            b.seal_block(then_blk);
+            let then_val = compile_expr(ctx, b, then);
+            b.jump_with(merge, then_val);
+
+            b.switch_block(else_blk);
+            b.seal_block(else_blk);
+            let else_val = match else_ {
+                Some(e) => compile_expr(ctx, b, e),
+                None => b.int_val(0),
+            };
+            b.jump_with(merge, else_val);
+
+            b.seal_block(merge);
+            b.switch_block(merge);
+            b.block_param(merge, 0)
+        }
+
+        ExprKind::MakeClosure { params, body } => {
+            let name = format!("__closure_{}", ctx.closure_counter);
+            ctx.closure_counter += 1;
+
+            let mut sig = ctx.module.make_signature();
+            for _ in params { sig.params.push(AbiParam::new(types::I64)); }
+            sig.returns.push(AbiParam::new(types::I64));
+
+            let fid = ctx.module.declare_function(&name, Linkage::Local, &sig)
+                .unwrap_or_else(|e| panic!("declare closure {name}: {e}"));
+
+            let mut cl_func = Function::new();
+            cl_func.signature = sig;
+            let mut fb_ctx = FunctionBuilderContext::new();
+            let mut fb = FunctionBuilder::new(&mut cl_func, &mut fb_ctx);
+            let entry = fb.create_block();
+            fb.append_block_params_for_function_params(entry);
+            fb.switch_to_block(entry);
+            fb.seal_block(entry);
+
+            let mut cb = RocaBuilder::new(fb, ctx.sig_reg.clone());
+            let pvals: Vec<_> = (0..params.len())
+                .map(|i| cb.builder.block_params(entry)[i]).collect();
+            for (i, pname) in params.iter().enumerate() {
+                cb.param_declare(pname, ClifType::I64, pvals[i]);
+            }
+
+            let result = compile_expr(ctx, &mut cb, body);
+            cb.builder.ins().return_(&[result]);
+            cb.finalize();
+
+            let mut cl_ctx = cranelift_codegen::Context::for_function(cl_func);
+            ctx.module.define_function(fid, &mut cl_ctx)
+                .unwrap_or_else(|e| panic!("define closure {name}: {e}"));
+
+            let fref = ctx.module.declare_func_in_func(fid, b.func_mut());
+            b.func_addr(fref)
+        }
+
+        _ => b.int_val(0), // remaining unimplemented nodes
     }
 }
 
@@ -575,8 +761,8 @@ fn compile_binop(
     let lv = compile_expr(ctx, b, left);
     let rv = compile_expr(ctx, b, right);
 
-    let lt = infer_expr_type(left, ctx.struct_reg, ctx.sig_reg);
-    let rt = infer_expr_type(right, ctx.struct_reg, ctx.sig_reg);
+    let lt = infer_expr_type(left, b, ctx.struct_reg, ctx.sig_reg);
+    let rt = infer_expr_type(right, b, ctx.struct_reg, ctx.sig_reg);
     // Dominant type: F64 wins over I64 wins over I8
     let ty = if lt == ClifType::F64 || rt == ClifType::F64 {
         ClifType::F64
@@ -620,7 +806,7 @@ fn compile_call(
     let coerced_args: Vec<_> = if let Some((param_tys, _)) = ctx.sig_reg.get(&func_name) {
         let param_tys = param_tys.clone();
         arg_vals.iter().enumerate().map(|(i, &v)| {
-            let from = infer_expr_type(&args[i], ctx.struct_reg, ctx.sig_reg);
+            let from = infer_expr_type(&args[i], b, ctx.struct_reg, ctx.sig_reg);
             let to = param_tys.get(i).copied().unwrap_or(from);
             coerce(b, v, from, to)
         }).collect()
@@ -706,7 +892,7 @@ fn compile_struct_lit(
         let val = compile_expr(ctx, b, field_expr);
         let idx_val = b.int_val(idx);
 
-        let from_ty = infer_expr_type(field_expr, ctx.struct_reg, ctx.sig_reg);
+        let from_ty = infer_expr_type(field_expr, b, ctx.struct_reg, ctx.sig_reg);
         let f64_val = coerce(b, val, from_ty, ClifType::F64);
 
         let func_ref = ctx.import_runtime(b, "mem_struct_set_f64");
@@ -718,7 +904,7 @@ fn compile_struct_lit(
 
 // ─── Type inference helpers ───────────────────────────────────────────────────
 
-fn infer_expr_type(expr: &Expr, struct_reg: &StructRegistry, sig_reg: &SigRegistry) -> ClifType {
+fn infer_expr_type(expr: &Expr, b: &RocaBuilder, struct_reg: &StructRegistry, sig_reg: &SigRegistry) -> ClifType {
     match &expr.kind {
         ExprKind::Lit(Lit::Int(_))    => ClifType::I64,
         ExprKind::Lit(Lit::Float(_))  => ClifType::F64,
@@ -728,8 +914,8 @@ fn infer_expr_type(expr: &Expr, struct_reg: &StructRegistry, sig_reg: &SigRegist
         ExprKind::BinOp { op, left, right } => {
             match op {
                 BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod => {
-                    let lt = infer_expr_type(left, struct_reg, sig_reg);
-                    let rt = infer_expr_type(right, struct_reg, sig_reg);
+                    let lt = infer_expr_type(left, b, struct_reg, sig_reg);
+                    let rt = infer_expr_type(right, b, struct_reg, sig_reg);
                     if lt == ClifType::F64 || rt == ClifType::F64 { ClifType::F64 } else { lt }
                 }
                 _ => ClifType::I8, // comparisons → bool
@@ -739,7 +925,7 @@ fn infer_expr_type(expr: &Expr, struct_reg: &StructRegistry, sig_reg: &SigRegist
             let name = resolve_call_name(target);
             sig_reg.get(&name).map(|(_, ret)| *ret).unwrap_or(ClifType::I64)
         }
-        ExprKind::Ident(_)     => ClifType::I64,
+        ExprKind::Ident(name) => b.var_type(name).unwrap_or(ClifType::I64),
         ExprKind::GetField { .. } => ClifType::I64, // conservative
         ExprKind::StructLit { .. } => ClifType::I64,
         _ => ClifType::I64,
@@ -816,7 +1002,7 @@ fn coerce(b: &mut RocaBuilder, val: cranelift_codegen::ir::Value, from: ClifType
 }
 
 fn coerce_to_i8(b: &mut RocaBuilder, val: cranelift_codegen::ir::Value, expr: &Expr, struct_reg: &StructRegistry, sig_reg: &SigRegistry) -> cranelift_codegen::ir::Value {
-    let ty = infer_expr_type(expr, struct_reg, sig_reg);
+    let ty = infer_expr_type(expr, b, struct_reg, sig_reg);
     coerce(b, val, ty, ClifType::I8)
 }
 
@@ -828,7 +1014,7 @@ fn coerce_to_ret(
     struct_reg: &StructRegistry,
     sig_reg: &SigRegistry,
 ) -> cranelift_codegen::ir::Value {
-    let from = infer_expr_type(expr, struct_reg, sig_reg);
+    let from = infer_expr_type(expr, b, struct_reg, sig_reg);
     let to = roca_type_to_clif(ret_type);
     coerce(b, val, from, to)
 }

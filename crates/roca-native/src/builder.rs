@@ -336,4 +336,47 @@ impl<'a> RocaBuilder<'a> {
     pub fn switch_block(&mut self, block: Block) {
         self.switch_to(block);
     }
+
+    /// Add a typed block parameter (for merge blocks in match/if expressions).
+    pub fn add_block_param(&mut self, block: Block, ty: ClifType) {
+        self.builder.append_block_param(block, ty.to_clif());
+    }
+
+    /// Jump to block passing a value as block argument.
+    pub fn jump_with(&mut self, target: Block, val: Value) {
+        self.builder.ins().jump(target, &[BlockArg::Value(val)]);
+        self.set_terminated();
+    }
+
+    /// Seal a block (alias for seal_block).
+    pub fn seal(&mut self, block: Block) {
+        self.builder.seal_block(block);
+    }
+
+    /// Get the i-th block parameter value.
+    pub fn block_param(&mut self, block: Block, index: usize) -> Value {
+        self.builder.block_params(block)[index]
+    }
+
+    /// Get function address as an i64 value (for closure pointers).
+    pub fn func_addr(&mut self, func_ref: FuncRef) -> Value {
+        self.builder.ins().func_addr(types::I64, func_ref)
+    }
+
+    /// Get mutable reference to the underlying Function (for declare_func_in_func).
+    pub fn func_mut(&mut self) -> &mut cranelift_codegen::ir::Function {
+        self.builder.func
+    }
+
+    /// Look up the ClifType of a declared variable.
+    pub fn var_type(&self, name: &str) -> Option<ClifType> {
+        self.vars.get(name).map(|(_, ty)| *ty)
+    }
+
+    /// Call an imported function by FuncRef.
+    pub fn call_imported(&mut self, func_ref: FuncRef, args: &[Value]) -> Option<Value> {
+        let inst = self.builder.ins().call(func_ref, args);
+        let results = self.builder.inst_results(inst);
+        results.first().copied()
+    }
 }
