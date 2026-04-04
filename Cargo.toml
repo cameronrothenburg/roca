@@ -12,3 +12,9 @@ repository = "https://github.com/cameronrothenburg/roca"
 roca-lang = { path = "crates/roca-lang" }
 roca-mem = { path = "crates/roca-mem" }
 roca-parse = { path = "crates/roca-parse" }
+roca-native = { path = "crates/roca-native" }
+cranelift-codegen = "0.130"
+cranelift-frontend = "0.130"
+cranelift-module = "0.130"
+cranelift-jit = "0.130"
+cranelift-native = "0.130"

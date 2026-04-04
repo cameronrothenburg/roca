@@ -1,0 +1,19 @@
+[package]
+name = "roca-native"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Roca native compiler — AST to Cranelift JIT + proof tests"
+
+[dependencies]
+roca-lang = { workspace = true }
+roca-mem = { workspace = true }
+cranelift-codegen = { workspace = true }
+cranelift-frontend = { workspace = true }
+cranelift-module = { workspace = true }
+cranelift-jit = { workspace = true }
+cranelift-native = { workspace = true }
+
+[dev-dependencies]
+roca-parse = { workspace = true }
