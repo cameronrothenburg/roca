@@ -9,7 +9,7 @@ mod builder;
 mod runtime;
 mod compiler;
 
-use roca_lang::ast::{Expr, Item, Lit, SourceFile, TestCase, Type};
+use roca_lang::ast::{Expr, ExprKind, Item, Lit, SourceFile, TestCase, Type};
 
 /// A Roca value returned from JIT execution.
 #[derive(Debug, Clone, PartialEq)]
@@ -176,19 +176,19 @@ pub fn run_tests(source: &SourceFile) -> TestResult {
 }
 
 fn expr_to_i64(expr: &Expr) -> i64 {
-    match expr {
-        Expr::Lit(Lit::Int(n)) => *n,
-        Expr::Lit(Lit::Bool(b)) => if *b { 1 } else { 0 },
-        Expr::Lit(Lit::Float(f)) => *f as i64,
+    match &expr.kind {
+        ExprKind::Lit(Lit::Int(n)) => *n,
+        ExprKind::Lit(Lit::Bool(b)) => if *b { 1 } else { 0 },
+        ExprKind::Lit(Lit::Float(f)) => *f as i64,
         _ => 0,
     }
 }
 
 fn expr_to_value(expr: &Expr) -> Value {
-    match expr {
-        Expr::Lit(Lit::Int(n)) => Value::Int(*n),
-        Expr::Lit(Lit::Float(f)) => Value::Float(*f),
-        Expr::Lit(Lit::Bool(b)) => Value::Bool(*b),
+    match &expr.kind {
+        ExprKind::Lit(Lit::Int(n)) => Value::Int(*n),
+        ExprKind::Lit(Lit::Float(f)) => Value::Float(*f),
+        ExprKind::Lit(Lit::Bool(b)) => Value::Bool(*b),
         _ => Value::Int(0),
     }
 }

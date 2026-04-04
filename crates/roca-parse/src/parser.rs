@@ -4,6 +4,7 @@
 
 use crate::tokenizer::{tokenize, Token};
 use roca_lang::*;
+use roca_lang::ast::ExprKind;
 
 struct Parser {
     tokens: Vec<Token>,
@@ -419,16 +420,16 @@ impl Parser {
                 // self.field = value
                 self.advance();
                 let value = self.parse_expr();
-                Stmt::SetField { target: Expr::SelfRef, field, value }
+                Stmt::SetField { target: Expr::untyped(ExprKind::SelfRef), field, value }
             } else {
                 // self.field(...) as expression stmt — build expr and continue
-                let base = Expr::GetField { target: Box::new(Expr::SelfRef), field };
+                let base = Expr::untyped(ExprKind::GetField { target: Box::new(Expr::untyped(ExprKind::SelfRef)), field });
                 let expr = self.parse_postfix(base);
                 Stmt::Expr(expr)
             }
         } else {
             // self(...) — call as expression
-            let expr = self.parse_postfix(Expr::SelfRef);
+            let expr = self.parse_postfix(Expr::untyped(ExprKind::SelfRef));
             Stmt::Expr(expr)
         }
     }
@@ -472,7 +473,7 @@ impl Parser {
         while self.check(&Token::Or) {
             self.advance();
             let right = self.parse_and();
-            left = Expr::BinOp { op: BinOp::Or, left: Box::new(left), right: Box::new(right) };
+            left = Expr::untyped(ExprKind::BinOp { op: BinOp::Or, left: Box::new(left), right: Box::new(right) });
         }
         left
     }
@@ -482,7 +483,7 @@ impl Parser {
         while self.check(&Token::And) {
             self.advance();
             let right = self.parse_eq();
-            left = Expr::BinOp { op: BinOp::And, left: Box::new(left), right: Box::new(right) };
+            left = Expr::untyped(ExprKind::BinOp { op: BinOp::And, left: Box::new(left), right: Box::new(right) });
         }
         left
     }
@@ -497,7 +498,7 @@ impl Parser {
             };
             self.advance();
             let right = self.parse_cmp();
-            left = Expr::BinOp { op, left: Box::new(left), right: Box::new(right) };
+            left = Expr::untyped(ExprKind::BinOp { op, left: Box::new(left), right: Box::new(right) });
         }
         left
     }
@@ -514,7 +515,7 @@ impl Parser {
             };
             self.advance();
             let right = self.parse_add();
-            left = Expr::BinOp { op, left: Box::new(left), right: Box::new(right) };
+            left = Expr::untyped(ExprKind::BinOp { op, left: Box::new(left), right: Box::new(right) });
         }
         left
     }
@@ -529,7 +530,7 @@ impl Parser {
             };
             self.advance();
             let right = self.parse_mul();
-            left = Expr::BinOp { op, left: Box::new(left), right: Box::new(right) };
+            left = Expr::untyped(ExprKind::BinOp { op, left: Box::new(left), right: Box::new(right) });
         }
         left
     }
@@ -545,7 +546,7 @@ impl Parser {
             };
             self.advance();
             let right = self.parse_unary();
-            left = Expr::BinOp { op, left: Box::new(left), right: Box::new(right) };
+            left = Expr::untyped(ExprKind::BinOp { op, left: Box::new(left), right: Box::new(right) });
         }
         left
     }
@@ -555,12 +556,12 @@ impl Parser {
             Token::Not => {
                 self.advance();
                 let expr = self.parse_unary();
-                Expr::UnaryOp { op: UnaryOp::Not, expr: Box::new(expr) }
+                Expr::untyped(ExprKind::UnaryOp { op: UnaryOp::Not, expr: Box::new(expr) })
             }
             Token::Minus => {
                 self.advance();
                 let expr = self.parse_unary();
-                Expr::UnaryOp { op: UnaryOp::Neg, expr: Box::new(expr) }
+                Expr::untyped(ExprKind::UnaryOp { op: UnaryOp::Neg, expr: Box::new(expr) })
             }
             _ => self.parse_primary_with_postfix(),
         }
@@ -587,10 +588,10 @@ impl Parser {
                             self.eat(&Token::Comma);
                         }
                         self.expect(&Token::RParen);
-                        let target = Expr::GetField { target: Box::new(expr), field };
-                        expr = Expr::Call { target: Box::new(target), args };
+                        let target = Expr::untyped(ExprKind::GetField { target: Box::new(expr), field });
+                        expr = Expr::untyped(ExprKind::Call { target: Box::new(target), args });
                     } else {
-                        expr = Expr::GetField { target: Box::new(expr), field };
+                        expr = Expr::untyped(ExprKind::GetField { target: Box::new(expr), field });
                     }
                 }
                 Token::LParen => {
@@ -601,13 +602,13 @@ impl Parser {
                         self.eat(&Token::Comma);
                     }
                     self.expect(&Token::RParen);
-                    expr = Expr::Call { target: Box::new(expr), args };
+                    expr = Expr::untyped(ExprKind::Call { target: Box::new(expr), args });
                 }
                 Token::LBracket => {
                     self.advance();
                     let index = self.parse_expr();
                     self.expect(&Token::RBracket);
-                    expr = Expr::ArrayGet { target: Box::new(expr), index: Box::new(index) };
+                    expr = Expr::untyped(ExprKind::ArrayGet { target: Box::new(expr), index: Box::new(index) });
                 }
                 _ => break,
             }
@@ -617,24 +618,24 @@ impl Parser {
 
     fn parse_primary(&mut self) -> Expr {
         match self.peek().clone() {
-            Token::Int(n) => { self.advance(); Expr::Lit(Lit::Int(n)) }
-            Token::Float(f) => { self.advance(); Expr::Lit(Lit::Float(f)) }
-            Token::String(s) => { self.advance(); Expr::Lit(Lit::String(s)) }
-            Token::Bool(b) => { self.advance(); Expr::Lit(Lit::Bool(b)) }
-            Token::Unit => { self.advance(); Expr::Lit(Lit::Unit) }
+            Token::Int(n) => { self.advance(); Expr::untyped(ExprKind::Lit(Lit::Int(n))) }
+            Token::Float(f) => { self.advance(); Expr::untyped(ExprKind::Lit(Lit::Float(f))) }
+            Token::String(s) => { self.advance(); Expr::untyped(ExprKind::Lit(Lit::String(s))) }
+            Token::Bool(b) => { self.advance(); Expr::untyped(ExprKind::Lit(Lit::Bool(b))) }
+            Token::Unit => { self.advance(); Expr::untyped(ExprKind::Lit(Lit::Unit)) }
 
-            Token::Self_ => { self.advance(); Expr::SelfRef }
+            Token::Self_ => { self.advance(); Expr::untyped(ExprKind::SelfRef) }
 
             Token::Wait => {
                 self.advance();
                 let inner = self.parse_primary_with_postfix();
-                Expr::Wait(Box::new(inner))
+                Expr::untyped(ExprKind::Wait(Box::new(inner)))
             }
 
             Token::Not => {
                 self.advance();
                 let expr = self.parse_primary_with_postfix();
-                Expr::UnaryOp { op: UnaryOp::Not, expr: Box::new(expr) }
+                Expr::untyped(ExprKind::UnaryOp { op: UnaryOp::Not, expr: Box::new(expr) })
             }
 
             Token::Fn => {
@@ -649,7 +650,7 @@ impl Parser {
                 self.expect(&Token::RParen);
                 self.expect(&Token::Arrow);
                 let body = self.parse_expr();
-                Expr::MakeClosure { params, body: Box::new(body) }
+                Expr::untyped(ExprKind::MakeClosure { params, body: Box::new(body) })
             }
 
             Token::If => {
@@ -671,15 +672,15 @@ impl Parser {
                         else_stmts.push(self.parse_stmt());
                     }
                     self.expect(&Token::RBrace);
-                    Some(Box::new(Expr::Block(else_stmts, None)))
+                    Some(Box::new(Expr::untyped(ExprKind::Block(else_stmts, None))))
                 } else {
                     None
                 };
-                Expr::If {
+                Expr::untyped(ExprKind::If {
                     cond: Box::new(cond_expr),
-                    then: Box::new(Expr::Block(then_stmts, None)),
+                    then: Box::new(Expr::untyped(ExprKind::Block(then_stmts, None))),
                     else_,
-                }
+                })
             }
 
             Token::Match => {
@@ -694,7 +695,7 @@ impl Parser {
                     arms.push(MatchArm { pattern, body });
                 }
                 self.expect(&Token::RBrace);
-                Expr::Match { value: Box::new(value), arms }
+                Expr::untyped(ExprKind::Match { value: Box::new(value), arms })
             }
 
             Token::LBracket => {
@@ -706,7 +707,7 @@ impl Parser {
                     self.eat(&Token::Comma);
                 }
                 self.expect(&Token::RBracket);
-                Expr::ArrayNew(elems)
+                Expr::untyped(ExprKind::ArrayNew(elems))
             }
 
             Token::LParen => {
@@ -724,7 +725,7 @@ impl Parser {
                     stmts.push(self.parse_stmt());
                 }
                 self.expect(&Token::RBrace);
-                Expr::Block(stmts, None)
+                Expr::untyped(ExprKind::Block(stmts, None))
             }
 
             Token::Ident(name) => {
@@ -745,7 +746,7 @@ impl Parser {
                         self.eat(&Token::Comma);
                     }
                     self.expect(&Token::RBrace);
-                    return Expr::StructLit { name: name_str, fields };
+                    return Expr::untyped(ExprKind::StructLit { name: name_str, fields });
                 }
 
                 // EnumVariant: Name.Variant or Name.Variant(args)
@@ -764,20 +765,20 @@ impl Parser {
                                     self.eat(&Token::Comma);
                                 }
                                 self.expect(&Token::RParen);
-                                return Expr::EnumVariant { name: name_str, variant, args };
+                                return Expr::untyped(ExprKind::EnumVariant { name: name_str, variant, args });
                             } else {
-                                return Expr::EnumVariant { name: name_str, variant, args: vec![] };
+                                return Expr::untyped(ExprKind::EnumVariant { name: name_str, variant, args: vec![] });
                             }
                         }
                     }
                 }
 
-                Expr::Ident(name_str)
+                Expr::untyped(ExprKind::Ident(name_str))
             }
 
             // `o` and `b` are ownership keywords but also valid variable names
-            Token::O => { self.advance(); Expr::Ident("o".into()) }
-            Token::B => { self.advance(); Expr::Ident("b".into()) }
+            Token::O => { self.advance(); Expr::untyped(ExprKind::Ident("o".into())) }
+            Token::B => { self.advance(); Expr::untyped(ExprKind::Ident("b".into())) }
 
             t => panic!("unexpected token in expression: {:?}", t),
         }

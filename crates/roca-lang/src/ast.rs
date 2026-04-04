@@ -50,40 +50,42 @@ pub struct Param {
 
 // ─── Expressions ─────────────────────────────────────
 
+/// Every expression carries its resolved type. The checker fills `ty` during
+/// its walk. The compiler reads it — no type inference in the backend.
 #[derive(Debug, Clone, PartialEq)]
-pub enum Expr {
-    // Literals
+pub struct Expr {
+    pub kind: ExprKind,
+    pub ty: Type,
+}
+
+impl Expr {
+    pub fn untyped(kind: ExprKind) -> Self {
+        Expr { kind, ty: Type::Unit }
+    }
+    pub fn typed(kind: ExprKind, ty: Type) -> Self {
+        Expr { kind, ty }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ExprKind {
     Lit(Lit),
     Ident(String),
-
-    // Operators
     BinOp { op: BinOp, left: Box<Expr>, right: Box<Expr> },
     UnaryOp { op: UnaryOp, expr: Box<Expr> },
     Cast { expr: Box<Expr>, ty: Type },
-
-    // Functions
     Call { target: Box<Expr>, args: Vec<Expr> },
     MakeClosure { params: Vec<String>, body: Box<Expr> },
     CallClosure { closure: Box<Expr>, args: Vec<Expr> },
-
-    // Data access
     GetField { target: Box<Expr>, field: String },
     ArrayGet { target: Box<Expr>, index: Box<Expr> },
-
-    // Constructors
     StructLit { name: String, fields: Vec<(String, Expr)> },
     EnumVariant { name: String, variant: String, args: Vec<Expr> },
     ArrayNew(Vec<Expr>),
-
-    // Control flow (expression-level)
     If { cond: Box<Expr>, then: Box<Expr>, else_: Option<Box<Expr>> },
     Match { value: Box<Expr>, arms: Vec<MatchArm> },
     Block(Vec<Stmt>, Option<Box<Expr>>),
-
-    // Async
     Wait(Box<Expr>),
-
-    // Self reference (in struct methods)
     SelfRef,
 }
 

@@ -20,7 +20,7 @@
 
 use std::collections::HashSet;
 
-use roca_lang::ast::{Expr, Own, Param, Stmt, Type};
+use roca_lang::ast::{Expr, ExprKind, Own, Param, Stmt, Type};
 
 use crate::rule::{
     infer_expr_type, is_primitive_type, is_value_creating, type_to_name, Ctx, Diagnostic, Rule,
@@ -35,26 +35,26 @@ fn diag(code: &'static str, message: impl Into<String>) -> Diagnostic {
 
 fn check_for_consumed(expr: &Expr, state: &StateTable) -> Vec<Diagnostic> {
     let mut out = vec![];
-    match expr {
-        Expr::Ident(name) => {
+    match &expr.kind {
+        ExprKind::Ident(name) => {
             if let Some(info) = state.get(name) {
                 if info.state == VarState::Consumed {
                     out.push(diag("E-OWN-004", format!("use of consumed value '{}'", name)));
                 }
             }
         }
-        Expr::GetField { target, .. } => out.extend(check_for_consumed(target, state)),
-        Expr::BinOp { left, right, .. } => {
+        ExprKind::GetField { target, .. } => out.extend(check_for_consumed(target, state)),
+        ExprKind::BinOp { left, right, .. } => {
             out.extend(check_for_consumed(left, state));
             out.extend(check_for_consumed(right, state));
         }
-        Expr::Call { target, args } => {
+        ExprKind::Call { target, args } => {
             out.extend(check_for_consumed(target, state));
             for a in args {
                 out.extend(check_for_consumed(a, state));
             }
         }
-        Expr::ArrayNew(elems) => {
+        ExprKind::ArrayNew(elems) => {
             for e in elems {
                 out.extend(check_for_consumed(e, state));
             }
@@ -76,7 +76,7 @@ impl Rule for ConstOwns {
     fn check_stmt(&mut self, stmt: &Stmt, _ctx: &Ctx) -> Vec<Diagnostic> {
         match stmt {
             Stmt::Expr(expr) => {
-                if !matches!(expr, Expr::Call { .. }) && is_value_creating(expr) {
+                if !matches!(&expr.kind, ExprKind::Call { .. }) && is_value_creating(expr) {
                     vec![diag("E-OWN-001", "value-creating expression used as statement (orphan value)")]
                 } else {
                     vec![]
@@ -126,7 +126,7 @@ impl Rule for BorrowBeforePass {
         if qualifier != Some(Own::B) {
             return vec![];
         }
-        if let Expr::Ident(name) = arg {
+        if let ExprKind::Ident(name) = &arg.kind {
             if let Some(info) = ctx.state.get(name) {
                 if info.state == VarState::Owned {
                     return vec![diag(
@@ -153,7 +153,7 @@ impl Rule for UseAfterMove {
     fn code(&self) -> &'static str { "E-OWN-004" }
 
     fn check_call_arg(&mut self, arg: &Expr, _qualifier: Option<Own>, ctx: &Ctx) -> Vec<Diagnostic> {
-        if let Expr::Ident(name) = arg {
+        if let ExprKind::Ident(name) = &arg.kind {
             if let Some(info) = ctx.state.get(name) {
                 if info.state == VarState::Consumed {
                     return vec![diag("E-OWN-004", format!("use of consumed value '{}'", name))];
@@ -167,8 +167,8 @@ impl Rule for UseAfterMove {
         // Only check direct ident / field access — call args are already checked via
         // check_call_arg. The walker processes calls (and marks consumed) before invoking
         // check_return, so we must NOT re-examine call arguments here.
-        match expr {
-            Expr::Ident(name) => {
+        match &expr.kind {
+            ExprKind::Ident(name) => {
                 if let Some(info) = ctx.state.get(name) {
                     if info.state == VarState::Consumed {
                         return vec![diag("E-OWN-004", format!("use of consumed value '{}'", name))];
@@ -176,8 +176,8 @@ impl Rule for UseAfterMove {
                 }
                 vec![]
             }
-            Expr::GetField { target, .. } => {
-                if let Expr::Ident(name) = target.as_ref() {
+            ExprKind::GetField { target, .. } => {
+                if let ExprKind::Ident(name) = &target.as_ref().kind {
                     if let Some(info) = ctx.state.get(name) {
                         if info.state == VarState::Consumed {
                             return vec![diag("E-OWN-004", format!("use of consumed value '{}'", name))];
@@ -225,8 +225,8 @@ impl Rule for ReturnOwned {
 }
 
 fn check_return_ownership_006(expr: &Expr, state: &StateTable) -> Vec<Diagnostic> {
-    match expr {
-        Expr::Ident(name) => {
+    match &expr.kind {
+        ExprKind::Ident(name) => {
             if let Some(info) = state.get(name) {
                 if info.state == VarState::Borrowed {
                     if let Some(ty_name) = &info.ty {
@@ -244,8 +244,8 @@ fn check_return_ownership_006(expr: &Expr, state: &StateTable) -> Vec<Diagnostic
             }
             vec![]
         }
-        Expr::GetField { target, .. } => {
-            if let Expr::Ident(name) = target.as_ref() {
+        ExprKind::GetField { target, .. } => {
+            if let ExprKind::Ident(name) = &target.as_ref().kind {
                 if let Some(info) = state.get(name) {
                     if info.state == VarState::Borrowed {
                         return vec![diag(
@@ -273,12 +273,15 @@ impl Rule for ContainerCopy {
     fn code(&self) -> &'static str { "E-OWN-007" }
 
     fn check_stmt(&mut self, stmt: &Stmt, ctx: &Ctx) -> Vec<Diagnostic> {
-        let elems = match stmt {
-            Stmt::Let { value: Expr::ArrayNew(elems), .. } => elems,
-            Stmt::Var { value: Expr::ArrayNew(elems), .. } => elems,
+        let value = match stmt {
+            Stmt::Let { value, .. } | Stmt::Var { value, .. } => value,
             _ => return vec![],
         };
-        check_array_for_borrowed(elems, ctx.state)
+        if let ExprKind::ArrayNew(elems) = &value.kind {
+            check_array_for_borrowed(elems, ctx.state)
+        } else {
+            vec![]
+        }
     }
 }
 
@@ -286,7 +289,7 @@ fn check_array_for_borrowed(elems: &[Expr], state: &StateTable) -> Vec<Diagnosti
     elems
         .iter()
         .filter_map(|elem| {
-            if let Expr::Ident(name) = elem {
+            if let ExprKind::Ident(name) = &elem.kind {
                 if let Some(info) = state.get(name) {
                     if info.state == VarState::Borrowed {
                         return Some(diag(

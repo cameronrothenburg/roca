@@ -7,7 +7,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use roca_lang::ast::{Expr, FuncDef, Item, Own, Param, SourceFile, Stmt, StructDef, Type};
+use roca_lang::ast::{Expr, ExprKind, FuncDef, Item, Own, Param, SourceFile, Stmt, StructDef, Type};
 
 use crate::rule::{
     build_registries, infer_expr_type, type_to_name, Ctx, Diagnostic, FieldRegistry, FnRegistry,
@@ -37,10 +37,10 @@ fn owned_var_names(state: &StateTable) -> HashSet<String> {
 
 /// Resolve a call target to a function name string for registry lookup.
 fn resolve_call_name(target: &Expr, state: &StateTable) -> Option<String> {
-    match target {
-        Expr::Ident(n) => Some(n.clone()),
-        Expr::GetField { target: obj, field } => match obj.as_ref() {
-            Expr::Ident(struct_name) => {
+    match &target.kind {
+        ExprKind::Ident(n) => Some(n.clone()),
+        ExprKind::GetField { target: obj, field } => match &obj.as_ref().kind {
+            ExprKind::Ident(struct_name) => {
                 if let Some(info) = state.get(struct_name) {
                     if let Some(ty_name) = &info.ty {
                         return Some(format!("{}.{}", ty_name, field));
@@ -102,10 +102,10 @@ fn check_field_access_expr(
     field_reg: &FieldRegistry,
     diags: &mut Vec<Diagnostic>,
 ) {
-    match expr {
-        Expr::GetField { target, field } => {
+    match &expr.kind {
+        ExprKind::GetField { target, field } => {
             check_field_access_expr(target, state, field_reg, diags);
-            if let Expr::Ident(name) = target.as_ref() {
+            if let ExprKind::Ident(name) = &target.as_ref().kind {
                 if let Some(info) = state.get(name) {
                     if let Some(ty_name) = &info.ty {
                         if let Some(fields) = field_reg.get(ty_name) {
@@ -123,30 +123,30 @@ fn check_field_access_expr(
                 }
             }
         }
-        Expr::Call { target, args } => {
+        ExprKind::Call { target, args } => {
             check_field_access_expr(target, state, field_reg, diags);
             for a in args {
                 check_field_access_expr(a, state, field_reg, diags);
             }
         }
-        Expr::BinOp { left, right, .. } => {
+        ExprKind::BinOp { left, right, .. } => {
             check_field_access_expr(left, state, field_reg, diags);
             check_field_access_expr(right, state, field_reg, diags);
         }
-        Expr::StructLit { fields, .. } => {
+        ExprKind::StructLit { fields, .. } => {
             for (_, v) in fields {
                 check_field_access_expr(v, state, field_reg, diags);
             }
         }
-        Expr::ArrayNew(elems) => {
+        ExprKind::ArrayNew(elems) => {
             for e in elems {
                 check_field_access_expr(e, state, field_reg, diags);
             }
         }
-        Expr::UnaryOp { expr, .. } | Expr::Cast { expr, .. } | Expr::Wait(expr) => {
+        ExprKind::UnaryOp { expr, .. } | ExprKind::Cast { expr, .. } | ExprKind::Wait(expr) => {
             check_field_access_expr(expr, state, field_reg, diags);
         }
-        Expr::If { cond, then, else_ } => {
+        ExprKind::If { cond, then, else_ } => {
             check_field_access_expr(cond, state, field_reg, diags);
             check_field_access_expr(then, state, field_reg, diags);
             if let Some(e) = else_ {
@@ -232,7 +232,7 @@ fn walk_stmt(
         // ── const x = expr → Owned ────────────────────────────────────────────
         Stmt::Let { name, value, is_const: true, .. } => {
             // Process any call in RHS first to track moves
-            if let Expr::Call { target, args } = value {
+            if let ExprKind::Call { target, args } = &value.kind {
                 process_call(target, args, fn_reg, type_reg, field_reg, rules, state, diags);
             }
             let ty = infer_expr_type(value, state);
@@ -259,7 +259,7 @@ fn walk_stmt(
 
         // ── Expr statement ────────────────────────────────────────────────────
         Stmt::Expr(expr) => {
-            if let Expr::Call { target, args } = expr {
+            if let ExprKind::Call { target, args } = &expr.kind {
                 process_call(target, args, fn_reg, type_reg, field_reg, rules, state, diags);
             }
         }
@@ -267,7 +267,7 @@ fn walk_stmt(
         // ── Return ────────────────────────────────────────────────────────────
         Stmt::Return(expr) => {
             // Process any call in the return expression first (for moves)
-            if let Expr::Call { target, args } = expr {
+            if let ExprKind::Call { target, args } = &expr.kind {
                 process_call(target, args, fn_reg, type_reg, field_reg, rules, state, diags);
             }
             let ctx = Ctx { state, fn_reg, type_reg, field_reg };
@@ -391,7 +391,7 @@ fn process_call(
     for (i, arg) in args.iter().enumerate() {
         let qual = qualifiers.get(i).copied().flatten();
         if qual == Some(Own::O) {
-            if let Expr::Ident(name) = arg {
+            if let ExprKind::Ident(name) = &arg.kind {
                 if let Some(info) = state.get_mut(name) {
                     if info.state == VarState::Owned || info.state == VarState::Borrowed {
                         info.state = VarState::Consumed;

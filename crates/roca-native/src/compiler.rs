@@ -9,7 +9,7 @@ use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_jit::JITModule;
 use cranelift_module::{FuncId, Linkage, Module};
 
-use roca_lang::ast::{BinOp, Expr, FuncDef, Item, Lit, Param, SourceFile, Stmt, Type, UnaryOp};
+use roca_lang::ast::{BinOp, Expr, ExprKind, FuncDef, Item, Lit, Param, SourceFile, Stmt, Type, UnaryOp};
 
 use crate::builder::{ClifType, RocaBuilder};
 use crate::runtime;
@@ -414,11 +414,11 @@ fn compile_stmt(ctx: &mut CompileCtx, b: &mut RocaBuilder, stmt: &Stmt, ret_type
 // ─── Expression compilation ───────────────────────────────────────────────────
 
 fn compile_expr(ctx: &mut CompileCtx, b: &mut RocaBuilder, expr: &Expr) -> cranelift_codegen::ir::Value {
-    match expr {
-        Expr::Lit(lit) => compile_lit(ctx, b, lit),
-        Expr::Ident(name) => b.var_get(name),
-        Expr::BinOp { op, left, right } => compile_binop(ctx, b, *op, left, right),
-        Expr::UnaryOp { op, expr } => {
+    match &expr.kind {
+        ExprKind::Lit(lit) => compile_lit(ctx, b, lit),
+        ExprKind::Ident(name) => b.var_get(name),
+        ExprKind::BinOp { op, left, right } => compile_binop(ctx, b, *op, left, right),
+        ExprKind::UnaryOp { op, expr } => {
             let val = compile_expr(ctx, b, expr);
             let ty = infer_expr_type(expr, ctx.struct_reg, ctx.sig_reg);
             match op {
@@ -426,16 +426,16 @@ fn compile_expr(ctx: &mut CompileCtx, b: &mut RocaBuilder, expr: &Expr) -> crane
                 UnaryOp::Not => b.not(val),
             }
         }
-        Expr::Call { target, args } => compile_call(ctx, b, target, args),
-        Expr::GetField { target, field } => compile_get_field(ctx, b, target, field),
-        Expr::StructLit { name, fields } => compile_struct_lit(ctx, b, name, fields),
-        Expr::Cast { expr, ty } => {
+        ExprKind::Call { target, args } => compile_call(ctx, b, target, args),
+        ExprKind::GetField { target, field } => compile_get_field(ctx, b, target, field),
+        ExprKind::StructLit { name, fields } => compile_struct_lit(ctx, b, name, fields),
+        ExprKind::Cast { expr, ty } => {
             let val = compile_expr(ctx, b, expr);
             let from_ty = infer_expr_type(expr, ctx.struct_reg, ctx.sig_reg);
             let to_ty = roca_type_to_clif(ty);
             coerce(b, val, from_ty, to_ty)
         }
-        Expr::SelfRef => b.int_val(0),
+        ExprKind::SelfRef => b.int_val(0),
         _ => b.int_val(0),
     }
 }
@@ -544,9 +544,9 @@ fn compile_call(
 }
 
 fn resolve_call_name(target: &Expr) -> String {
-    match target {
-        Expr::Ident(name) => name.clone(),
-        Expr::GetField { target, field } => {
+    match &target.kind {
+        ExprKind::Ident(name) => name.clone(),
+        ExprKind::GetField { target, field } => {
             let base = resolve_call_name(target);
             format!("{base}.{field}")
         }
@@ -624,13 +624,13 @@ fn compile_struct_lit(
 // ─── Type inference helpers ───────────────────────────────────────────────────
 
 fn infer_expr_type(expr: &Expr, struct_reg: &StructRegistry, sig_reg: &SigRegistry) -> ClifType {
-    match expr {
-        Expr::Lit(Lit::Int(_))    => ClifType::I64,
-        Expr::Lit(Lit::Float(_))  => ClifType::F64,
-        Expr::Lit(Lit::Bool(_))   => ClifType::I8,
-        Expr::Lit(Lit::String(_)) => ClifType::I64,
-        Expr::Lit(Lit::Unit)      => ClifType::I64,
-        Expr::BinOp { op, left, right } => {
+    match &expr.kind {
+        ExprKind::Lit(Lit::Int(_))    => ClifType::I64,
+        ExprKind::Lit(Lit::Float(_))  => ClifType::F64,
+        ExprKind::Lit(Lit::Bool(_))   => ClifType::I8,
+        ExprKind::Lit(Lit::String(_)) => ClifType::I64,
+        ExprKind::Lit(Lit::Unit)      => ClifType::I64,
+        ExprKind::BinOp { op, left, right } => {
             match op {
                 BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod => {
                     let lt = infer_expr_type(left, struct_reg, sig_reg);
@@ -640,13 +640,13 @@ fn infer_expr_type(expr: &Expr, struct_reg: &StructRegistry, sig_reg: &SigRegist
                 _ => ClifType::I8, // comparisons → bool
             }
         }
-        Expr::Call { target, .. } => {
+        ExprKind::Call { target, .. } => {
             let name = resolve_call_name(target);
             sig_reg.get(&name).map(|(_, ret)| *ret).unwrap_or(ClifType::I64)
         }
-        Expr::Ident(_)     => ClifType::I64,
-        Expr::GetField { .. } => ClifType::I64, // conservative
-        Expr::StructLit { .. } => ClifType::I64,
+        ExprKind::Ident(_)     => ClifType::I64,
+        ExprKind::GetField { .. } => ClifType::I64, // conservative
+        ExprKind::StructLit { .. } => ClifType::I64,
         _ => ClifType::I64,
     }
 }
@@ -657,8 +657,8 @@ fn infer_struct_name(
     sig_reg: &SigRegistry,
     var_struct_map: &HashMap<String, String>,
 ) -> Option<String> {
-    match expr {
-        Expr::Ident(name) => {
+    match &expr.kind {
+        ExprKind::Ident(name) => {
             if let Some(sname) = var_struct_map.get(name) {
                 return Some(sname.clone());
             }
@@ -668,7 +668,7 @@ fn infer_struct_name(
                 None
             }
         }
-        Expr::Call { target, .. } => {
+        ExprKind::Call { target, .. } => {
             let fn_name = resolve_call_name(target);
             if fn_name.contains('.') {
                 let struct_name = fn_name.split('.').next().unwrap_or("").to_string();
@@ -683,8 +683,8 @@ fn infer_struct_name(
 }
 
 fn infer_struct_name_from_expr(expr: &Expr, struct_reg: &StructRegistry) -> Option<String> {
-    match expr {
-        Expr::Call { target, .. } => {
+    match &expr.kind {
+        ExprKind::Call { target, .. } => {
             let fn_name = resolve_call_name(target);
             if fn_name.contains('.') {
                 let struct_name = fn_name.split('.').next().unwrap_or("").to_string();
@@ -694,7 +694,7 @@ fn infer_struct_name_from_expr(expr: &Expr, struct_reg: &StructRegistry) -> Opti
             }
             None
         }
-        Expr::StructLit { name, .. } => Some(name.clone()),
+        ExprKind::StructLit { name, .. } => Some(name.clone()),
         _ => None,
     }
 }

@@ -7,6 +7,7 @@ fn parse_project(files: &[(&str, &str)]) -> Vec<roca_lang::SourceFile> {
     files.iter().map(|(_, s)| parser::parse(s)).collect()
 }
 use roca_lang::*;
+use roca_lang::ast::ExprKind;
 
 #[test]
 fn hello_world() {
@@ -22,7 +23,8 @@ fn hello_world() {
     assert_eq!(f.ret, Type::String);
     assert_eq!(f.params.len(), 0);
     assert_eq!(f.body.len(), 1);
-    let Stmt::Return(Expr::Lit(Lit::String(s))) = &f.body[0] else { panic!("expected return string") };
+    let Stmt::Return(ref e) = f.body[0] else { panic!("expected return") };
+    let ExprKind::Lit(Lit::String(ref s)) = e.kind else { panic!("expected string lit") };
     assert_eq!(s, "hello");
 }
 
@@ -38,10 +40,10 @@ fn arithmetic_precedence() {
     let Item::Function(f) = &ast.items[0] else { panic!("expected function") };
     let Stmt::Let { name, value, .. } = &f.body[0] else { panic!("expected let") };
     assert_eq!(name, "x");
-    let Expr::BinOp { op, left, right } = value else { panic!("expected binop") };
+    let ExprKind::BinOp { op, left, right } = &value.kind else { panic!("expected binop") };
     assert_eq!(*op, BinOp::Add);
-    let Expr::Lit(Lit::Int(1)) = left.as_ref() else { panic!("expected 1") };
-    let Expr::BinOp { op: inner_op, .. } = right.as_ref() else { panic!("expected mul") };
+    let ExprKind::Lit(Lit::Int(1)) = &left.as_ref().kind else { panic!("expected 1") };
+    let ExprKind::BinOp { op: inner_op, .. } = &right.as_ref().kind else { panic!("expected mul") };
     assert_eq!(*inner_op, BinOp::Mul);
 }
 
@@ -85,7 +87,8 @@ fn struct_with_constructor() {
     assert_eq!(s.fields[1].ty, Type::Int);
     assert_eq!(s.methods.len(), 1);
     assert_eq!(s.methods[0].name, "new");
-    let Stmt::Return(Expr::StructLit { name, fields }) = &s.methods[0].body[0] else { panic!("expected return struct lit") };
+    let Stmt::Return(ref e) = s.methods[0].body[0] else { panic!("expected return") };
+    let ExprKind::StructLit { ref name, ref fields } = e.kind else { panic!("expected struct lit") };
     assert_eq!(name, "User");
     assert_eq!(fields.len(), 2);
 }
@@ -105,7 +108,7 @@ fn error_handling_inline() {
     let Stmt::Let { name, .. } = &f.body[0] else { panic!("expected let") };
     assert_eq!(name, "result");
     let Stmt::If { cond, then, .. } = &f.body[1] else { panic!("expected if") };
-    let Expr::Ident(err_name) = cond else { panic!("expected ident") };
+    let ExprKind::Ident(ref err_name) = cond.kind else { panic!("expected ident") };
     assert_eq!(err_name, "err");
     assert!(then.len() >= 1);
 }
@@ -124,7 +127,7 @@ fn match_enum() {
     "#);
     let Item::Function(f) = &ast.items[0] else { panic!("expected function") };
     let Stmt::Let { value, .. } = &f.body[0] else { panic!("expected let") };
-    let Expr::Match { value: _, arms } = value else { panic!("expected match") };
+    let ExprKind::Match { value: _, ref arms } = value.kind else { panic!("expected match") };
     assert_eq!(arms.len(), 3);
     let Pattern::Variant { name, variant, bindings } = &arms[0].pattern else { panic!("expected variant") };
     assert_eq!(name, "Result");
@@ -143,13 +146,13 @@ fn closure_to_function() {
     "#);
     let Item::Function(f) = &ast.items[0] else { panic!("expected function") };
     let Stmt::Let { value, .. } = &f.body[0] else { panic!("expected let") };
-    let Expr::Call { target, args } = value else { panic!("expected call") };
-    let Expr::GetField { field, .. } = target.as_ref() else { panic!("expected field access") };
+    let ExprKind::Call { target, args } = &value.kind else { panic!("expected call") };
+    let ExprKind::GetField { ref field, .. } = target.as_ref().kind else { panic!("expected field access") };
     assert_eq!(field, "map");
     assert_eq!(args.len(), 1);
-    let Expr::MakeClosure { params, body } = &args[0] else { panic!("expected closure") };
+    let ExprKind::MakeClosure { ref params, ref body } = args[0].kind else { panic!("expected closure") };
     assert_eq!(params, &["x"]);
-    let Expr::BinOp { op, .. } = body.as_ref() else { panic!("expected mul") };
+    let ExprKind::BinOp { op, .. } = &body.as_ref().kind else { panic!("expected mul") };
     assert_eq!(*op, BinOp::Mul);
 }
 
@@ -167,7 +170,7 @@ fn for_loop() {
     let Item::Function(f) = &ast.items[0] else { panic!("expected function") };
     let Stmt::For { name, iter, body } = &f.body[1] else { panic!("expected for") };
     assert_eq!(name, "item");
-    let Expr::Ident(iter_name) = iter else { panic!("expected ident") };
+    let ExprKind::Ident(ref iter_name) = iter.kind else { panic!("expected ident") };
     assert_eq!(iter_name, "items");
     assert!(body.len() >= 1);
 }
@@ -187,12 +190,12 @@ fn struct_field_access_and_mutation() {
     let Item::Struct(s) = &ast.items[0] else { panic!("expected struct") };
     let m = &s.methods[0];
     let Stmt::SetField { target, field, value } = &m.body[0] else { panic!("expected set field") };
-    assert_eq!(*target, Expr::SelfRef);
+    assert_eq!(target.kind, ExprKind::SelfRef);
     assert_eq!(field, "count");
-    let Expr::BinOp { op, left, .. } = value else { panic!("expected binop") };
+    let ExprKind::BinOp { op, left, .. } = &value.kind else { panic!("expected binop") };
     assert_eq!(*op, BinOp::Add);
-    let Expr::GetField { target: inner, field: f2 } = left.as_ref() else { panic!("expected get field") };
-    assert_eq!(inner.as_ref(), &Expr::SelfRef);
+    let ExprKind::GetField { target: inner, field: f2 } = &left.as_ref().kind else { panic!("expected get field") };
+    assert_eq!(inner.as_ref().kind, ExprKind::SelfRef);
     assert_eq!(f2, "count");
 }
 
@@ -206,9 +209,9 @@ fn async_wait() {
     "#);
     let Item::Function(f) = &ast.items[0] else { panic!("expected function") };
     let Stmt::Let { value, .. } = &f.body[0] else { panic!("expected let") };
-    let Expr::Wait(inner) = value else { panic!("expected wait") };
-    let Expr::Call { target, args } = inner.as_ref() else { panic!("expected call") };
-    let Expr::Ident(name) = target.as_ref() else { panic!("expected ident") };
+    let ExprKind::Wait(ref inner) = value.kind else { panic!("expected wait") };
+    let ExprKind::Call { target, args } = &inner.as_ref().kind else { panic!("expected call") };
+    let ExprKind::Ident(ref name) = target.as_ref().kind else { panic!("expected ident") };
     assert_eq!(name, "fetch");
     assert_eq!(args.len(), 1);
 }
@@ -228,7 +231,7 @@ fn test_block() {
     assert_eq!(test.cases.len(), 2);
     let TestCase::Equals { args, expected } = &test.cases[0];
     assert_eq!(args.len(), 2);
-    assert_eq!(*expected, Expr::Lit(Lit::Int(3)));
+    assert_eq!(expected.kind, ExprKind::Lit(Lit::Int(3)));
 }
 
 #[test]

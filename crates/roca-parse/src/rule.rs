@@ -2,7 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use roca_lang::ast::{Expr, Item, Lit, Own, Param, SourceFile, Stmt, Type};
+use roca_lang::ast::{Expr, ExprKind, Item, Lit, Own, Param, SourceFile, Stmt, Type};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Diagnostic {
@@ -67,10 +67,10 @@ pub fn lit_type_name(lit: &Lit) -> &'static str {
 }
 
 pub fn infer_expr_type(expr: &Expr, state: &StateTable) -> Option<String> {
-    match expr {
-        Expr::Lit(lit) => Some(lit_type_name(lit).to_string()),
-        Expr::Ident(name) => state.get(name).and_then(|v| v.ty.clone()),
-        Expr::StructLit { name, .. } => Some(name.clone()),
+    match &expr.kind {
+        ExprKind::Lit(lit) => Some(lit_type_name(lit).to_string()),
+        ExprKind::Ident(name) => state.get(name).and_then(|v| v.ty.clone()),
+        ExprKind::StructLit { name, .. } => Some(name.clone()),
         _ => None,
     }
 }
@@ -82,8 +82,8 @@ pub fn is_primitive_type(name: &str) -> bool {
 /// Returns true if the expression creates a brand-new value (not derived from an existing var).
 pub fn is_value_creating(expr: &Expr) -> bool {
     matches!(
-        expr,
-        Expr::Lit(_) | Expr::StructLit { .. } | Expr::ArrayNew(_) | Expr::EnumVariant { .. }
+        &expr.kind,
+        ExprKind::Lit(_) | ExprKind::StructLit { .. } | ExprKind::ArrayNew(_) | ExprKind::EnumVariant { .. }
     )
 }
 
