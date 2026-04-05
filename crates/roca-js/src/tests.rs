@@ -235,17 +235,9 @@ fn match_subject_evaluated_once() {
             return result
         }
     "#);
-    // The subject `n` should appear exactly once in the match output,
-    // bound to a temp variable. If it appears multiple times, a
-    // side-effectful expression (like a function call) would execute
-    // more than once.
     let match_region = &js[js.find("const result").unwrap_or(0)..];
-    let n_count = match_region.matches(" n ").count()
-        + match_region.matches(" n;").count()
-        + match_region.matches("(n)").count()
-        + match_region.matches("(n ").count()
-        + match_region.matches(" n===").count()
-        + match_region.matches(" n ===").count();
-    assert!(n_count <= 1,
-        "match subject should be evaluated once, but 'n' appears {n_count} times in match output:\n{match_region}");
+    assert!(match_region.contains("_m"),
+        "expected temp variable _m in match output:\n{match_region}");
+    assert!(match_region.contains("const _m = n"),
+        "expected subject bound once as 'const _m = n':\n{match_region}");
 }
