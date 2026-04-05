@@ -42,23 +42,17 @@ jobs:
           git commit -m "chore(deps): bump version to ${{ steps.version.outputs.VERSION }}"
 
       # ─── Test ───────────────────────────────
-      - name: Run Rust tests
-        run: cargo test --release
-
-      - name: Install bun
-        uses: oven-sh/setup-bun@v2
-
-      - name: Build release binary
+      - name: Build
         run: cargo build --release
 
-      - name: CLI smoke test
-        run: ./target/release/roca check tests/js/projects/api
+      - name: Run tests
+        run: cargo test --workspace --release
 
-      - name: Run JS tests
+      - name: CLI smoke test
         run: |
-          cd tests/js
-          bun install
-          ROCA_BIN="${{ github.workspace }}/target/release/roca" bun test
+          ./target/release/roca check examples/hello.roca
+          ./target/release/roca test examples/hello.roca
+          ./target/release/roca build examples/hello.roca
 
       # ─── Publish ────────────────────────────
       - name: Create GitHub Release
@@ -70,9 +64,15 @@ jobs:
             target/release/roca
 
       - name: Publish to crates.io
-        run: cargo publish --allow-dirty
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_TOKEN }}
+        run: |
+          cargo publish --allow-dirty -p roca-lang
+          cargo publish --allow-dirty -p roca-mem
+          cargo publish --allow-dirty -p roca-parse
+          cargo publish --allow-dirty -p roca-native
+          cargo publish --allow-dirty -p roca-js
+          cargo publish --allow-dirty -p roca-cli
 
       - name: Setup npm registry
         uses: actions/setup-node@v4
