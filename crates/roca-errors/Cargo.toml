@@ -1,7 +1,0 @@
-[package]
-name = "roca-errors"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
-description = "Error types and diagnostic codes for the Roca compiler"
-repository.workspace = true

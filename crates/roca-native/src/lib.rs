@@ -1,163 +1,225 @@
-//! Native compiler backend — Cranelift JIT compilation for proof tests and
-//! optional AOT object-file emission.
+//! roca-native — compiles checked AST to machine code via Cranelift JIT.
 //!
-//! Depends on [`roca_ast`], [`roca_types`], [`roca_cranelift`] (IR builder),
-//! and [`roca_runtime`] (host functions). Consumed by `roca-cli` to execute
-//! inline `test {}` blocks before emitting JavaScript.
+//! Cranelift is a private implementation detail — nothing outside this crate
+//! touches Cranelift types. All memory operations go through roca-mem.
 //!
-//! # Domain Boundary
+//! # Public API
 //!
-//! This crate is the **AST walker** — it translates Roca AST into
-//! `roca-cranelift` Body method calls. It owns Roca-specific semantics:
-//! - Stdlib dispatch (routing method calls to runtime functions)
-//! - Crash handling (retry, halt, fallback, log, panic)
-//! - Constraint validation (min/max/contains on params and struct fields)
-//! - Error tuple destructuring (let {val, err} = call())
-//! - Inline map/filter expansion
-//! - NativeCtx (crash handlers, enum variants, return types, struct defs)
-//! - Test runner and property test execution
+//! - [`compile()`] — AST → JIT module
+//! - [`call()`] — call a compiled function by name, returns typed [`Value`]
+//! - [`run_tests()`] — compile + execute inline proof tests
 //!
-//! It does NOT own:
-//! - IR generation — that's roca-cranelift's Body (this crate calls Body methods)
-//! - Memory management — cranelift decides WHEN to free, runtime decides HOW
-//! - Host function implementations — roca-runtime provides those
-//! - Raw Cranelift APIs — this crate never imports cranelift_codegen/frontend/module
+//! # Architecture
 //!
-//! Tests here verify **logic correctness**: parse Roca source, JIT compile,
-//! call function, assert return value. No memory tests (allocs/frees) — those
-//! belong in roca-cranelift.
+//! - `compiler.rs` — AST walker emitting Cranelift IR through the builder
+//! - `builder.rs` — wraps `FunctionBuilder`, no Cranelift types leak
+//! - `runtime.rs` — registers roca-mem symbols into the JIT module
 //!
-//! # Key exports
-//!
-//! - [`compile_all()`] — compile every function, struct method, and satisfies
-//!   method in a [`roca_ast::SourceFile`] into a Cranelift module.
-//! - [`create_jit_module()`] — create a `JITModule` with all runtime symbols
-//!   pre-registered.
-//! - [`get_function_ptr()`] — look up a compiled function by name.
-//! - [`compile_to_object()`] — AOT path that produces a relocatable object file.
-//! - [`test_runner`] — executes proof tests against a finalized JIT module and
-//!   reports pass/fail results.
-//! - [`property_tests`] — fuzz-based property testing driven by parameter
-//!   constraints.
+//! The `call()` function looks up the return type from the AST and dispatches
+//! to the correct calling convention (i64, f64, or i8 return).
 
-pub mod runtime;
-pub(crate) mod emit;
-pub mod test_runner;
-pub mod property_tests;
-#[cfg(test)]
-mod test_helpers;
-#[cfg(test)]
-mod tests_stdlib_integration;
+mod builder;
+mod runtime;
+mod compiler;
 
-use roca_ast as ast;
-use roca_cranelift::JitModule;
-use roca_cranelift::Module;
+use roca_lang::ast::{Expr, ExprKind, Item, Lit, SourceFile, TestCase, Type};
 
-fn default_expr_for_type(ty: &ast::TypeRef) -> ast::Expr {
-    match ty {
-        ast::TypeRef::String => ast::Expr::String("".into()),
-        ast::TypeRef::Number => ast::Expr::Number(0.0),
-        ast::TypeRef::Bool => ast::Expr::Bool(false),
-        ast::TypeRef::Ok => ast::Expr::Null,
-        ast::TypeRef::Generic(name, _) if name == "Array" => ast::Expr::Array(vec![]),
-        _ => ast::Expr::Null,
+/// A Roca value — used for args, return values, and test expectations.
+///
+/// `String` carries either a heap pointer (from JIT) or expected content (from test).
+/// `PartialEq` compares by content — reading the heap pointer via roca-mem when needed.
+#[derive(Debug, Clone)]
+pub enum Value {
+    Int(i64),
+    Float(f64),
+    Bool(bool),
+    String(i64),            // heap pointer (JIT return) or 0 with ExpectedString
+    ExpectedString(String), // string content (test expectation)
+    Struct(i64),
+    Unit,
+}
+
+impl PartialEq for Value {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Value::Int(a), Value::Int(b)) => a == b,
+            (Value::Float(a), Value::Float(b)) => (a - b).abs() < 1e-10,
+            (Value::Bool(a), Value::Bool(b)) => a == b,
+            (Value::Unit, Value::Unit) => true,
+            (Value::Struct(a), Value::Struct(b)) => a == b,
+            // String comparison: read heap pointer content via roca-mem
+            (Value::String(ptr), Value::ExpectedString(expected)) |
+            (Value::ExpectedString(expected), Value::String(ptr)) => {
+                roca_mem::read_cstr(*ptr) == expected.as_str()
+            }
+            (Value::String(a), Value::String(b)) => {
+                roca_mem::read_cstr(*a) == roca_mem::read_cstr(*b)
+            }
+            (Value::ExpectedString(a), Value::ExpectedString(b)) => a == b,
+            _ => false,
+        }
     }
 }
 
-/// Create a JIT module with the Roca runtime functions registered.
-pub fn create_jit_module() -> JitModule {
-    JitModule::new(|builder| runtime::register_symbols(builder))
+/// Opaque compiled module handle. Holds the AST for type lookups.
+pub struct Module {
+    compiled: compiler::CompiledModule,
+    source: SourceFile,
 }
 
-/// Look up a compiled function by name and return its native pointer.
-/// Returns None if the function wasn't compiled.
-pub fn get_function_ptr(module: &JitModule, name: &str) -> Option<*const u8> {
-    module.get_function_ptr(name)
+/// Result of running proof tests.
+pub struct TestResult {
+    pub passed: usize,
+    pub failed: usize,
+    pub output: String,
 }
 
-/// Compile all functions in a source file into a module.
-pub fn compile_all<M: Module>(
-    module: &mut M,
-    source: &roca_ast::SourceFile,
-) -> Result<(), String> {
-    let rt = runtime::declare_runtime(module);
-    let mut compiled = emit::CompiledFuncs::new();
+/// Compile a source file to a JIT module.
+pub fn compile(source: &SourceFile) -> Result<Module, String> {
+    let compiled = compiler::compile(source)?;
+    Ok(Module { compiled, source: source.clone() })
+}
 
-    let func_return_kinds = emit::build_return_kind_map(source);
-    let enum_variants = emit::build_enum_variant_map(source);
-    let struct_defs = emit::build_struct_def_map(source);
+/// Call a compiled function by name with typed arguments.
+/// Uses a compiled shim that unpacks args from a buffer — supports any number of params.
+pub fn call(module: &Module, name: &str, args: &[Value]) -> Value {
+    let shim_name = format!("{name}__shim");
+    let shim_id = module.compiled.func_ids.get(&shim_name)
+        .copied()
+        .unwrap_or_else(|| panic!("shim not found: {shim_name}"));
+    let shim_ptr = module.compiled.jit.get_finalized_function(shim_id);
+    let ret_type = find_return_type(&module.source, name);
 
-    emit::declare_all_functions(module, source, &mut compiled)?;
+    // Pack all args as i64 into a contiguous buffer
+    let raw_args: Vec<i64> = args.iter().map(|v| match v {
+        Value::Int(n) => *n,
+        Value::Float(f) => i64::from_ne_bytes(f.to_ne_bytes()),
+        Value::Bool(b) => if *b { 1 } else { 0 },
+        Value::String(p) | Value::Struct(p) => *p,
+        Value::ExpectedString(_) => panic!("ExpectedString cannot be used as a call argument"),
+        Value::Unit => 0,
+    }).collect();
 
+    // Call the shim: (args_ptr: *const i64) -> i64
+    let raw_result = unsafe {
+        let shim: unsafe extern "C" fn(*const i64) -> i64 = std::mem::transmute(shim_ptr);
+        shim(raw_args.as_ptr())
+    };
+
+    // Interpret the unified i64 result based on return type
+    match &ret_type {
+        Type::Float => Value::Float(f64::from_ne_bytes(raw_result.to_ne_bytes())),
+        Type::Bool => Value::Bool(raw_result != 0),
+        Type::String => Value::String(raw_result),
+        Type::Named(_) | Type::Array(_) | Type::Optional(_) => Value::Struct(raw_result),
+        Type::Unit => Value::Unit,
+        _ => Value::Int(raw_result),
+    }
+}
+
+/// Find the return type of a function by name in the AST.
+fn find_return_type(source: &SourceFile, name: &str) -> Type {
     for item in &source.items {
         match item {
-            roca_ast::Item::ExternFn(ef) => {
-                let default_value = default_expr_for_type(&ef.return_type);
-                emit::compile_extern_fn_stub(module, ef, &default_value, &rt, &mut compiled)?;
-            }
-            roca_ast::Item::ExternContract(c) => {
-                emit::compile_contract_stubs(module, c, &rt, &mut compiled)?;
+            Item::Function(f) if f.name == name => return f.ret.clone(),
+            Item::Struct(s) => {
+                for m in &s.methods {
+                    let key = format!("{}.{}", s.name, m.name);
+                    if key == name { return m.ret.clone(); }
+                }
             }
             _ => {}
         }
     }
+    Type::Int // fallback
+}
 
-    emit::compile_closures(module, source, &rt, &mut compiled, &func_return_kinds)?;
-    emit::compile_wait_exprs(module, source, &rt, &mut compiled, &func_return_kinds)?;
+/// Compile and run all proof tests in a source file.
+pub fn run_tests(source: &SourceFile) -> TestResult {
+    let module = match compile(source) {
+        Ok(m) => m,
+        Err(e) => return TestResult {
+            passed: 0, failed: 0,
+            output: format!("compile error: {e}"),
+        },
+    };
+
+    let mut passed = 0;
+    let mut failed = 0;
+    let mut output = String::new();
 
     for item in &source.items {
-        match item {
-            roca_ast::Item::Function(f) => {
-                emit::compile_function(module, f, &rt, &mut compiled, &func_return_kinds, &enum_variants, &struct_defs)?;
-            }
-            roca_ast::Item::Struct(s) => {
-                for method in &s.methods {
-                    emit::compile_struct_method(module, method, &s.name, &s.fields, &rt, &mut compiled, &func_return_kinds, &enum_variants, &struct_defs)?;
+        let func = match item {
+            Item::Function(f) => f,
+            _ => continue,
+        };
+        let test_block = match &func.test {
+            Some(t) => t,
+            None => continue,
+        };
+
+        for case in &test_block.cases {
+            match case {
+                TestCase::Equals { args, expected } => {
+                    // Convert all args — skip test case if any arg is unsupported
+                    let mut arg_vals = Vec::new();
+                    let mut skip = false;
+                    for a in args {
+                        match expr_to_value(a) {
+                            Some(v) => arg_vals.push(v),
+                            None => {
+                                failed += 1;
+                                output.push_str(&format!("SKIP: {}(...) — unsupported arg expression\n", func.name));
+                                skip = true;
+                                break;
+                            }
+                        }
+                    }
+                    if skip { continue; }
+
+                    let expected_val = match expr_to_value(expected) {
+                        Some(v) => v,
+                        None => {
+                            failed += 1;
+                            output.push_str(&format!("SKIP: {}(...) — unsupported expected expression\n", func.name));
+                            continue;
+                        }
+                    };
+
+                    let result = call(&module, &func.name, &arg_vals);
+
+                    if result == expected_val {
+                        passed += 1;
+                        output.push_str(&format!("PASS: {}({:?}) == {:?}\n", func.name, arg_vals, expected_val));
+                    } else {
+                        failed += 1;
+                        output.push_str(&format!("FAIL: {}({:?}) expected {:?} got {:?}\n", func.name, arg_vals, expected_val, result));
+                    }
                 }
             }
-            roca_ast::Item::Satisfies(sat) => {
-                let fields = struct_defs.get(&sat.struct_name)
-                    .map(|v| v.as_slice())
-                    .unwrap_or(&[]);
-                for method in &sat.methods {
-                    emit::compile_struct_method(module, method, &sat.struct_name, fields, &rt, &mut compiled, &func_return_kinds, &enum_variants, &struct_defs)?;
-                }
-            }
-            _ => {}
         }
     }
-    Ok(())
+
+    TestResult { passed, failed, output }
 }
 
-/// Compile Roca source to an object file via Cranelift AOT (production).
-#[allow(dead_code)]
-pub fn compile_to_object(source: &roca_ast::SourceFile) -> Result<Vec<u8>, String> {
-    use cranelift_object::{ObjectBuilder, ObjectModule};
-
-    let isa = cranelift_native::builder()
-        .map_err(|e| format!("native ISA: {}", e))?
-        .finish(cranelift_codegen::settings::Flags::new(cranelift_codegen::settings::builder()))
-        .map_err(|e| format!("ISA build: {}", e))?;
-
-    let builder = ObjectBuilder::new(
-        isa,
-        "roca_module",
-        cranelift_module::default_libcall_names(),
-    ).map_err(|e| format!("object builder: {}", e))?;
-
-    let mut module = ObjectModule::new(builder);
-    compile_all(&mut module, source)?;
-
-    let product = module.finish();
-    let bytes = product.emit()
-        .map_err(|e| format!("emit object: {}", e))?;
-    Ok(bytes)
+fn expr_to_value(expr: &Expr) -> Option<Value> {
+    match &expr.kind {
+        ExprKind::Lit(Lit::Int(n)) => Some(Value::Int(*n)),
+        ExprKind::Lit(Lit::Float(f)) => Some(Value::Float(*f)),
+        ExprKind::Lit(Lit::Bool(b)) => Some(Value::Bool(*b)),
+        ExprKind::Lit(Lit::String(s)) => Some(Value::ExpectedString(s.clone())),
+        ExprKind::Lit(Lit::Unit) => Some(Value::Unit),
+        ExprKind::UnaryOp { op: roca_lang::ast::UnaryOp::Neg, expr: inner } => {
+            match expr_to_value(inner)? {
+                Value::Int(n) => Some(Value::Int(-n)),
+                Value::Float(f) => Some(Value::Float(-f)),
+                other => Some(other),
+            }
+        }
+        _ => None,
+    }
 }
 
-// Test modules — each in its own file under 500 lines
-#[cfg(test)] mod tests_basic;
-#[cfg(test)] mod tests_control;
-#[cfg(test)] mod tests_features;
-#[cfg(test)] mod tests_stdlib;
-#[cfg(test)] mod tests_stdlib_ext;
-#[cfg(test)] mod tests_integration;
+#[cfg(test)]
+mod tests;

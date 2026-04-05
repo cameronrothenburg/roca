@@ -1,0 +1,20 @@
+// Structs with constructors and methods
+
+pub struct Point { x: Int  y: Int }{
+    pub fn new(o x: Int, o y: Int) -> Point {
+        return Point { x: x, y: y }
+    }
+
+    pub fn sum() -> Int {
+        return self.x + self.y
+    }
+}
+
+pub fn point_sum() -> Int {
+    const p = Point.new(10, 20)
+    const x = p.x
+    const y = p.y
+    return x + y
+test {
+    self() == 30
+}}

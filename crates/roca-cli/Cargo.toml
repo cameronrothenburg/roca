@@ -3,19 +3,15 @@ name = "roca-cli"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "CLI commands for the Roca compiler"
 repository.workspace = true
+description = "Roca compiler CLI"
+
+[[bin]]
+name = "roca"
+path = "src/main.rs"
 
 [dependencies]
-roca-ast.workspace = true
-roca-errors.workspace = true
-roca-parse.workspace = true
-roca-resolve.workspace = true
-roca-check.workspace = true
-roca-js.workspace = true
-roca-native.workspace = true
-oxc_allocator.workspace = true
-oxc_ast.workspace = true
-oxc_parser.workspace = true
-oxc_span.workspace = true
-serde_json.workspace = true
+clap = { workspace = true }
+roca-parse = { workspace = true }
+roca-native = { workspace = true }
+roca-js = { workspace = true }

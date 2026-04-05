@@ -1,0 +1,18 @@
+// Closures: anonymous functions as values
+
+pub fn apply(b x: Int) -> Int {
+    const double = fn(n) -> n * 2
+    return double(x)
+test {
+    self(5) == 10
+    self(0) == 0
+}}
+
+pub fn transform(b x: Int) -> Int {
+    const add_ten = fn(n) -> n + 10
+    const sub_one = fn(n) -> n - 1
+    return add_ten(sub_one(x))
+test {
+    self(5) == 14
+    self(1) == 10
+}}

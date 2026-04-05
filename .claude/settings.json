@@ -14,7 +14,7 @@
           {
             "type": "prompt",
             "if": "Edit(*.rs)",
-            "prompt": "Review this Rust code edit for quick-fix shortcuts. BLOCK (exit 2) if you see ANY of: wrapping in unwrap()/expect()/clone() instead of handling properly, catch-all `_ =>` to silence warnings, `as` casts instead of From/TryFrom, commenting out code/tests, #[allow(..)] to suppress warnings, sentinel values instead of Option/Result, todo!()/unimplemented!() in non-prototype code, hardcoded defaults to pass tests, format!() for structured data, silently swallowed errors (empty catch, `let _ =` on important Result). If clean exit 0 silently. If bodge, explain the proper fix. Edit: $ARGUMENTS",
+            "prompt": "Review this Rust code edit for quick-fix shortcuts. Skip test files — those are handled separately. BLOCK (exit 2) if you see ANY of: wrapping in unwrap()/expect()/clone() instead of handling properly, catch-all `_ =>` to silence warnings, `as` casts instead of From/TryFrom, commenting out code/tests, #[allow(..)] to suppress warnings, sentinel values instead of Option/Result, todo!()/unimplemented!() in non-prototype code, hardcoded defaults to pass tests, format!() for structured data, silently swallowed errors (empty catch, `let _ =` on important Result). If clean exit 0 silently. If bodge, explain the proper fix. Edit: $ARGUMENTS",
             "model": "claude-sonnet-4-6",
             "statusMessage": "Checking for shortcuts..."
           }
@@ -32,8 +32,17 @@
           {
             "type": "prompt",
             "if": "Edit(*.rs)|Write(*.rs)",
+
+            "model": "claude-sonnet-4-6",
             "prompt": "Check the assistant's RECENT MESSAGE TEXT (not code) for language signaling a shortcut. BLOCK (exit 2) if you see: 'for now', 'quick fix', 'simple fix', 'as a workaround', 'temporarily', 'temp fix', 'placeholder', 'we can come back to this', 'revisit later', 'clean up later', 'to keep things simple' (when cutting corners), 'this should work', 'good enough', 'let's just', 'we'll just', 'to avoid dealing with', 'to sidestep', 'hacky but', 'not ideal but', 'ugly but'. These mean the assistant KNOWS the proper fix but is choosing a shortcut. Block and tell it to implement the correct approach. If no such language, exit 0 silently. Context: $ARGUMENTS",
             "statusMessage": "Checking intent..."
+          },
+          {
+            "type": "prompt",
+            "if": "Edit(*test*)|Edit(*tests*)|Write(*test*)|Write(*tests*)",
+            "prompt": "Check if this test file edit is hiding a bug instead of fixing it. BLOCK (exit 2) if you see ANY of: relaxing assertions (changing == to >=, exact to approximate, removing asserts), weakening expected values (changing expected output to match buggy output), adding #[ignore] or #[should_panic] to bypass failures, deleting or commenting out failing test cases, changing test input to avoid the failing path, wrapping assertions in catch/if to swallow failures, reducing test coverage (removing edge cases that fail), changing error expectations to match wrong errors. ALLOW: adding new tests, fixing genuinely wrong expectations after a deliberate behavior change, updating tests to match a new API the user requested. If the edit hides a bug, explain what the real fix should be. If clean, exit 0 silently. Edit: $ARGUMENTS",
+            "model": "claude-sonnet-4-6",
+            "statusMessage": "Checking test integrity..."
           }
         ]
       }

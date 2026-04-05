@@ -1,16 +1,9 @@
 # Roca
 
 [![CI](https://github.com/cameronrothenburg/roca/actions/workflows/ci.yml/badge.svg)](https://github.com/cameronrothenburg/roca/actions/workflows/ci.yml)
-[![npm](https://img.shields.io/npm/v/@rocalang/runtime)](https://www.npmjs.com/package/@rocalang/runtime)
-[![Crates.io](https://img.shields.io/crates/v/rocalang)](https://crates.io/crates/rocalang)
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
-[![CodeRabbit Pull Request Reviews](https://img.shields.io/coderabbit/prs/github/cameronrothenburg/roca?utm_source=oss&utm_medium=github&utm_campaign=cameronrothenburg%2Froca&labelColor=171717&color=FF570A&link=https%3A%2F%2Fcoderabbit.ai&label=CodeRabbit+Reviews)](https://coderabbit.ai)
 
-_Roca -- Spanish for rock, stone, cliff. Firme como una roca -- as solid as a rock._
-
-A contractual language that compiles to JavaScript. Code is proven correct natively via Cranelift JIT before JS emission. A language for the AI era.
-
-Our goal is simple: when you hear code was written in Roca, you trust it.
+A memory-safe language built for AI. Compiles to JavaScript or native binary. The compiler enforces correctness through explicit ownership, mandatory proof tests, and error messages that teach you the fix.
 
 ```bash
 cargo install rocalang
@@ -18,73 +11,59 @@ roca init my-app && cd my-app
 roca build
 ```
 
-## The Problem
+## Why
 
-Programming languages were designed for humans to be expressive. That expressiveness gives AI too much freedom -- it can write code any way it wants, skip error handling, ignore edge cases, and return bare objects. Nothing in the language forces it to do better.
+AI writes code any way it wants. Nothing in most languages forces it to handle errors, manage memory, or prove correctness. Roca does.
 
-## The Solution
+The compiler is the feedback loop. Write code, get a teaching error, fix it, prove it works. Every cycle makes the next attempt correct.
 
-Roca is a narrow corridor. The compiler forces the AI (or human) to think about testing and error handling because it won't emit JavaScript until they do.
+## What It Does
 
-- **Built-in proof tests.** Every function has inline tests -- no output until they pass.
-- **Every error is handled.** Crash blocks declare what happens when calls fail.
-- **Function bodies are pure happy path.** No error variables, no if-err checks.
-- **No null.** Use `-> Type, err` for failure cases, `Optional<T>` for absent fields.
-- **Types are contracts.** The compiler validates every call, field, and return.
+- **Ownership without annotations.** `const` owns, `let` borrows, `o`/`b` on parameters. The compiler infers the rest. If it can't infer, it's a compile error — not a runtime crash.
+- **Proof tests built in.** Every function has inline tests. No output until they pass.
+- **Every error handled.** `let val, err = call()` — you check it or you don't compile.
+- **Dual output.** Same source compiles to JS (GC handles memory) or native binary (ownership handles memory).
+- **Errors that teach.** Every diagnostic shows what you wrote, why it's wrong, and what to write instead.
 
 ```roca
-/// Validates an email address
-pub fn validate(raw: String) -> Email, err {
+pub fn validate(b raw: String) -> Email, err {
     err missing = "email is required"
     err invalid = "email format is not valid"
 
     if raw == "" { return err.missing }
     if !raw.includes("@") { return err.invalid }
-    return Email { value: raw }
 
-    test {
-        self("a@b.com") is Ok
-        self("") is err.missing
-        self("bad") is err.invalid
-    }
-}
+    const email = Email { value: raw }
+    return email
+
+test {
+    self("a@b.com") is Ok
+    self("") is err.missing
+    self("bad") is err.invalid
+}}
 ```
 
-The compiler checks the logic, runs the tests, and only then emits output. If something is wrong, no code is produced.
+The compiler checks the logic, runs the tests natively, and only then emits output. If something is wrong, no code is produced.
+
+## The Feedback Loop
+
+```text
+Write .roca → Compiler infers ownership → Native proves it compiles
+    → Proof tests verify correctness → JS or binary emitted
+         ↑                                          │
+         └──── teaching error shows the fix ←───────┘
+```
 
 ## Documentation
 
-**[Language Specification](docs/src/spec/overview.md)** -- the definitive reference:
-
-| Section                                        | Description                                     |
-| ---------------------------------------------- | ----------------------------------------------- |
-| [1. Lexical Grammar](docs/src/spec/lexical.md) | Tokens, keywords, literals, operators           |
-| [2. Syntax](docs/src/spec/syntax.md)           | Declarations, statements, expressions           |
-| [3. Type System](docs/src/spec/types.md)       | Primitives, contracts, structs, enums, generics |
-| [4. Module System](docs/src/spec/modules.md)   | Imports, resolution, stdlib _(stub)_            |
-| [5. Error Model](docs/src/spec/errors.md)      | Error returns, crash blocks, strategies         |
-| [6. Test Model](docs/src/spec/testing.md)      | Test blocks, battle tests, auto-stubs           |
-| [7. Compilation](docs/src/spec/compilation.md) | JS emit, native emit, target differences        |
-| [8. Runtime](docs/src/spec/runtime.md)         | Polyfills, memory model, concurrency            |
-
-**Quick start:** [Introduction](docs/src/introduction.md) | [Getting Started](docs/src/getting-started.md)
-
-**Reference:** [Compiler Rules](docs/src/reference/compiler-rules.md) | [CLI](docs/src/reference/cli.md) | [Stdlib](docs/src/reference/stdlib.md)
-
-## How It Works
-
-1. You write `.roca` files with contracts, structs, and functions
-2. `roca build` checks rules, compiles to JS, runs proof tests
-3. Output: `.js` files + `.d.ts` TypeScript declarations
-4. Your JS/TS project imports the compiled library
-
-```bash
-roca repl             # Interactive REPL (--native for JIT)
-roca search trim      # Search stdlib and project symbols
-roca skills           # Generate AI assistant skills
-```
+| Section | Description |
+|---------|-------------|
+| [Syntax](docs/src/spec/syntax.md) | Grammar, `o`/`b` parameters, statements, expressions |
+| [Memory Model](docs/src/spec/memory.md) | Ownership rules, second-class references, last-use destruction |
+| [Error Codes](docs/src/spec/errors.md) | All compiler diagnostics by domain |
+| [AI Feedback Loop](docs/src/spec/feedback.md) | Teaching error messages — what you wrote, why, what instead |
 
 ## License
 
-Compiler: [AGPL-3.0](LICENSE-AGPL) -- modifications must stay open source.
-Compiled output: [MIT](LICENSE-MIT) -- use your JS however you want.
+Compiler: [AGPL-3.0](LICENSE-AGPL) — modifications must stay open source.
+Compiled output: [MIT](LICENSE-MIT) — use your JS however you want.

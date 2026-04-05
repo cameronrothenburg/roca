@@ -1,0 +1,24 @@
+// Ownership: const owns, let borrows, o/b on params
+
+// Borrowing: caller keeps ownership
+fn double(b x: Int) -> Int {
+    return x + x
+}
+
+// Consuming: caller loses ownership
+fn consume(o x: Int) -> Int {
+    return x
+}
+
+pub fn ownership_demo() -> Int {
+    const val = 10
+
+    // Borrow val to pass to double (b param)
+    let borrowed = val
+    const doubled = double(borrowed)
+
+    // val is still alive — we only borrowed it
+    return val + doubled
+test {
+    self() == 30
+}}

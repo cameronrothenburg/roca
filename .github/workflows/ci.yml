@@ -5,10 +5,7 @@ on:
     branches: [master]
     types: [opened, synchronize, reopened, ready_for_review]
     paths:
-      - 'src/**'
       - 'crates/**'
-      - 'packages/**'
-      - 'tests/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
 
@@ -36,17 +33,11 @@ jobs:
       - name: Build
         run: cargo build --release
 
-      - name: Run Rust tests
+      - name: Run tests
         run: cargo test --workspace --release
 
       - name: CLI smoke test
-        run: ./target/release/roca check tests/js/projects/api
-
-      - name: Install bun
-        uses: oven-sh/setup-bun@v2
-
-      - name: Run JS tests
         run: |
-          cd tests/js
-          bun install
-          ROCA_BIN="${{ github.workspace }}/target/release/roca" bun test
+          ./target/release/roca check examples/hello.roca
+          ./target/release/roca test examples/hello.roca
+          ./target/release/roca build examples/hello.roca

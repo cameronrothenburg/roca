@@ -1,0 +1,25 @@
+// Basic arithmetic and type safety
+
+pub fn add(b a: Int, b b: Int) -> Int {
+    return a + b
+test {
+    self(1, 2) == 3
+    self(0, 0) == 0
+    self(-1, 1) == 0
+}}
+
+pub fn multiply(b a: Int, b b: Int) -> Int {
+    return a * b
+test {
+    self(3, 4) == 12
+    self(0, 5) == 0
+    self(-2, 3) == -6
+}}
+
+pub fn is_positive(b n: Int) -> Bool {
+    return n > 0
+test {
+    self(5) == true
+    self(-3) == false
+    self(0) == false
+}}

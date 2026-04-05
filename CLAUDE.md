@@ -1,96 +1,80 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Claude Code when working with this repository.
 
 ## What is Roca
 
-Roca is a contractual programming language that compiles to JavaScript. The compiler validates code, runs proof tests via Cranelift JIT, and only emits JS + `.d.ts` files if all tests pass. Written in Rust.
+A memory-safe language built for AI. Compiles to JavaScript or native binary. The compiler enforces ownership, runs proof tests natively, and only emits output if everything passes.
 
-## Build & Test Commands
+## Architecture
+
+Five crates, each with one job:
+
+| Crate | Job | Tests |
+|-------|-----|-------|
+| **roca-lang** | AST types (26 nodes). Pure data, zero logic. | 9 |
+| **roca-mem** | Alloc, own, copy, free. The physical memory model. | 29 |
+| **roca-parse** | Tokenize + parse + ownership check + type enforcement. | 60 |
+| **roca-native** | AST → Cranelift JIT + proof test execution. | 18 |
+| **roca-js** | AST → JavaScript via OXC. | 18 |
+
+```text
+.roca source → roca-parse (tokenize → parse → check) → checked AST
+                                                          ├─→ roca-native (Cranelift IR → JIT → proof tests)
+                                                          └─→ roca-js (OXC JS AST → .js)
+```
+
+## Build & Test
 
 ```bash
-cargo build --release                # build compiler → target/release/roca
-cargo test --release                 # all Rust tests
-cargo test --release test_name       # single Rust test by name
-cargo test --release native::        # tests for a specific module
-cargo test --release -- --nocapture  # with stdout output
-
-# JS integration tests
-cd tests/js && bun install
-ROCA_BIN=../../target/release/roca bun test
-ROCA_BIN=../../target/release/roca bun test compiler.test.js  # single file
-
-# CLI smoke test (also run in CI)
-./target/release/roca check tests/js/projects/api
-
-# Roca commands
-roca build [path]    # check → native proof tests → emit JS
-roca check [path]    # parse + type check, no emission
-roca test [path]     # build + test, clean output after
-roca run [path]      # build + execute via bun
-roca repl [--native] # interactive REPL
+cargo test --release                           # all 134 tests
+cargo test --release -p roca-parse             # parse + check tests
+cargo test --release -p roca-native            # native JIT tests
+cargo test --release -p roca-js                # JS emission tests
+cargo test --release -p roca-mem               # memory tests
+cargo test --release -p roca-lang              # AST tests
+cargo test --release -- test_name              # single test by name
 ```
 
 ## Commit Convention
 
 Conventional commits enforced by commitlint. Scope is **required**. Valid scopes:
-`compiler`, `runtime`, `native`, `checker`, `emitter`, `cli`, `spec`, `ci`, `js`, `deps`
+`compiler`, `native`, `js`, `spec`, `ci`, `deps`
 
-Example: `fix(native): correct heap deallocation for boxed values`
+Example: `feat(compiler): type enforcement — binop and call arg type checking`
 
-## Compilation Pipeline
+## Key Concepts
 
+### Ownership (enforced at parse time)
+
+- `const` = owned. `let` = borrow from const. `var` = mutable owned.
+- Parameters: `b` (borrowed) or `o` (owned/consumed)
+- Passing to `o` = move. Value is dead after.
+- Struct fields always own their values (copy if borrowed)
+- Second-class references: borrows cannot be stored or returned
+
+### Types (enforced at parse time)
+
+- Int, Float, String, Bool, Unit, Named (structs), Array, Optional
+- Binary ops: both operands must be same type
+- Return type must match declared type
+- Call args must match param types
+
+### Error Codes
+
+- E-OWN-001 through E-OWN-010: ownership violations
+- E-TYP-001/002: type mismatches
+- E-STR-006: unknown struct field
+
+### Checker Rules
+
+Pluggable `Rule` trait in `roca-parse/src/rules.rs`. Each rule is a struct implementing `Rule`. Walker calls rules at each AST node. Adding a rule: write a struct, impl Rule, add to `all_rules()`.
+
+## Spec Files
+
+```text
+docs/src/spec/syntax.md    — complete syntax reference
+docs/src/spec/memory.md    — ownership rules + roca-mem API
+docs/src/spec/errors.md    — error code registry
+docs/src/spec/feedback.md  — AI teaching messages
 ```
-.roca source → Tokenizer → Parser → AST
-  → Static Analysis (14 checker rules)
-  → Cranelift JIT (proof test execution)
-  → if tests pass: JS Emitter (OXC) → .js + .d.ts
-```
-
-## Architecture
-
-### `src/parse/` — Tokenizer & Parser
-Recursive descent parser. `tokenizer.rs` produces tokens, `parser.rs` orchestrates, specialized files handle each construct (expr, function, struct, contract, crash, test_block, satisfies, string_interp).
-
-### `src/ast/` — AST Definitions
-Node types in `nodes.rs` (top-level items), `types.rs` (type refs), `expr.rs`, `stmt.rs`, `err.rs`, `crash.rs`, `test_block.rs`.
-
-### `src/check/` — Static Analysis
-14 rules implementing the `Rule` trait (`src/check/rule.rs`), orchestrated by `walker.rs`. `registry.rs` does a pre-pass to collect contracts/structs before checking. `context.rs` tracks scope/symbols. Rules live in `src/check/rules/` — one file per rule (contracts, structs, satisfies, crash, tests, types, unhandled, manual_err, methods, variables, docs, ownership, reserved, constraints).
-
-### `src/emit/` — JS Code Generation
-Uses OXC to build JS AST and emit `.js` + `.d.ts`. Functions emit the error tuple protocol: `{value, err}`. Key files: `functions.rs`, `structs.rs`, `contracts.rs`, `expressions.rs`, `statements.rs`, `crash.rs`, `dts.rs`.
-
-### `src/native/` — Cranelift JIT & Proof Testing
-Compiles Roca to Cranelift IR for native test execution. `emit/compile.rs` generates IR, `test_runner.rs` executes inline test blocks, `property_tests.rs` does fuzz testing. `runtime/` provides stdlib stubs for the native runtime. Test suites in `tests_*.rs` files.
-
-### `src/cli/` — CLI Commands
-`build.rs` runs the full pipeline, `check.rs` validates without emitting, `config.rs` reads `roca.toml`, `repl.rs` provides interactive mode, `gen_extern.rs` converts `.d.ts` to Roca extern contracts.
-
-### `src/lsp/` — Language Server
-Tower-LSP based. Diagnostics, completions, document symbols.
-
-### `src/resolve.rs` — Module Resolution
-Recursive import loading, cross-file contract registry building, function signature lookup.
-
-## Key Language Concepts
-
-- **Error tuple protocol**: functions return `{value, err}` instead of throwing
-- **Crash blocks**: explicit error handling strategies (halt, retry, fallback, skip, log, panic)
-- **Happy path only**: function bodies are the success case; errors go in crash blocks
-- **Proof tests required**: every function needs an inline `test {}` block
-- **No null**: use `-> Type, err` for failure, `Optional<T>` for absent fields
-- **Contracts**: interfaces that structs implement via `satisfies` blocks
-- **Extern contracts**: typed wrappers for external JS dependencies, passed as explicit params
-
-## Test Locations
-
-- **Parser**: `src/parse/parser_tests.rs`, `src/parse/expr_tests.rs`
-- **Checker**: `src/check/mod.rs` (check_tests module)
-- **Native**: `src/native/tests_basic.rs`, `tests_control.rs`, `tests_features.rs`, `tests_integration.rs`, `tests_memory.rs`, `tests_memory_complex.rs`, `tests_stdlib.rs`, `tests_stdlib_integration.rs`, `tests_stdlib_ext.rs`
-- **JS integration**: `tests/js/compiler.test.js`, `runtime.test.js`, `crossfile.test.js`, `verify.test.js`
-- **Integration .roca files**: `tests/integration/`
-
-## Roca Language Skill
-
-Run `roca man` and `roca patterns` to load the full language manual and coding patterns into context before writing Roca code. Use `roca search <name>` to find stdlib types/methods.
