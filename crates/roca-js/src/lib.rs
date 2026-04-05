@@ -475,8 +475,20 @@ fn build_lit<'a>(ast: &AstBuilder<'a>, lit: &Lit) -> Expression<'a> {
 }
 
 fn build_match<'a>(ast: &AstBuilder<'a>, value: &Expr, arms: &[MatchArm]) -> Expression<'a> {
-    // Build ternary chain from last arm to first.
-    // Wildcard arm becomes the default (no condition).
+    // Emit as IIFE so the subject is evaluated exactly once:
+    //   (() => { const _m = <subject>; return <ternary chain using _m>; })()
+    let temp = ast.str("_m");
+
+    // const _m = <subject>;
+    let subject_expr = build_expr(ast, value);
+    let pattern = ast.binding_pattern_binding_identifier(SPAN, temp);
+    let decl = ast.variable_declarator(SPAN, VariableDeclarationKind::Const, pattern, NONE, Some(subject_expr), false);
+    let mut decls = ast.vec();
+    decls.push(decl);
+    let var_decl = ast.declaration_variable(SPAN, VariableDeclarationKind::Const, decls, false);
+    let const_stmt = Statement::from(Declaration::from(var_decl));
+
+    // Build ternary chain from last arm to first, referencing _m.
     let mut result: Option<Expression<'a>> = None;
 
     for arm in arms.iter().rev() {
@@ -486,7 +498,7 @@ fn build_match<'a>(ast: &AstBuilder<'a>, value: &Expr, arms: &[MatchArm]) -> Exp
                 result = Some(arm_value);
             }
             Pattern::Lit(lit) => {
-                let val = build_expr(ast, value);
+                let val = ast.expression_identifier(SPAN, temp);
                 let pat = build_lit(ast, lit);
                 let test = ast.expression_binary(SPAN, val, BinaryOperator::StrictEquality, pat);
                 let alternate = result.unwrap_or_else(|| {
@@ -496,8 +508,7 @@ fn build_match<'a>(ast: &AstBuilder<'a>, value: &Expr, arms: &[MatchArm]) -> Exp
                 result = Some(ast.expression_conditional(SPAN, test, arm_value, alternate));
             }
             Pattern::Variant { name: _, variant, bindings: _ } => {
-                // Compare value._tag === "variant"
-                let val = build_expr(ast, value);
+                let val = ast.expression_identifier(SPAN, temp);
                 let tag_str = ast.str("_tag");
                 let tag_field = Expression::from(ast.member_expression_static(
                     SPAN, val, ast.identifier_name(SPAN, tag_str), false
@@ -514,10 +525,21 @@ fn build_match<'a>(ast: &AstBuilder<'a>, value: &Expr, arms: &[MatchArm]) -> Exp
         }
     }
 
-    result.unwrap_or_else(|| {
+    let ternary = result.unwrap_or_else(|| {
         let n = ast.str("undefined");
         ast.expression_identifier(SPAN, n)
-    })
+    });
+
+    // return <ternary>;
+    let return_stmt = ast.statement_return(SPAN, Some(ternary));
+
+    // (() => { const _m = ...; return ...; })()
+    let mut body_stmts: oxc_allocator::Vec<'_, Statement<'_>> = ast.vec();
+    body_stmts.push(const_stmt);
+    body_stmts.push(return_stmt);
+    let fn_body = ast.function_body(SPAN, ast.vec(), body_stmts);
+    let arrow = ast.expression_arrow_function(SPAN, false, false, NONE, ast.formal_parameters(SPAN, FormalParameterKind::ArrowFormalParameters, ast.vec(), NONE), NONE, fn_body);
+    ast.expression_call(SPAN, arrow, NONE, ast.vec(), false)
 }
 
 fn binop_to_js(op: BinOp) -> BinaryOperator {

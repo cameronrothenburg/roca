@@ -220,3 +220,32 @@ fn emit_comparison_operators() {
     "#);
     assert!(js.contains(">="), "expected >=, got:\n{js}");
 }
+
+// ─── Match subject evaluated once ──────────────────────
+
+#[test]
+fn match_subject_evaluated_once() {
+    let js = emit_src(r#"
+        fn pick(b n: Int) -> String {
+            const result = match n {
+                1 => "one"
+                2 => "two"
+                _ => "other"
+            }
+            return result
+        }
+    "#);
+    // The subject `n` should appear exactly once in the match output,
+    // bound to a temp variable. If it appears multiple times, a
+    // side-effectful expression (like a function call) would execute
+    // more than once.
+    let match_region = &js[js.find("const result").unwrap_or(0)..];
+    let n_count = match_region.matches(" n ").count()
+        + match_region.matches(" n;").count()
+        + match_region.matches("(n)").count()
+        + match_region.matches("(n ").count()
+        + match_region.matches(" n===").count()
+        + match_region.matches(" n ===").count();
+    assert!(n_count <= 1,
+        "match subject should be evaluated once, but 'n' appears {n_count} times in match output:\n{match_region}");
+}
