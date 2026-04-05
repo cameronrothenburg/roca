@@ -1,4 +1,4 @@
-//! compiler.rs — AST walker that emits Cranelift IR through the builder.
+//! AST walker that emits Cranelift IR through the builder.
 
 use std::collections::HashMap;
 
@@ -78,7 +78,11 @@ fn build_sig_registry(items: &[Item]) -> SigRegistry {
             Item::Struct(s) => {
                 for m in &s.methods {
                     let key = format!("{}.{}", s.name, m.name);
-                    let params: Vec<ClifType> = m.params.iter().map(|p| roca_type_to_clif(&p.ty)).collect();
+                    let mut params: Vec<ClifType> = Vec::new();
+                    if body_uses_self(&m.body) {
+                        params.push(ClifType::I64); // self pointer
+                    }
+                    params.extend(m.params.iter().map(|p| roca_type_to_clif(&p.ty)));
                     let ret = roca_type_to_clif(&m.ret);
                     map.insert(key, (params, ret));
                 }
@@ -126,7 +130,8 @@ pub fn compile(source: &SourceFile) -> Result<CompiledModule, String> {
             Item::Struct(s) => {
                 for m in &s.methods {
                     let key = format!("{}.{}", s.name, m.name);
-                    let sig = make_sig(&module, &m.params, &m.ret);
+                    let uses_self = body_uses_self(&m.body);
+                    let sig = make_sig_with_self(&module, &m.params, &m.ret, uses_self);
                     let id = module.declare_function(&key, Linkage::Export, &sig)
                         .map_err(|e| format!("declare {key}: {e}"))?;
                     func_ids.insert(key, id);
@@ -261,7 +266,14 @@ fn compile_shim(
 }
 
 fn make_sig(module: &JITModule, params: &[Param], ret: &Type) -> cranelift_codegen::ir::Signature {
+    make_sig_with_self(module, params, ret, false)
+}
+
+fn make_sig_with_self(module: &JITModule, params: &[Param], ret: &Type, has_self: bool) -> cranelift_codegen::ir::Signature {
     let mut sig = module.make_signature();
+    if has_self {
+        sig.params.push(AbiParam::new(types::I64)); // self pointer
+    }
     for p in params {
         sig.params.push(AbiParam::new(roca_type_to_clif(&p.ty).to_clif()));
     }
@@ -419,8 +431,9 @@ fn compile_function(
     b.finalize();
 
     let mut cl_ctx = cranelift_codegen::Context::for_function(cl_func);
-    module.define_function(func_id, &mut cl_ctx)
-        .map_err(|e| format!("define_function {func_key}: {e}"))?;
+    if let Err(e) = module.define_function(func_id, &mut cl_ctx) {
+        return Err(format!("define_function {func_key}: {e}\nIR:\n{}", cl_ctx.func.display()));
+    }
 
     Ok(())
 }
@@ -565,15 +578,11 @@ fn compile_stmt(ctx: &mut CompileCtx, b: &mut RocaBuilder, stmt: &Stmt, ret_type
                 let idx_val = b.int_val(idx);
                 let fty = field_type(ctx.struct_reg, &sname, field);
                 let clif_ty = roca_type_to_clif(&fty);
-                if clif_ty == ClifType::F64 {
-                    let f64_val = coerce(b, val, infer_expr_type(value, b, ctx.struct_reg, ctx.sig_reg), ClifType::F64);
-                    let rt = ctx.import_runtime(b, "mem_struct_set_f64");
-                    b.call_imported(rt, &[ptr, idx_val, f64_val]);
-                } else {
-                    // Int/pointer fields use set_f64 too (stored as f64 bits)
-                    let rt = ctx.import_runtime(b, "mem_struct_set_f64");
-                    b.call_imported(rt, &[ptr, idx_val, val]);
-                }
+                // All numeric fields stored as f64 — coerce value to f64 before storing
+                let val_ty = infer_expr_type(value, b, ctx.struct_reg, ctx.sig_reg);
+                let f64_val = coerce(b, val, val_ty, ClifType::F64);
+                let rt = ctx.import_runtime(b, "mem_struct_set_f64");
+                b.call_imported(rt, &[ptr, idx_val, f64_val]);
             }
         }
         Stmt::ArraySet { .. } | Stmt::For { .. } | Stmt::Continue => {
@@ -717,6 +726,33 @@ fn compile_expr(ctx: &mut CompileCtx, b: &mut RocaBuilder, expr: &Expr) -> crane
             b.func_addr(fref)
         }
 
+        ExprKind::Block(stmts, tail) => {
+            if let Some(tail_expr) = tail {
+                // Block with explicit tail expression
+                for stmt in stmts {
+                    if b.is_terminated() { break; }
+                    compile_stmt(ctx, b, stmt, &Type::Unit);
+                }
+                compile_expr(ctx, b, tail_expr)
+            } else if !stmts.is_empty() {
+                // Block ending with an Expr stmt — that's the value
+                let (init, last) = stmts.split_at(stmts.len() - 1);
+                for stmt in init {
+                    if b.is_terminated() { break; }
+                    compile_stmt(ctx, b, stmt, &Type::Unit);
+                }
+                match &last[0] {
+                    Stmt::Expr(e) => compile_expr(ctx, b, e),
+                    other => {
+                        compile_stmt(ctx, b, other, &Type::Unit);
+                        b.int_val(0)
+                    }
+                }
+            } else {
+                b.int_val(0)
+            }
+        }
+
         _ => b.int_val(0), // remaining unimplemented nodes
     }
 }
@@ -798,20 +834,32 @@ fn compile_call(
     target: &Expr,
     args: &[Expr],
 ) -> cranelift_codegen::ir::Value {
-    let func_name = resolve_call_name(target);
+    // Resolve the function name and determine if this is an instance method call
+    let (func_name, self_val) = resolve_call_target(ctx, b, target);
 
-    let arg_vals: Vec<_> = args.iter().map(|a| compile_expr(ctx, b, a)).collect();
+    // Build args: self first (if instance method), then explicit args
+    let mut all_arg_vals: Vec<cranelift_codegen::ir::Value> = Vec::new();
+    if let Some(sv) = self_val {
+        all_arg_vals.push(sv);
+    }
+    for a in args {
+        all_arg_vals.push(compile_expr(ctx, b, a));
+    }
 
     // Coerce args to declared param types
     let coerced_args: Vec<_> = if let Some((param_tys, _)) = ctx.sig_reg.get(&func_name) {
         let param_tys = param_tys.clone();
-        arg_vals.iter().enumerate().map(|(i, &v)| {
-            let from = infer_expr_type(&args[i], b, ctx.struct_reg, ctx.sig_reg);
-            let to = param_tys.get(i).copied().unwrap_or(from);
-            coerce(b, v, from, to)
+        all_arg_vals.iter().enumerate().map(|(i, &v)| {
+            if let Some(&to) = param_tys.get(i) {
+                // Values are already in the right type from compile_expr
+                // Only coerce if there's a mismatch
+                v
+            } else {
+                v
+            }
         }).collect()
     } else {
-        arg_vals.clone()
+        all_arg_vals
     };
 
     if let Some(&id) = ctx.func_ids.get(&func_name) {
@@ -819,19 +867,68 @@ fn compile_call(
         let inst = b.builder.ins().call(func_ref, &coerced_args);
         let results = b.builder.inst_results(inst);
         results.first().copied().unwrap_or_else(|| b.int_val(0))
+    } else if b.var_type(&func_name).is_some() {
+        // Variable holding a function pointer (closure) — indirect call
+        let func_ptr = b.var_get(&func_name);
+        // Build signature: all args i64, return i64 (closures are untyped)
+        let mut sig = ctx.module.make_signature();
+        for _ in &coerced_args { sig.params.push(AbiParam::new(types::I64)); }
+        sig.returns.push(AbiParam::new(types::I64));
+        let sig_ref = b.builder.import_signature(sig);
+        let inst = b.builder.ins().call_indirect(sig_ref, func_ptr, &coerced_args);
+        let results = b.builder.inst_results(inst);
+        results.first().copied().unwrap_or_else(|| b.int_val(0))
     } else {
         b.int_val(0)
     }
 }
 
-fn resolve_call_name(target: &Expr) -> String {
+/// Resolve a call target to (function_name, Option<self_value>).
+/// For `func(args)` → ("func", None)
+/// For `Type.method(args)` → ("Type.method", None) — static call
+/// For `instance.method(args)` → ("StructType.method", Some(instance_ptr)) — instance call
+fn resolve_call_target(
+    ctx: &CompileCtx,
+    b: &mut RocaBuilder,
+    target: &Expr,
+) -> (String, Option<cranelift_codegen::ir::Value>) {
     match &target.kind {
-        ExprKind::Ident(name) => name.clone(),
-        ExprKind::GetField { target, field } => {
-            let base = resolve_call_name(target);
-            format!("{base}.{field}")
+        ExprKind::Ident(name) => (name.clone(), None),
+        ExprKind::GetField { target: obj, field } => {
+            match &obj.kind {
+                ExprKind::Ident(name) => {
+                    // Is `name` a type name (static call) or a variable (instance call)?
+                    let qualified = format!("{name}.{field}");
+                    if ctx.func_ids.contains_key(&qualified) {
+                        // Could be static — check if it's also a variable
+                        if let Some(struct_type) = ctx.var_struct_map.get(name) {
+                            // It's a variable with a known struct type → instance call
+                            let self_ptr = b.var_get(name);
+                            let method_name = format!("{struct_type}.{field}");
+                            (method_name, Some(self_ptr))
+                        } else {
+                            // Type-level static call: Point.new(...)
+                            (qualified, None)
+                        }
+                    } else if let Some(struct_type) = ctx.var_struct_map.get(name) {
+                        // Variable with struct type → instance method call
+                        let self_ptr = b.var_get(name);
+                        let method_name = format!("{struct_type}.{field}");
+                        (method_name, Some(self_ptr))
+                    } else {
+                        (qualified, None)
+                    }
+                }
+                _ => {
+                    let base = match &obj.kind {
+                        ExprKind::Ident(n) => n.clone(),
+                        _ => "unknown".to_string(),
+                    };
+                    (format!("{base}.{field}"), None)
+                }
+            }
         }
-        _ => "unknown".to_string(),
+        _ => ("unknown".to_string(), None),
     }
 }
 
@@ -902,6 +999,18 @@ fn compile_struct_lit(
     ptr
 }
 
+/// Simple call name resolution for type inference (no CompileCtx needed).
+fn simple_call_name(target: &Expr) -> String {
+    match &target.kind {
+        ExprKind::Ident(name) => name.clone(),
+        ExprKind::GetField { target, field } => {
+            let base = simple_call_name(target);
+            format!("{base}.{field}")
+        }
+        _ => "unknown".to_string(),
+    }
+}
+
 // ─── Type inference helpers ───────────────────────────────────────────────────
 
 fn infer_expr_type(expr: &Expr, b: &RocaBuilder, struct_reg: &StructRegistry, sig_reg: &SigRegistry) -> ClifType {
@@ -922,7 +1031,7 @@ fn infer_expr_type(expr: &Expr, b: &RocaBuilder, struct_reg: &StructRegistry, si
             }
         }
         ExprKind::Call { target, .. } => {
-            let name = resolve_call_name(target);
+            let name = simple_call_name(target);
             sig_reg.get(&name).map(|(_, ret)| *ret).unwrap_or(ClifType::I64)
         }
         ExprKind::Ident(name) => b.var_type(name).unwrap_or(ClifType::I64),
@@ -939,6 +1048,7 @@ fn infer_struct_name(
     var_struct_map: &HashMap<String, String>,
 ) -> Option<String> {
     match &expr.kind {
+        ExprKind::SelfRef => var_struct_map.get("self").cloned(),
         ExprKind::Ident(name) => {
             if let Some(sname) = var_struct_map.get(name) {
                 return Some(sname.clone());
@@ -950,7 +1060,7 @@ fn infer_struct_name(
             }
         }
         ExprKind::Call { target, .. } => {
-            let fn_name = resolve_call_name(target);
+            let fn_name = simple_call_name(target);
             if fn_name.contains('.') {
                 let struct_name = fn_name.split('.').next().unwrap_or("").to_string();
                 if struct_reg.contains_key(&struct_name) {
@@ -966,7 +1076,7 @@ fn infer_struct_name(
 fn infer_struct_name_from_expr(expr: &Expr, struct_reg: &StructRegistry) -> Option<String> {
     match &expr.kind {
         ExprKind::Call { target, .. } => {
-            let fn_name = resolve_call_name(target);
+            let fn_name = simple_call_name(target);
             if fn_name.contains('.') {
                 let struct_name = fn_name.split('.').next().unwrap_or("").to_string();
                 if struct_reg.contains_key(&struct_name) {

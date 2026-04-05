@@ -165,7 +165,7 @@ fn check_field_access_expr(
             }
         }
         ExprKind::Call { target, args } => {
-            check_field_access_expr(target, state, field_reg, diags);
+            // target may be GetField (method call) — skip it, methods aren't fields
             for a in args {
                 check_field_access_expr(a, state, field_reg, diags);
             }
