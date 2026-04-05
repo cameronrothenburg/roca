@@ -4,6 +4,6 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Roca language front end — AST, parser, checker"
+description = "Roca language AST types — shared IR for all compiler backends"
 
 [dependencies]

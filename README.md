@@ -47,7 +47,7 @@ The compiler checks the logic, runs the tests natively, and only then emits outp
 
 ## The Feedback Loop
 
-```
+```text
 Write .roca → Compiler infers ownership → Native proves it compiles
     → Proof tests verify correctness → JS or binary emitted
          ↑                                          │

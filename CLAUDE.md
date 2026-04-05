@@ -18,7 +18,7 @@ Five crates, each with one job:
 | **roca-native** | AST → Cranelift JIT + proof test execution. | 18 |
 | **roca-js** | AST → JavaScript via OXC. | 18 |
 
-```
+```text
 .roca source → roca-parse (tokenize → parse → check) → checked AST
                                                           ├─→ roca-native (Cranelift IR → JIT → proof tests)
                                                           └─→ roca-js (OXC JS AST → .js)
@@ -72,7 +72,7 @@ Pluggable `Rule` trait in `roca-parse/src/rules.rs`. Each rule is a struct imple
 
 ## Spec Files
 
-```
+```text
 docs/src/spec/syntax.md    — complete syntax reference
 docs/src/spec/memory.md    — ownership rules + roca-mem API
 docs/src/spec/errors.md    — error code registry

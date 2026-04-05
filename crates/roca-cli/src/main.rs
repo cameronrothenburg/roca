@@ -17,14 +17,14 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Parse and check .roca files (no output emitted)
+    /// Parse and check a .roca file (no output emitted)
     Check {
-        /// Path to a .roca file or directory
+        /// Path to a .roca file
         path: PathBuf,
     },
-    /// Compile .roca to JavaScript
+    /// Compile a .roca file to JavaScript
     Build {
-        /// Path to a .roca file or directory
+        /// Path to a .roca file
         path: PathBuf,
     },
     /// Run proof tests natively via Cranelift JIT
@@ -89,6 +89,11 @@ fn cmd_build(path: &PathBuf) {
         eprintln!("\n✗ {} proof test(s) failed — no JS emitted", test_result.failed);
         process::exit(1);
     }
+    if test_result.passed == 0 && test_result.failed == 0 && !test_result.output.is_empty() {
+        eprint!("{}", test_result.output);
+        eprintln!("✗ native compile error — no JS emitted");
+        process::exit(1);
+    }
     if test_result.passed > 0 {
         println!("{} proof test(s) passed", test_result.passed);
     }
@@ -119,6 +124,12 @@ fn cmd_test(path: &PathBuf) {
 
     let test_result = roca_native::run_tests(&result.ast);
     print!("{}", test_result.output);
+
+    if test_result.passed == 0 && test_result.failed == 0 && !test_result.output.is_empty() {
+        eprintln!("✗ native compile error");
+        process::exit(1);
+    }
+
     println!("\n{} passed, {} failed", test_result.passed, test_result.failed);
 
     if test_result.failed > 0 {

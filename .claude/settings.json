@@ -39,7 +39,7 @@
           },
           {
             "type": "prompt",
-            "if": "Edit(*test*)|Edit(*tests*)",
+            "if": "Edit(*test*)|Edit(*tests*)|Write(*test*)|Write(*tests*)",
             "prompt": "Check if this test file edit is hiding a bug instead of fixing it. BLOCK (exit 2) if you see ANY of: relaxing assertions (changing == to >=, exact to approximate, removing asserts), weakening expected values (changing expected output to match buggy output), adding #[ignore] or #[should_panic] to bypass failures, deleting or commenting out failing test cases, changing test input to avoid the failing path, wrapping assertions in catch/if to swallow failures, reducing test coverage (removing edge cases that fail), changing error expectations to match wrong errors. ALLOW: adding new tests, fixing genuinely wrong expectations after a deliberate behavior change, updating tests to match a new API the user requested. If the edit hides a bug, explain what the real fix should be. If clean, exit 0 silently. Edit: $ARGUMENTS",
             "model": "claude-sonnet-4-6",
             "statusMessage": "Checking test integrity..."

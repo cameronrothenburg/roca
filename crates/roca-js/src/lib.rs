@@ -127,6 +127,45 @@ fn build_struct<'a>(ast: &AstBuilder<'a>, s: &StructDef) -> Class<'a> {
 
     let mut class_body: oxc_allocator::Vec<'a, ClassElement<'a>> = ast.vec();
 
+    // Generate constructor if struct has fields: constructor(props) { this.x = props.x; ... }
+    if !s.fields.is_empty() {
+        let mut ctor_params: oxc_allocator::Vec<'a, FormalParameter<'a>> = ast.vec();
+        ctor_params.push(make_param(ast, "props"));
+
+        let mut ctor_stmts: oxc_allocator::Vec<'a, Statement<'a>> = ast.vec();
+        for field in &s.fields {
+            // this.<field> = props.<field>
+            let this_expr = ast.expression_this(SPAN);
+            let fname = ast.str(&field.name);
+            let lhs_member = ast.member_expression_static(SPAN, this_expr, ast.identifier_name(SPAN, fname), false);
+            let lhs = SimpleAssignmentTarget::from(lhs_member);
+
+            let props_ref = ast.expression_identifier(SPAN, ast.str("props"));
+            let rhs = Expression::from(ast.member_expression_static(
+                SPAN, props_ref, ast.identifier_name(SPAN, ast.str(&field.name)), false
+            ));
+
+            let assign = ast.expression_assignment(SPAN, AssignmentOperator::Assign, AssignmentTarget::from(lhs), rhs);
+            ctor_stmts.push(ast.statement_expression(SPAN, assign));
+        }
+
+        let ctor_body = ast.function_body(SPAN, ast.vec(), ctor_stmts);
+        let ctor_params_formal = ast.formal_parameters(SPAN, FormalParameterKind::FormalParameter, ctor_params, NONE);
+
+        let ctor_fn = ast.function(
+            SPAN, FunctionType::FunctionExpression, None,
+            false, false, false, NONE, NONE, ctor_params_formal, NONE, Some(ctor_body),
+        );
+
+        let ctor_key = PropertyKey::StaticIdentifier(ast.alloc(ast.identifier_name(SPAN, ast.str("constructor"))));
+        let ctor_element = ast.class_element_method_definition(
+            SPAN, MethodDefinitionType::MethodDefinition, ast.vec(),
+            ctor_key, ctor_fn, MethodDefinitionKind::Constructor,
+            false, false, false, false, None,
+        );
+        class_body.push(ctor_element);
+    }
+
     for method in &s.methods {
         let class_method = build_class_method(ast, method);
         class_body.push(class_method);
