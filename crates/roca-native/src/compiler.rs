@@ -47,19 +47,14 @@ fn build_struct_registry(items: &[Item]) -> StructRegistry {
     map
 }
 
-fn field_index(registry: &StructRegistry, struct_name: &str, field_name: &str) -> usize {
-    let fields = registry.get(struct_name)
-        .unwrap_or_else(|| panic!("unknown struct: {struct_name}"));
+fn field_index(registry: &StructRegistry, struct_name: &str, field_name: &str) -> Option<usize> {
+    let fields = registry.get(struct_name)?;
     fields.iter().position(|(n, _)| n == field_name)
-        .unwrap_or_else(|| panic!("unknown field {field_name} on {struct_name}"))
 }
 
-fn field_type(registry: &StructRegistry, struct_name: &str, field_name: &str) -> Type {
-    let fields = registry.get(struct_name)
-        .unwrap_or_else(|| panic!("unknown struct: {struct_name}"));
-    fields.iter().find(|(n, _)| n == field_name)
-        .map(|(_, t)| t.clone())
-        .unwrap_or_else(|| panic!("unknown field {field_name} on {struct_name}"))
+fn field_type(registry: &StructRegistry, struct_name: &str, field_name: &str) -> Option<Type> {
+    let fields = registry.get(struct_name)?;
+    fields.iter().find(|(n, _)| n == field_name).map(|(_, t)| t.clone())
 }
 
 // ─── Function signature registry ─────────────────────────────────────────────
@@ -145,7 +140,7 @@ pub fn compile(source: &SourceFile) -> Result<CompiledModule, String> {
     for item in &source.items {
         match item {
             Item::Function(f) => {
-                let id = func_ids[&f.name];
+                let id = *func_ids.get(&f.name).ok_or_else(|| format!("function {} not registered", f.name))?;
                 compile_function(
                     &mut module, id, f, &f.name,
                     &func_ids, &runtime_ids, &struct_reg, &sig_reg,
@@ -154,7 +149,7 @@ pub fn compile(source: &SourceFile) -> Result<CompiledModule, String> {
             Item::Struct(s) => {
                 for m in &s.methods {
                     let key = format!("{}.{}", s.name, m.name);
-                    let id = func_ids[&key];
+                    let id = *func_ids.get(&key).ok_or_else(|| format!("method {} not registered", key))?;
                     compile_function(
                         &mut module, id, m, &key,
                         &func_ids, &runtime_ids, &struct_reg, &sig_reg,
@@ -237,15 +232,6 @@ fn compile_shim(
     }
 
     // Call the real function
-    let real_sig = {
-        let mut sig = module.make_signature();
-        for ty in param_types {
-            sig.params.push(AbiParam::new(ty.to_clif()));
-        }
-        sig.returns.push(AbiParam::new(ret_type.to_clif()));
-        sig
-    };
-    let sig_ref = fb.import_signature(real_sig);
     let real_func_ref = module.declare_func_in_func(*real_id, fb.func);
     let call_inst = fb.ins().call(real_func_ref, &call_args);
     let result = fb.inst_results(call_inst)[0];
@@ -299,10 +285,6 @@ impl<'a> CompileCtx<'a> {
         self.module.declare_func_in_func(id, b.builder.func)
     }
 
-    fn import_user_func(&mut self, b: &mut RocaBuilder, name: &str) -> cranelift_codegen::ir::FuncRef {
-        let id = self.func_ids[name];
-        self.module.declare_func_in_func(id, b.builder.func)
-    }
 }
 
 // ─── Compile one function ─────────────────────────────────────────────────────
@@ -384,7 +366,7 @@ fn compile_function(
         closure_counter: 0,
     };
 
-    let mut b = RocaBuilder::new(fb, sig_reg.clone());
+    let mut b = RocaBuilder::new(fb);
 
     // Create entry block
     let entry = b.create_block();
@@ -440,6 +422,14 @@ fn compile_function(
 
 // ─── Statement compilation ────────────────────────────────────────────────────
 
+/// Compile a sequence of statements, stopping early if a terminator is reached.
+fn compile_block(ctx: &mut CompileCtx, b: &mut RocaBuilder, stmts: &[Stmt], ret_type: &Type) {
+    for s in stmts {
+        if b.is_terminated() { break; }
+        compile_stmt(ctx, b, s, ret_type);
+    }
+}
+
 fn compile_stmt(ctx: &mut CompileCtx, b: &mut RocaBuilder, stmt: &Stmt, ret_type: &Type) {
     if b.is_terminated() { return; }
 
@@ -488,30 +478,14 @@ fn compile_stmt(ctx: &mut CompileCtx, b: &mut RocaBuilder, stmt: &Stmt, ret_type
                 // then branch
                 b.switch_block(then_block);
                 b.seal_block(then_block);
-                let mut then_terminated = false;
-                for s in then {
-                    if b.is_terminated() { then_terminated = true; break; }
-                    compile_stmt(ctx, b, s, ret_type);
-                }
-                if !b.is_terminated() {
-                    b.jump_to(merge_block);
-                } else {
-                    then_terminated = true;
-                }
+                compile_block(ctx, b, then, ret_type);
+                if !b.is_terminated() { b.jump_to(merge_block); }
 
                 // else branch
                 b.switch_block(else_block);
                 b.seal_block(else_block);
-                let mut else_terminated = false;
-                for s in else_stmts {
-                    if b.is_terminated() { else_terminated = true; break; }
-                    compile_stmt(ctx, b, s, ret_type);
-                }
-                if !b.is_terminated() {
-                    b.jump_to(merge_block);
-                } else {
-                    else_terminated = true;
-                }
+                compile_block(ctx, b, else_stmts, ret_type);
+                if !b.is_terminated() { b.jump_to(merge_block); }
 
                 // Merge block
                 b.switch_block(merge_block);
@@ -524,15 +498,9 @@ fn compile_stmt(ctx: &mut CompileCtx, b: &mut RocaBuilder, stmt: &Stmt, ret_type
                 // then branch
                 b.switch_block(then_block);
                 b.seal_block(then_block);
-                for s in then {
-                    if b.is_terminated() { break; }
-                    compile_stmt(ctx, b, s, ret_type);
-                }
-                if !b.is_terminated() {
-                    b.jump_to(merge_block);
-                }
+                compile_block(ctx, b, then, ret_type);
+                if !b.is_terminated() { b.jump_to(merge_block); }
 
-                // merge
                 b.switch_block(merge_block);
                 b.seal_block(merge_block);
             }
@@ -545,11 +513,7 @@ fn compile_stmt(ctx: &mut CompileCtx, b: &mut RocaBuilder, stmt: &Stmt, ret_type
             b.switch_block(header);
 
             b.loop_stack_push(header, exit);
-
-            for s in body {
-                if b.is_terminated() { break; }
-                compile_stmt(ctx, b, s, ret_type);
-            }
+            compile_block(ctx, b, body, ret_type);
             if !b.is_terminated() {
                 b.jump_to(header);
             }
@@ -574,20 +538,18 @@ fn compile_stmt(ctx: &mut CompileCtx, b: &mut RocaBuilder, stmt: &Stmt, ret_type
                 _ => None,
             };
             if let Some(sname) = struct_name {
-                let idx = field_index(ctx.struct_reg, &sname, field) as i64;
-                let idx_val = b.int_val(idx);
-                let fty = field_type(ctx.struct_reg, &sname, field);
-                let clif_ty = roca_type_to_clif(&fty);
-                // All numeric fields stored as f64 — coerce value to f64 before storing
-                let val_ty = infer_expr_type(value, b, ctx.struct_reg, ctx.sig_reg);
-                let f64_val = coerce(b, val, val_ty, ClifType::F64);
-                let rt = ctx.import_runtime(b, "mem_struct_set_f64");
-                b.call_imported(rt, &[ptr, idx_val, f64_val]);
+                if let Some(idx) = field_index(ctx.struct_reg, &sname, field) {
+                    let idx_val = b.int_val(idx as i64);
+                    let val_ty = infer_expr_type(value, b, ctx.struct_reg, ctx.sig_reg);
+                    let f64_val = coerce(b, val, val_ty, ClifType::F64);
+                    let rt = ctx.import_runtime(b, "mem_struct_set_f64");
+                    b.call_imported(rt, &[ptr, idx_val, f64_val]);
+                }
             }
         }
-        Stmt::ArraySet { .. } | Stmt::For { .. } | Stmt::Continue => {
-            // Not yet implemented
-        }
+        Stmt::ArraySet { .. } => panic!("ArraySet not yet implemented in native compiler"),
+        Stmt::For { .. } => panic!("For loop not yet implemented in native compiler"),
+        Stmt::Continue => panic!("Continue not yet implemented in native compiler"),
     }
 }
 
@@ -648,9 +610,7 @@ fn compile_expr(ctx: &mut CompileCtx, b: &mut RocaBuilder, expr: &Expr) -> crane
                         }
                     }
                     roca_lang::Pattern::Variant { .. } => {
-                        // TODO: enum variant matching
-                        let val = b.int_val(0);
-                        b.jump_with(merge, val);
+                        panic!("enum variant pattern matching not yet implemented in native compiler")
                     }
                 }
             }
@@ -707,7 +667,7 @@ fn compile_expr(ctx: &mut CompileCtx, b: &mut RocaBuilder, expr: &Expr) -> crane
             fb.switch_to_block(entry);
             fb.seal_block(entry);
 
-            let mut cb = RocaBuilder::new(fb, ctx.sig_reg.clone());
+            let mut cb = RocaBuilder::new(fb);
             let pvals: Vec<_> = (0..params.len())
                 .map(|i| cb.builder.block_params(entry)[i]).collect();
             for (i, pname) in params.iter().enumerate() {
@@ -753,7 +713,7 @@ fn compile_expr(ctx: &mut CompileCtx, b: &mut RocaBuilder, expr: &Expr) -> crane
             }
         }
 
-        _ => b.int_val(0), // remaining unimplemented nodes
+        other => panic!("unimplemented expression in native compiler: {other:?}")
     }
 }
 
@@ -846,21 +806,7 @@ fn compile_call(
         all_arg_vals.push(compile_expr(ctx, b, a));
     }
 
-    // Coerce args to declared param types
-    let coerced_args: Vec<_> = if let Some((param_tys, _)) = ctx.sig_reg.get(&func_name) {
-        let param_tys = param_tys.clone();
-        all_arg_vals.iter().enumerate().map(|(i, &v)| {
-            if let Some(&to) = param_tys.get(i) {
-                // Values are already in the right type from compile_expr
-                // Only coerce if there's a mismatch
-                v
-            } else {
-                v
-            }
-        }).collect()
-    } else {
-        all_arg_vals
-    };
+    let coerced_args = all_arg_vals;
 
     if let Some(&id) = ctx.func_ids.get(&func_name) {
         let func_ref = ctx.module.declare_func_in_func(id, b.builder.func);
@@ -938,20 +884,22 @@ fn compile_get_field(
     target: &Expr,
     field: &str,
 ) -> cranelift_codegen::ir::Value {
-    let struct_name = infer_struct_name(target, ctx.struct_reg, ctx.sig_reg, &ctx.var_struct_map);
+    let struct_name = infer_struct_name(target, ctx.struct_reg, &ctx.var_struct_map);
     let ptr = compile_expr(ctx, b, target);
 
     if let Some(sname) = struct_name {
-        let idx = field_index(ctx.struct_reg, &sname, field) as i64;
-        let fty = field_type(ctx.struct_reg, &sname, field);
-        let idx_val = b.int_val(idx);
-
-        // All fields stored as f64 bits via set_f64; retrieve and convert back.
-        let func_ref = ctx.import_runtime(b, "mem_struct_get_f64");
-        let inst = b.builder.ins().call(func_ref, &[ptr, idx_val]);
-        let f64_val = b.builder.inst_results(inst)[0];
-
-        coerce(b, f64_val, ClifType::F64, roca_type_to_clif(&fty))
+        if let (Some(idx), Some(fty)) = (
+            field_index(ctx.struct_reg, &sname, field),
+            field_type(ctx.struct_reg, &sname, field),
+        ) {
+            let idx_val = b.int_val(idx as i64);
+            let func_ref = ctx.import_runtime(b, "mem_struct_get_f64");
+            let inst = b.builder.ins().call(func_ref, &[ptr, idx_val]);
+            let f64_val = b.builder.inst_results(inst)[0];
+            coerce(b, f64_val, ClifType::F64, roca_type_to_clif(&fty))
+        } else {
+            panic!("compiler bug: struct '{sname}' has no field '{field}' — checker should have rejected this")
+        }
     } else {
         // Unknown struct — return f64 as-is
         let idx_val = b.int_val(0);
@@ -1044,7 +992,6 @@ fn infer_expr_type(expr: &Expr, b: &RocaBuilder, struct_reg: &StructRegistry, si
 fn infer_struct_name(
     expr: &Expr,
     struct_reg: &StructRegistry,
-    sig_reg: &SigRegistry,
     var_struct_map: &HashMap<String, String>,
 ) -> Option<String> {
     match &expr.kind {

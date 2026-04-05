@@ -83,8 +83,6 @@ pub fn compile(source: &SourceFile) -> Result<Module, String> {
 /// Call a compiled function by name with typed arguments.
 /// Uses a compiled shim that unpacks args from a buffer — supports any number of params.
 pub fn call(module: &Module, name: &str, args: &[Value]) -> Value {
-    use cranelift_module::Module as ClifModule;
-
     let shim_name = format!("{name}__shim");
     let shim_id = module.compiled.func_ids.get(&shim_name)
         .copied()

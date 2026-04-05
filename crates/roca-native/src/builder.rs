@@ -1,11 +1,7 @@
 //! Roca-level builder — wraps Cranelift FunctionBuilder into high-level ops.
 //! No Cranelift types leak outside this module.
 
-use cranelift_codegen::ir::{
-    types, AbiParam, Block, BlockArg, ExtFuncData, ExternalName, FuncRef, InstBuilder,
-    SigRef, Signature, Value,
-};
-use cranelift_codegen::isa::CallConv;
+use cranelift_codegen::ir::{types, Block, BlockArg, FuncRef, InstBuilder, Value};
 use cranelift_frontend::{FunctionBuilder, Variable};
 use std::collections::HashMap;
 
@@ -36,20 +32,15 @@ pub struct RocaBuilder<'a> {
     terminated: bool,
     /// Stack of (loop_header, loop_exit) blocks for break
     loop_stack: Vec<(Block, Block)>,
-    pub func_sigs: HashMap<String, (Vec<ClifType>, ClifType)>,
 }
 
 impl<'a> RocaBuilder<'a> {
-    pub fn new(
-        builder: FunctionBuilder<'a>,
-        func_sigs: HashMap<String, (Vec<ClifType>, ClifType)>,
-    ) -> Self {
+    pub fn new(builder: FunctionBuilder<'a>) -> Self {
         Self {
             builder,
             vars: HashMap::new(),
             terminated: false,
             loop_stack: Vec::new(),
-            func_sigs,
         }
     }
 
@@ -86,10 +77,16 @@ impl<'a> RocaBuilder<'a> {
 
     // ── Variables ────────────────────────────────────────────────────────────
 
+    /// Declare a variable (or parameter) with a name, type, and initial value.
     pub fn var_declare(&mut self, name: &str, ty: ClifType, val: Value) {
         let v = self.alloc_var(ty);
         self.vars.insert(name.to_string(), (v, ty));
         self.builder.def_var(v, val);
+    }
+
+    /// Alias for var_declare — parameters and locals use the same mechanism.
+    pub fn param_declare(&mut self, name: &str, ty: ClifType, val: Value) {
+        self.var_declare(name, ty, val);
     }
 
     pub fn var_set(&mut self, name: &str, val: Value) {
@@ -103,13 +100,6 @@ impl<'a> RocaBuilder<'a> {
     pub fn var_get(&mut self, name: &str) -> Value {
         let (v, _) = *self.vars.get(name).unwrap_or_else(|| panic!("undefined variable: {name}"));
         self.builder.use_var(v)
-    }
-
-    /// Declare a function parameter (already has a Value from block params).
-    pub fn param_declare(&mut self, name: &str, ty: ClifType, val: Value) {
-        let v = self.alloc_var(ty);
-        self.vars.insert(name.to_string(), (v, ty));
-        self.builder.def_var(v, val);
     }
 
     // ── Binary ops ───────────────────────────────────────────────────────────
@@ -150,70 +140,36 @@ impl<'a> RocaBuilder<'a> {
         self.builder.ins().srem(l, r)
     }
 
+    fn cmp(&mut self, l: Value, r: Value, ty: ClifType, int_cc: cranelift_codegen::ir::condcodes::IntCC, float_cc: cranelift_codegen::ir::condcodes::FloatCC) -> Value {
+        match ty {
+            ClifType::I64 | ClifType::I8 => self.builder.ins().icmp(int_cc, l, r),
+            ClifType::F64 => self.builder.ins().fcmp(float_cc, l, r),
+        }
+    }
+
     pub fn eq(&mut self, l: Value, r: Value, ty: ClifType) -> Value {
-        match ty {
-            ClifType::I64 | ClifType::I8 => {
-                self.builder.ins().icmp(cranelift_codegen::ir::condcodes::IntCC::Equal, l, r)
-            }
-            ClifType::F64 => {
-                self.builder.ins().fcmp(cranelift_codegen::ir::condcodes::FloatCC::Equal, l, r)
-            }
-        }
+        use cranelift_codegen::ir::condcodes::{IntCC, FloatCC};
+        self.cmp(l, r, ty, IntCC::Equal, FloatCC::Equal)
     }
-
     pub fn ne(&mut self, l: Value, r: Value, ty: ClifType) -> Value {
-        match ty {
-            ClifType::I64 | ClifType::I8 => {
-                self.builder.ins().icmp(cranelift_codegen::ir::condcodes::IntCC::NotEqual, l, r)
-            }
-            ClifType::F64 => {
-                self.builder.ins().fcmp(cranelift_codegen::ir::condcodes::FloatCC::NotEqual, l, r)
-            }
-        }
+        use cranelift_codegen::ir::condcodes::{IntCC, FloatCC};
+        self.cmp(l, r, ty, IntCC::NotEqual, FloatCC::NotEqual)
     }
-
     pub fn lt(&mut self, l: Value, r: Value, ty: ClifType) -> Value {
-        match ty {
-            ClifType::I64 | ClifType::I8 => {
-                self.builder.ins().icmp(cranelift_codegen::ir::condcodes::IntCC::SignedLessThan, l, r)
-            }
-            ClifType::F64 => {
-                self.builder.ins().fcmp(cranelift_codegen::ir::condcodes::FloatCC::LessThan, l, r)
-            }
-        }
+        use cranelift_codegen::ir::condcodes::{IntCC, FloatCC};
+        self.cmp(l, r, ty, IntCC::SignedLessThan, FloatCC::LessThan)
     }
-
     pub fn gt(&mut self, l: Value, r: Value, ty: ClifType) -> Value {
-        match ty {
-            ClifType::I64 | ClifType::I8 => {
-                self.builder.ins().icmp(cranelift_codegen::ir::condcodes::IntCC::SignedGreaterThan, l, r)
-            }
-            ClifType::F64 => {
-                self.builder.ins().fcmp(cranelift_codegen::ir::condcodes::FloatCC::GreaterThan, l, r)
-            }
-        }
+        use cranelift_codegen::ir::condcodes::{IntCC, FloatCC};
+        self.cmp(l, r, ty, IntCC::SignedGreaterThan, FloatCC::GreaterThan)
     }
-
     pub fn le(&mut self, l: Value, r: Value, ty: ClifType) -> Value {
-        match ty {
-            ClifType::I64 | ClifType::I8 => {
-                self.builder.ins().icmp(cranelift_codegen::ir::condcodes::IntCC::SignedLessThanOrEqual, l, r)
-            }
-            ClifType::F64 => {
-                self.builder.ins().fcmp(cranelift_codegen::ir::condcodes::FloatCC::LessThanOrEqual, l, r)
-            }
-        }
+        use cranelift_codegen::ir::condcodes::{IntCC, FloatCC};
+        self.cmp(l, r, ty, IntCC::SignedLessThanOrEqual, FloatCC::LessThanOrEqual)
     }
-
     pub fn ge(&mut self, l: Value, r: Value, ty: ClifType) -> Value {
-        match ty {
-            ClifType::I64 | ClifType::I8 => {
-                self.builder.ins().icmp(cranelift_codegen::ir::condcodes::IntCC::SignedGreaterThanOrEqual, l, r)
-            }
-            ClifType::F64 => {
-                self.builder.ins().fcmp(cranelift_codegen::ir::condcodes::FloatCC::GreaterThanOrEqual, l, r)
-            }
-        }
+        use cranelift_codegen::ir::condcodes::{IntCC, FloatCC};
+        self.cmp(l, r, ty, IntCC::SignedGreaterThanOrEqual, FloatCC::GreaterThanOrEqual)
     }
 
     pub fn and(&mut self, l: Value, r: Value) -> Value {
@@ -252,19 +208,6 @@ impl<'a> RocaBuilder<'a> {
 
     pub fn f64_to_i64(&mut self, v: Value) -> Value {
         self.builder.ins().fcvt_to_sint_sat(types::I64, v)
-    }
-
-    // ── Function calls ───────────────────────────────────────────────────────
-
-    /// Call using a pre-imported FuncRef.
-    pub fn call_with_ref(
-        &mut self,
-        func_ref: FuncRef,
-        args: &[Value],
-    ) -> Option<Value> {
-        let inst = self.builder.ins().call(func_ref, args);
-        let results = self.builder.inst_results(inst);
-        results.first().copied()
     }
 
     // ── Control flow ─────────────────────────────────────────────────────────
@@ -346,11 +289,6 @@ impl<'a> RocaBuilder<'a> {
     pub fn jump_with(&mut self, target: Block, val: Value) {
         self.builder.ins().jump(target, &[BlockArg::Value(val)]);
         self.set_terminated();
-    }
-
-    /// Seal a block (alias for seal_block).
-    pub fn seal(&mut self, block: Block) {
-        self.builder.seal_block(block);
     }
 
     /// Get the i-th block parameter value.
