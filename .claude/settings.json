@@ -11,15 +11,6 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "if echo \"$CLAUDE_BASH_COMMAND\" | grep -qE 'beans update .* -s (completed|scrapped)'; then BEAN_ID=$(echo \"$CLAUDE_BASH_COMMAND\" | grep -oP 'beans update \\K[^ ]+'); BODY=$(beans show \"$BEAN_ID\" --json 2>/dev/null | python3 -c 'import json,sys; print(json.loads(sys.stdin.read()).get(\"body\",\"\"))' 2>/dev/null); ISSUE=$(echo \"$BODY\" | grep -oP 'GitHub issue #\\K\\d+' | head -1); STATUS=$(echo \"$CLAUDE_BASH_COMMAND\" | grep -oP -- '-s \\K\\S+'); if [ -n \"$ISSUE\" ]; then if [ \"$STATUS\" = \"completed\" ]; then gh issue close \"$ISSUE\" --reason completed 2>/dev/null && echo \"Synced: closed GitHub issue #$ISSUE (completed)\"; elif [ \"$STATUS\" = \"scrapped\" ]; then gh issue close \"$ISSUE\" --reason 'not planned' 2>/dev/null && echo \"Synced: closed GitHub issue #$ISSUE (not planned)\"; fi; fi; fi"
-          }
-        ]
-      },
-      {
         "matcher": "Edit|Write",
         "hooks": [
           {
