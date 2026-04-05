@@ -9,3 +9,5 @@
 !commitlint.config.js
 tests/js/compiled-verify/
 .claude/.review-passed
+.beans/
+.beans.yml

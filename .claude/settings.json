@@ -3,6 +3,12 @@
     "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
   },
   "hooks": {
+    "SessionStart": [
+      { "hooks": [{ "type": "command", "command": "beans prime" }] }
+    ],
+    "PreCompact": [
+      { "hooks": [{ "type": "command", "command": "beans prime" }] }
+    ],
     "PostToolUse": [
       {
         "matcher": "Edit|Write",

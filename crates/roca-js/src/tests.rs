@@ -220,3 +220,24 @@ fn emit_comparison_operators() {
     "#);
     assert!(js.contains(">="), "expected >=, got:\n{js}");
 }
+
+// ─── Match subject evaluated once ──────────────────────
+
+#[test]
+fn match_subject_evaluated_once() {
+    let js = emit_src(r#"
+        fn pick(b n: Int) -> String {
+            const result = match n {
+                1 => "one"
+                2 => "two"
+                _ => "other"
+            }
+            return result
+        }
+    "#);
+    let match_region = &js[js.find("const result").unwrap_or(0)..];
+    assert!(match_region.contains("_m"),
+        "expected temp variable _m in match output:\n{match_region}");
+    assert!(match_region.contains("const _m = n"),
+        "expected subject bound once as 'const _m = n':\n{match_region}");
+}

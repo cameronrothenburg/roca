@@ -1,6 +1,7 @@
 # CLAUDE.md
 
 This file provides guidance to Claude Code when working with this repository.
+**IMPORTANT**: before you do anything else, run the `beans prime` command and heed its output.
 
 ## What is Roca
 
@@ -10,13 +11,13 @@ A memory-safe language built for AI. Compiles to JavaScript or native binary. Th
 
 Five crates, each with one job:
 
-| Crate | Job | Tests |
-|-------|-----|-------|
-| **roca-lang** | AST types (26 nodes). Pure data, zero logic. | 9 |
-| **roca-mem** | Alloc, own, copy, free. The physical memory model. | 29 |
-| **roca-parse** | Tokenize + parse + ownership check + type enforcement. | 60 |
-| **roca-native** | AST → Cranelift JIT + proof test execution. | 18 |
-| **roca-js** | AST → JavaScript via OXC. | 18 |
+| Crate           | Job                                                    | Tests |
+| --------------- | ------------------------------------------------------ | ----- |
+| **roca-lang**   | AST types (26 nodes). Pure data, zero logic.           | 9     |
+| **roca-mem**    | Alloc, own, copy, free. The physical memory model.     | 29    |
+| **roca-parse**  | Tokenize + parse + ownership check + type enforcement. | 60    |
+| **roca-native** | AST → Cranelift JIT + proof test execution.            | 18    |
+| **roca-js**     | AST → JavaScript via OXC.                              | 18    |
 
 ```text
 .roca source → roca-parse (tokenize → parse → check) → checked AST
